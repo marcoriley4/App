@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Groundwork — Hire trusted contractors</title>
+  <meta name="description" content="Groundwork connects homeowners and businesses with vetted local contractors. Post a job, compare quotes, and hire with confidence.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container nav">
+      <a href="#top" class="brand" aria-label="Groundwork home">
+        <span class="brand-mark" aria-hidden="true">G</span> Groundwork
+      </a>
+      <button class="nav-toggle" aria-expanded="false" aria-controls="nav-links" aria-label="Toggle menu">☰</button>
+      <nav id="nav-links" class="nav-links">
+        <a href="#contractors">Find contractors</a>
+        <a href="#jobs">Job board</a>
+        <a href="#how">How it works</a>
+        <a href="#post-job" class="btn btn-small">Post a job</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- Hero -->
+    <section class="hero">
+      <div class="container hero-inner">
+        <div class="hero-copy">
+          <p class="eyebrow">Contractors &amp; buyers, connected</p>
+          <h1>Get your project built by people you can trust.</h1>
+          <p class="lead">Search vetted local pros, post a job in minutes, and compare quotes side by side, all in one place.</p>
+          <form class="search" id="hero-search">
+            <label class="sr-only" for="hero-trade">Trade</label>
+            <select id="hero-trade" name="trade"></select>
+            <label class="sr-only" for="hero-zip">ZIP code</label>
+            <input id="hero-zip" name="zip" inputmode="numeric" maxlength="5" placeholder="ZIP code" pattern="\d{5}">
+            <button class="btn" type="submit">Search</button>
+          </form>
+          <ul class="stats" aria-label="Platform stats">
+            <li><strong id="stat-pros">0</strong><span>Vetted pros</span></li>
+            <li><strong id="stat-jobs">0</strong><span>Open jobs</span></li>
+            <li><strong>4.8★</strong><span>Avg. rating</span></li>
+          </ul>
+        </div>
+        <div class="hero-card" aria-hidden="true">
+          <div class="mini-card">
+            <div class="avatar" style="--hue:24">MR</div>
+            <div><strong>Kitchen remodel</strong><span>3 quotes received</span></div>
+            <span class="pill pill-ok">Hired</span>
+          </div>
+          <div class="mini-card">
+            <div class="avatar" style="--hue:200">AL</div>
+            <div><strong>Roof inspection</strong><span>Quote: $350</span></div>
+            <span class="pill">New</span>
+          </div>
+          <div class="mini-card">
+            <div class="avatar" style="--hue:140">JP</div>
+            <div><strong>Deck build</strong><span>Starts Monday</span></div>
+            <span class="pill pill-info">Scheduled</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- How it works -->
+    <section id="how" class="section">
+      <div class="container">
+        <h2>How it works</h2>
+        <div class="grid-3">
+          <article class="step">
+            <span class="step-num">1</span>
+            <h3>Describe the job</h3>
+            <p>Tell us what you need, your budget, and your timeline. It takes about two minutes.</p>
+          </article>
+          <article class="step">
+            <span class="step-num">2</span>
+            <h3>Compare quotes</h3>
+            <p>Licensed, insured local contractors respond with quotes. Check their reviews and past work.</p>
+          </article>
+          <article class="step">
+            <span class="step-num">3</span>
+            <h3>Hire with confidence</h3>
+            <p>Pick the right pro and agree on the scope up front, so you both know what's being built.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Contractors -->
+    <section id="contractors" class="section section-alt">
+      <div class="container">
+        <div class="section-head">
+          <h2>Find contractors</h2>
+          <p id="result-count" class="muted" aria-live="polite"></p>
+        </div>
+        <div class="filters">
+          <label>Trade
+            <select id="filter-trade"></select>
+          </label>
+          <label>Minimum rating
+            <select id="filter-rating">
+              <option value="0">Any</option>
+              <option value="4">4.0+</option>
+              <option value="4.5">4.5+</option>
+            </select>
+          </label>
+          <label>Sort by
+            <select id="filter-sort">
+              <option value="rating">Top rated</option>
+              <option value="reviews">Most reviewed</option>
+              <option value="rate-asc">Lowest rate</option>
+            </select>
+          </label>
+          <label class="grow">Search
+            <input id="filter-text" type="search" placeholder="Name, city, or specialty">
+          </label>
+        </div>
+        <div id="contractor-list" class="cards"></div>
+      </div>
+    </section>
+
+    <!-- Job board -->
+    <section id="jobs" class="section">
+      <div class="container">
+        <div class="section-head">
+          <h2>Job board</h2>
+          <p class="muted">Contractors: browse open jobs from buyers near you.</p>
+        </div>
+        <div id="job-list" class="jobs"></div>
+      </div>
+    </section>
+
+    <!-- Post a job -->
+    <section id="post-job" class="section section-alt">
+      <div class="container narrow">
+        <h2>Post a job</h2>
+        <p class="muted">Free for buyers. Your job appears on the board right away.</p>
+        <form id="job-form" class="form" novalidate>
+          <div class="form-row">
+            <label>Job title
+              <input name="title" required maxlength="80" placeholder="e.g. Replace bathroom tile">
+            </label>
+            <label>Trade
+              <select name="trade" id="job-trade" required></select>
+            </label>
+          </div>
+          <div class="form-row">
+            <label>Budget (USD)
+              <input name="budget" type="number" min="50" step="50" required placeholder="2500">
+            </label>
+            <label>ZIP code
+              <input name="zip" inputmode="numeric" maxlength="5" pattern="\d{5}" required placeholder="94110">
+            </label>
+          </div>
+          <label>Description
+            <textarea name="description" rows="4" required maxlength="600" placeholder="Describe the scope, materials, and timeline."></textarea>
+          </label>
+          <p class="form-error" id="job-error" role="alert"></p>
+          <button class="btn" type="submit">Post job</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- CTA for contractors -->
+    <section class="section cta">
+      <div class="container cta-inner">
+        <div>
+          <h2>Are you a contractor?</h2>
+          <p>Get matched with buyers who need your skills. Create a profile, browse the job board, and send quotes for free.</p>
+        </div>
+        <a href="#jobs" class="btn btn-light">Browse open jobs</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <span>© <span id="year"></span> Groundwork</span>
+      <span class="muted">Demo site: data is stored in your browser only.</span>
+    </div>
+  </footer>
+
+  <!-- Contractor detail / quote dialog -->
+  <dialog id="pro-dialog" aria-labelledby="pro-name">
+    <form method="dialog" class="dialog-close-form">
+      <button class="icon-btn" aria-label="Close">✕</button>
+    </form>
+    <div id="pro-detail"></div>
+    <form id="quote-form" class="form">
+      <h3>Request a quote</h3>
+      <label>Your name
+        <input name="name" required maxlength="60">
+      </label>
+      <label>Email
+        <input name="email" type="email" required>
+      </label>
+      <label>What do you need?
+        <textarea name="message" rows="3" required maxlength="500"></textarea>
+      </label>
+      <button class="btn" type="submit">Send request</button>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
