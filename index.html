@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Life Dashboard</title>
+  <meta name="description" content="A personal dashboard for tasks, habits, goals, wellbeing, money and journaling.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <h1 id="greeting">Hello</h1>
+      <p id="today" class="muted"></p>
+    </div>
+    <div class="top-actions">
+      <button id="themeBtn" class="ghost" title="Toggle theme" aria-label="Toggle theme">☾</button>
+      <button id="settingsBtn" class="ghost" title="Data &amp; settings" aria-label="Data and settings">⚙</button>
+    </div>
+  </header>
+
+  <section class="focus">
+    <label for="focusInput" class="eyebrow">Today's one thing</label>
+    <input id="focusInput" type="text" placeholder="What would make today a win?" autocomplete="off">
+  </section>
+
+  <section class="stats" id="stats"></section>
+
+  <main class="grid">
+    <!-- Tasks -->
+    <article class="card" id="tasksCard">
+      <div class="card-head"><h2>Tasks</h2><span class="pill" id="taskCount"></span></div>
+      <form id="taskForm" class="row">
+        <input id="taskInput" type="text" placeholder="Add a task…" autocomplete="off" required>
+        <button type="submit">Add</button>
+      </form>
+      <ul id="taskList" class="list"></ul>
+      <button id="clearDone" class="link">Clear completed</button>
+    </article>
+
+    <!-- Habits -->
+    <article class="card" id="habitsCard">
+      <div class="card-head"><h2>Habits</h2><span class="pill" id="habitCount"></span></div>
+      <form id="habitForm" class="row">
+        <input id="habitInput" type="text" placeholder="New habit…" autocomplete="off" required>
+        <button type="submit">Add</button>
+      </form>
+      <div id="habitGrid" class="habit-grid"></div>
+    </article>
+
+    <!-- Wellbeing -->
+    <article class="card" id="wellCard">
+      <div class="card-head"><h2>Wellbeing</h2><span class="muted small">today</span></div>
+      <div class="field">
+        <span class="label">Mood</span>
+        <div id="moodPick" class="mood"></div>
+      </div>
+      <div class="field counters">
+        <div class="counter">
+          <span class="label">Water</span>
+          <div class="ctl"><button data-k="water" data-d="-1" class="ghost">−</button><output id="waterVal">0</output><button data-k="water" data-d="1" class="ghost">+</button></div>
+          <span class="muted small">glasses</span>
+        </div>
+        <div class="counter">
+          <span class="label">Sleep</span>
+          <div class="ctl"><button data-k="sleep" data-d="-0.5" class="ghost">−</button><output id="sleepVal">0</output><button data-k="sleep" data-d="0.5" class="ghost">+</button></div>
+          <span class="muted small">hours</span>
+        </div>
+        <div class="counter">
+          <span class="label">Exercise</span>
+          <div class="ctl"><button data-k="exercise" data-d="-10" class="ghost">−</button><output id="exerciseVal">0</output><button data-k="exercise" data-d="10" class="ghost">+</button></div>
+          <span class="muted small">minutes</span>
+        </div>
+      </div>
+      <div class="field">
+        <span class="label">Mood · last 14 days</span>
+        <div id="moodChart" class="chart"></div>
+      </div>
+    </article>
+
+    <!-- Goals -->
+    <article class="card" id="goalsCard">
+      <div class="card-head"><h2>Goals</h2></div>
+      <form id="goalForm" class="goal-form">
+        <input id="goalName" type="text" placeholder="Goal (e.g. Read books)" required autocomplete="off">
+        <input id="goalTarget" type="number" min="1" step="any" placeholder="Target" required>
+        <input id="goalUnit" type="text" placeholder="Unit" autocomplete="off">
+        <button type="submit">Add</button>
+      </form>
+      <ul id="goalList" class="list goals"></ul>
+    </article>
+
+    <!-- Money -->
+    <article class="card" id="moneyCard">
+      <div class="card-head">
+        <h2>Money</h2>
+        <label class="muted small budget-label">Monthly budget
+          <input id="budgetInput" type="number" min="0" step="any">
+        </label>
+      </div>
+      <div class="budget">
+        <div class="budget-nums"><strong id="spentVal">0</strong><span class="muted" id="budgetLeft"></span></div>
+        <div class="bar"><div id="budgetBar"></div></div>
+      </div>
+      <form id="expenseForm" class="expense-form">
+        <input id="expAmount" type="number" min="0" step="0.01" placeholder="Amount" required>
+        <input id="expNote" type="text" placeholder="What for?" autocomplete="off">
+        <select id="expCat">
+          <option>Food</option><option>Home</option><option>Transport</option>
+          <option>Fun</option><option>Health</option><option>Shopping</option><option>Other</option>
+        </select>
+        <button type="submit">Log</button>
+      </form>
+      <div id="catBreakdown" class="cats"></div>
+      <details>
+        <summary class="muted small">This month's expenses</summary>
+        <ul id="expenseList" class="list compact"></ul>
+      </details>
+    </article>
+
+    <!-- Journal -->
+    <article class="card" id="journalCard">
+      <div class="card-head"><h2>Journal</h2><span class="muted small" id="journalSaved"></span></div>
+      <textarea id="journalInput" rows="6" placeholder="How was today? What are you grateful for?"></textarea>
+      <details>
+        <summary class="muted small">Past entries</summary>
+        <ul id="journalList" class="list compact journal-list"></ul>
+      </details>
+    </article>
+  </main>
+
+  <dialog id="settings">
+    <form method="dialog" class="dialog-body">
+      <h2>Your data</h2>
+      <p class="muted">Everything is stored only in this browser. Export a backup to move it to another device.</p>
+      <label class="field">Your name
+        <input id="nameInput" type="text" placeholder="Optional" autocomplete="off">
+      </label>
+      <label class="field">Currency symbol
+        <input id="currencyInput" type="text" maxlength="3">
+      </label>
+      <div class="row wrap">
+        <button type="button" id="exportBtn">Export backup</button>
+        <label class="button ghost">Import backup<input id="importFile" type="file" accept="application/json" hidden></label>
+        <button type="button" id="resetBtn" class="danger">Reset everything</button>
+      </div>
+      <div class="row end"><button value="close">Done</button></div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
