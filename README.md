@@ -7,8 +7,8 @@ A personal dashboard for your phone. It installs to your home screen like an app
 - **Today's one thing**: a single focus for the day. It clears itself each morning.
 - **At a glance**: tasks done, habits checked today, your best streak, and money spent this month.
 - **Tasks**: add, check off, delete, and clear completed tasks.
-- **Habits**: a 7-day check-in grid with a 🔥 streak count for each habit. Double-click a habit name to remove it.
-- **Wellbeing**: daily mood (1–5), water, sleep and exercise, plus a 14-day mood trend.
+- **Habits**: a 7-day check-in grid with a 🔥 streak count for each habit. Tap ✕ next to a habit to remove it.
+- **Health**: daily mood (1–5), water, sleep and exercise, plus a 14-day mood trend.
 - **Goals**: number-based goals (e.g. 24 books) with +/− buttons and progress bars.
 - **Money**: a monthly budget, quick expense logging by category, and a breakdown by category. The bar turns amber if you're spending faster than the month is passing, and red when you go over budget.
 - **Journal**: one entry per day that saves as you type, with a list of past entries.
