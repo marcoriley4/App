@@ -33,7 +33,9 @@ drop function if exists public.handle_new_user, public.is_staff, public.new_crew
   public.customer_can_read, public.crew_token_active, public.create_job, public.add_customer_file, public.my_jobs,
   public.crew_job, public.crew_add_file, public.jobs_after_insert, public.jobs_before_update, public.jobs_after_update,
   public.private_after_update, public.files_after_change, public.status_label, public.log_event, public.usd,
-  public.doc_total, public.doc_paid, public.docs_before, public.docs_after, public.my_documents, public.respond_estimate cascade;
+  public.doc_total, public.doc_paid, public.docs_before, public.docs_after, public.my_documents, public.respond_estimate,
+  public.my_crew, public.staff_invite_crew, public.staff_revoke_crew, public.crew_invite_info, public.claim_crew_invite,
+  public.crew_my_jobs, public.crew_set_status cascade;
 
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
@@ -57,7 +59,7 @@ $$;
 -- ---------- people ----------
 create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
-  role text not null default 'buyer' check (role in ('buyer', 'staff')),
+  role text not null default 'buyer' check (role in ('buyer', 'staff', 'crew')),
   name text not null default '',
   email text not null default '',
   phone text not null default '',
@@ -89,8 +91,11 @@ create table public.contractors (
   phone text not null default '',
   trades text[] not null default '{}',
   active boolean not null default true,
+  user_id uuid unique references public.profiles(id) on delete set null,   -- their crew login, if any
+  invite_code text unique,                                                 -- one-time crew login invite
   created_at timestamptz not null default now()
 );
+alter table public.profiles add column contractor_id uuid references public.contractors(id) on delete set null;
 
 -- ---------- jobs ----------
 create table public.jobs (
@@ -346,7 +351,7 @@ create table public.settings (
 );
 insert into public.settings (id, data) values (1, jsonb_build_object(
   'name', 'Top Hat Contracting', 'phone', '', 'email', '', 'address', '', 'license', '',
-  'taxRate', 0, 'dueDays', 14,
+  'taxRate', 0, 'dueDays', 14, 'showCrewPay', true,
   'paymentInstructions', E'We accept cash, check, Zelle, card, Venmo and Cash App.\nMake checks payable to Top Hat Contracting.',
   'estimateTerms', 'This estimate is valid for 30 days. Work begins once the estimate is approved.',
   'invoiceTerms', 'Thank you for choosing Top Hat Contracting!'));
@@ -497,11 +502,106 @@ begin
    where id = p_doc;
 end $$;
 
+-- ---------- crew logins ----------
+-- The logged-in crew member's contractor record (null if not crew, or login turned off).
+create function public.my_crew() returns uuid
+language sql stable security definer set search_path = '' as $$
+  select c.id from public.contractors c join public.profiles p on p.id = c.user_id
+   where p.id = auth.uid() and p.role = 'crew' and p.contractor_id = c.id;
+$$;
+
+-- Office: make a one-time invite code for a contractor.
+create function public.staff_invite_crew(p_contractor uuid) returns text
+language plpgsql security definer set search_path = '' as $$
+declare code text;
+begin
+  if not public.is_staff() then raise exception 'Please log in as Top Hat staff.'; end if;
+  if exists (select 1 from public.contractors where id = p_contractor and user_id is not null) then
+    raise exception 'This crew member already has a login.';
+  end if;
+  update public.contractors set invite_code = public.new_crew_token() where id = p_contractor returning invite_code into code;
+  if code is null then raise exception 'Contractor not found.'; end if;
+  return code;
+end $$;
+
+-- Office: turn off a crew login (and any pending invite).
+create function public.staff_revoke_crew(p_contractor uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.is_staff() then raise exception 'Please log in as Top Hat staff.'; end if;
+  update public.profiles set contractor_id = null where id = (select user_id from public.contractors where id = p_contractor);
+  update public.contractors set user_id = null, invite_code = null where id = p_contractor;
+end $$;
+
+create function public.crew_invite_info(p_code text) returns jsonb
+language sql stable security definer set search_path = '' as $$
+  select jsonb_build_object('name', name) from public.contractors
+   where length(coalesce(p_code, '')) >= 32 and invite_code = p_code and user_id is null;
+$$;
+
+-- New account + invite code → crew login linked to that contractor. The code works once.
+create function public.claim_crew_invite(p_code text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare c public.contractors;
+begin
+  if auth.uid() is null then raise exception 'Please create your login first.'; end if;
+  select * into c from public.contractors
+   where length(coalesce(p_code, '')) >= 32 and invite_code = p_code and user_id is null for update;
+  if c.id is null then raise exception 'This invite link has already been used or was cancelled. Ask the office for a new one.'; end if;
+  if exists (select 1 from public.profiles where id = auth.uid() and role <> 'buyer')
+     or exists (select 1 from public.jobs where buyer_id = auth.uid()) then
+    raise exception 'That email already has an account. Use a different email, or ask the office.';
+  end if;
+  update public.profiles set role = 'crew', contractor_id = c.id,
+         name = coalesce(nullif(name, ''), c.name), phone = coalesce(nullif(phone, ''), c.phone)
+   where id = auth.uid();
+  update public.contractors set user_id = auth.uid(), invite_code = null where id = c.id;
+end $$;
+
+-- Crew: their own assigned jobs only. Their pay (if the office allows), never the customer price.
+create function public.crew_my_jobs() returns jsonb
+language plpgsql stable security definer set search_path = '' as $$
+declare cid uuid := public.my_crew(); show_pay boolean;
+begin
+  if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
+  select coalesce((data->>'showCrewPay')::boolean, true) into show_pay from public.settings where id = 1;
+  return (select coalesce(jsonb_agg(jsonb_build_object(
+      'id', j.id, 'number', j.number, 'trade', j.trade, 'status', j.status, 'scheduled_for', j.scheduled_for,
+      'address', j.address, 'zip', j.zip, 'description', j.description,
+      'customer_name', b.name, 'customer_phone', b.phone, 'crew_token', p.crew_token,
+      'crew_pay', case when coalesce(show_pay, true) then p.crew_pay end,
+      'photos', (select count(*) from public.job_files f where f.job_id = j.id and f.source = 'crew' and f.contractor_id = cid)
+    ) order by j.scheduled_for nulls last), '[]'::jsonb)
+    from public.jobs j
+    join public.job_private p on p.job_id = j.id
+    join public.profiles b on b.id = j.buyer_id
+    where j.contractor_id = cid and j.status in ('scheduled', 'in_progress', 'completed'));
+end $$;
+
+-- Crew: mark their own job started or finished.
+create function public.crew_set_status(p_job uuid, p_status text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare cid uuid := public.my_crew(); cur text; who text;
+begin
+  if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
+  select status into cur from public.jobs where id = p_job and contractor_id = cid for update;
+  if cur is null or not ((p_status = 'in_progress' and cur = 'scheduled')
+                      or (p_status = 'completed' and cur in ('scheduled', 'in_progress'))) then
+    raise exception 'That update isn''t available for this job.';
+  end if;
+  update public.jobs set status = p_status where id = p_job;
+  select name into who from public.profiles where id = auth.uid();
+  perform public.log_event(p_job, 'Updated by ' || coalesce(who, 'crew') || ' (crew)');
+end $$;
+
 -- ---------- function permissions ----------
 revoke execute on all functions in schema public from public, anon, authenticated;
 grant execute on function public.is_staff(), public.owns_job(text), public.customer_can_read(text),
   public.create_job(text, text, text, text, text, text), public.add_customer_file(uuid, text, text, text, bigint),
-  public.my_jobs(), public.my_documents(), public.respond_estimate(uuid, boolean) to authenticated;
+  public.my_jobs(), public.my_documents(), public.respond_estimate(uuid, boolean),
+  public.staff_invite_crew(uuid), public.staff_revoke_crew(uuid), public.claim_crew_invite(text),
+  public.crew_my_jobs(), public.crew_set_status(uuid, text) to authenticated;
+grant execute on function public.crew_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_token_active(text), public.crew_job(text),
   public.crew_add_file(text, text, text, text, bigint, text, text) to anon, authenticated;
 -- Trigger and helper functions run with the table owner's rights; no one needs to call them directly.

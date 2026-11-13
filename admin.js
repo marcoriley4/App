@@ -68,7 +68,7 @@
       const f = new FormData(form);
       try {
         const u = await api.auth.signIn(f.get('email'), f.get('password'));
-        if (u.role !== 'staff') { await api.auth.signOut(); throw new Error('That account is a customer account, not Top Hat staff.'); }
+        if (u.role !== 'staff') { await api.auth.signOut(); throw new Error(u.role === 'crew' ? 'That’s a crew login. Crew sign in on the crew page (crew.html).' : 'That account is a customer account, not Top Hat staff.'); }
         location.reload();
       } catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
     } },
@@ -510,6 +510,7 @@
       const patch = Object.fromEntries([...fd.entries()].map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v]));
       patch.taxRate = Number(patch.taxRate) || 0;
       patch.dueDays = Math.max(0, Math.round(Number(patch.dueDays) || 0));
+      patch.showCrewPay = fd.get('showCrewPay') === 'on';
       try { settings = await api.settings.save(patch); saved.hidden = false; setTimeout(() => { saved.hidden = true; }, 1600); }
       catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
     } },
@@ -522,6 +523,9 @@
       f('license', 'License # (optional)'),
       el('h3', { style: 'margin-top:8px' }, 'Defaults'),
       el('div', { class: 'two' }, f('taxRate', 'Tax rate (%)', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01' }), f('dueDays', 'Invoices due in (days)', { type: 'number', inputmode: 'numeric', min: '0', step: '1' })),
+      el('label', { class: 'row', style: 'font-weight:600;align-items:flex-start' },
+        el('input', { type: 'checkbox', name: 'showCrewPay', checked: settings.showCrewPay !== false, style: 'width:22px;height:22px;flex-shrink:0;min-height:0' }),
+        el('span', {}, 'Show crew their pay', el('span', { class: 'hint', style: 'display:block;font-weight:400' }, 'Crew see the “crew pay” you set on each of their jobs. They never see the customer price.'))),
       f('paymentInstructions', 'How customers can pay', { rows: 4 }, 'Shown on every invoice. Include your Zelle phone or email, Venmo and Cash App names, and who checks are payable to.'),
       f('estimateTerms', 'Terms on estimates', { rows: 2 }),
       f('invoiceTerms', 'Notes on invoices', { rows: 2 }),
@@ -541,10 +545,12 @@
           el('div', { class: 'body' },
             el('b', {}, c.name), c.active ? null : el('span', { class: 'muted small' }, ' (inactive)'),
             el('p', { class: 'muted small' }, c.trades.map((id) => tradeOf(id).label).join(', ') || 'No trades set'),
-            el('p', { class: 'small' }, c.phone ? el('a', { href: telHref(c.phone) }, c.phone) : null, ` · ${activeJobs(c.id)} open job${activeJobs(c.id) === 1 ? '' : 's'}`)),
+            el('p', { class: 'small' }, c.phone ? el('a', { href: telHref(c.phone) }, c.phone) : null, ` · ${activeJobs(c.id)} open job${activeJobs(c.id) === 1 ? '' : 's'}`,
+              c.login === 'active' ? el('span', { class: 'pill s-completed', style: 'margin-left:6px' }, '🔑 Login') : c.login === 'invited' ? el('span', { class: 'pill s-qualifying', style: 'margin-left:6px' }, 'Invited') : null)),
           el('button', { class: 'ghost small', onclick: () => crewForm(c) }, 'Edit'))),
     );
-    return [el('div', { class: 'row' }, el('h2', {}, 'Your crew'), el('span', { class: 'spacer' }), el('button', { class: 'gold small', onclick: () => crewForm() }, '+ Add')), list];
+    return [el('div', { class: 'row' }, el('h2', {}, 'Your crew'), el('span', { class: 'spacer' }), el('button', { class: 'gold small', onclick: () => crewForm() }, '+ Add')), list,
+      el('p', { class: 'muted small' }, 'Crew sign in at ', el('a', { href: 'crew.html', target: '_blank' }, new URL('crew.html', location.href).href), '. Open a crew member to invite them.')];
   }
 
   function crewForm(c) {
@@ -552,6 +558,45 @@
     c = c || { name: '', phone: '', trades: [], active: true };
     const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
     const close = closeDrawer;
+
+    // Crew login: invite → they set a password → they see only their own jobs.
+    let loginCard = null;
+    if (editing) {
+      const st = c.login || 'none';
+      const first = c.name.split(' ')[0];
+      const inviteBox = el('div', { class: 'stack' });
+      const showInvite = (code) => {
+        const link = new URL(`crew.html?invite=${code}`, location.href).href;
+        const msg = `Hi ${first}, here's your Top Hat crew login invite. Tap to set your password and see your jobs: ${link}`;
+        inviteBox.replaceChildren(el('div', { class: 'share-box' },
+          el('span', { class: 'small' }, 'Invite link. It works once, only for ' + first + ':'),
+          el('div', { class: 'row' },
+            ...[c.phone ? el('a', { class: 'btn gold small', style: 'flex:1', href: smsHref(c.phone, msg) }, '💬 Text invite') : null,
+              el('button', { type: 'button', class: 'ghost small', style: 'flex:1', onclick: async (e) => {
+                try { await navigator.clipboard.writeText(link); e.currentTarget.textContent = 'Copied ✓'; } catch { prompt('Copy this invite link:', link); }
+              } }, 'Copy link')].filter(Boolean))));
+      };
+      if (st === 'invited' && c.inviteCode) showInvite(c.inviteCode);
+      const refresh = async () => { await load(); crewForm(crew.find((x) => x.id === c.id)); };
+      loginCard = el('section', { class: 'card stack', style: 'margin-top:6px' },
+        el('div', { class: 'row' }, el('h3', {}, '🔑 Crew login'), el('span', { class: 'spacer' }),
+          el('span', { class: 'pill ' + (st === 'active' ? 's-completed' : st === 'invited' ? 's-qualifying' : '') }, st === 'active' ? 'Active' : st === 'invited' ? 'Invite sent' : 'No login')),
+        el('p', { class: 'muted small' }, st === 'active'
+          ? `${first} signs in on the crew page with ${c.loginEmail}. They see only their own jobs${settings.showCrewPay !== false ? ' and their pay' : ''}, never customer prices.`
+          : `Invite ${first} to set up a login. They’ll see all their jobs in one place, send photos, and mark jobs started or finished. They never see customer prices.`),
+        inviteBox,
+        st !== 'active' ? el('button', { type: 'button', class: st === 'invited' ? 'ghost' : 'gold', onclick: async (e) => {
+          e.currentTarget.disabled = true;
+          try { await api.contractors.invite(c.id); await refresh(); }
+          catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; e.currentTarget.disabled = false; }
+        } }, st === 'invited' ? 'Make a new invite link (old one stops working)' : 'Create invite link') : null,
+        st !== 'none' ? el('button', { type: 'button', class: 'link', style: 'color:var(--bad)', onclick: async () => {
+          if (!confirm(st === 'active' ? `Turn off ${first}'s crew login? They won't be able to sign in until you invite them again.` : 'Cancel this invite?')) return;
+          await api.contractors.revokeLogin(c.id); await refresh();
+        } }, st === 'active' ? 'Turn off login' : 'Cancel invite') : null,
+      );
+    }
+
     const form = el('form', { class: 'panel-body', onsubmit: async (e) => {
       e.preventDefault();
       const f = new FormData(form);
@@ -568,6 +613,7 @@
           el('label', { class: 'choice' }, el('input', { type: 'checkbox', name: 'trades', value: t.id, checked: c.trades.includes(t.id) }), el('span', {}, `${t.icon} ${t.label}`))))),
       el('label', { class: 'row', style: 'font-weight:600' }, el('input', { type: 'checkbox', name: 'active', checked: c.active, style: 'width:22px;height:22px' }), 'Active (can be assigned jobs)'),
       el('button', { type: 'submit' }, editing ? 'Save' : 'Add to crew'),
+      loginCard,
       editing ? el('button', { type: 'button', class: 'link', style: 'color:var(--bad)', onclick: async () => {
         if (!confirm(`Remove ${c.name} from your crew? Their jobs will become unassigned.`)) return;
         await api.contractors.remove(c.id); await load(); close();

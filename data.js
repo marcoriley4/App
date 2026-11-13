@@ -136,7 +136,7 @@
 
   const DEFAULT_SETTINGS = {
     name: 'Top Hat Contracting', phone: '', email: '', address: '', license: '',
-    taxRate: 0, dueDays: 14,
+    taxRate: 0, dueDays: 14, showCrewPay: true,
     paymentInstructions: 'We accept cash, check, Zelle, card, Venmo and Cash App.\nMake checks payable to Top Hat Contracting.',
     estimateTerms: 'This estimate is valid for 30 days. Work begins once the estimate is approved.',
     invoiceTerms: 'Thank you for choosing Top Hat Contracting!',
@@ -154,18 +154,20 @@
     const H = 3600 * 1000;
     const pw = await hash('tophat');
     const buyerPw = await hash('demo1234');
-    const c1 = uid(), c2 = uid(), c3 = uid();
+    const c1 = uid(), c2 = uid(), c3 = uid(), cu3 = uid();
+    const crewPw = await hash('crew1234');
     const b1 = uid(), b2 = uid();
     return {
       users: [
         { id: uid(), role: 'staff', name: 'Top Hat Office', email: 'office@tophat.demo', phone: '', password: pw, created: now },
         { id: b1, role: 'buyer', name: 'Dana Whitfield', email: 'dana@example.com', phone: '(555) 201-3344', password: buyerPw, created: now - 30 * H },
+        { id: cu3, role: 'crew', contractorId: c3, name: 'Ray Johnson', email: 'ray@tophat.demo', phone: '(555) 300-4455', password: crewPw, created: now - 200 * H },
         { id: b2, role: 'buyer', name: 'Luis Romero', email: 'luis@example.com', phone: '(555) 410-9821', password: buyerPw, created: now - 75 * H },
       ],
       contractors: [
         { id: c1, name: 'Mike Alvarez', phone: '(555) 300-1122', trades: ['plumbing', 'hvac'], active: true },
         { id: c2, name: 'Sarah Kim', phone: '(555) 300-7788', trades: ['painting', 'drywall', 'flooring'], active: true },
-        { id: c3, name: 'Ray Johnson', phone: '(555) 300-4455', trades: ['roofing', 'remodel', 'electrical'], active: true },
+        { id: c3, name: 'Ray Johnson', phone: '(555) 300-4455', trades: ['roofing', 'remodel', 'electrical'], active: true, userId: cu3, inviteCode: null },
       ],
       jobs: [
         {
@@ -243,6 +245,14 @@
     const u = await me();
     if (!u || u.role !== 'staff') throw new Error('Please log in as Top Hat staff.');
     return u;
+  }
+  // Logged-in crew member and their contractor record.
+  async function requireCrew() {
+    const d = await db();
+    const u = d.users.find((x) => x.id === getSession());
+    const c = u && u.role === 'crew' && d.contractors.find((x) => x.id === u.contractorId && x.userId === u.id);
+    if (!c) throw new Error('Your crew login is turned off. Ask the Top Hat office if this is a mistake.');
+    return { d, u, c };
   }
 
   async function withUrl(f) {
@@ -571,21 +581,99 @@
     },
 
     contractors: {
-      async list() { await requireStaff(); return (await db()).contractors.slice(); },
+      async list() {
+        await requireStaff();
+        const d = await db();
+        return d.contractors.map((c) => {
+          const u = c.userId && d.users.find((x) => x.id === c.userId);
+          return { ...c, login: u ? 'active' : c.inviteCode ? 'invited' : 'none', loginEmail: u ? u.email : '' };
+        });
+      },
       async save(c) {
         await requireStaff();
         if (!c.name?.trim()) throw new Error('Contractor needs a name.');
         const d = await db();
+        const fields = { name: c.name.trim(), phone: (c.phone || '').trim(), trades: c.trades || [], active: c.active !== false };
         const existing = d.contractors.find((x) => x.id === c.id);
-        if (existing) Object.assign(existing, c);
-        else d.contractors.push({ id: uid(), active: true, trades: [], ...c });
+        if (existing) Object.assign(existing, fields);
+        else d.contractors.push({ id: uid(), userId: null, inviteCode: null, ...fields });
         writeDb(d);
       },
       async remove(id) {
         await requireStaff();
         const d = await db();
+        const c = d.contractors.find((x) => x.id === id);
+        if (c && c.userId) { const u = d.users.find((x) => x.id === c.userId); if (u) u.contractorId = null; }
         d.contractors = d.contractors.filter((x) => x.id !== id);
-        d.jobs.forEach((j) => { if (j.contractorId === id) j.contractorId = null; });
+        d.jobs.forEach((j) => { if (j.contractorId === id) { j.contractorId = null; j.crewToken = null; } });
+        writeDb(d);
+      },
+      // Staff: one-time invite code so this contractor can set up a crew login.
+      async invite(id) {
+        await requireStaff();
+        const d = await db();
+        const c = d.contractors.find((x) => x.id === id);
+        if (!c) throw new Error('Contractor not found.');
+        if (c.userId) throw new Error(`${c.name} already has a crew login.`);
+        c.inviteCode = newToken();
+        writeDb(d);
+        return c.inviteCode;
+      },
+      // Staff: turn off a contractor's crew login (and any pending invite).
+      async revokeLogin(id) {
+        await requireStaff();
+        const d = await db();
+        const c = d.contractors.find((x) => x.id === id);
+        if (!c) return;
+        const u = c.userId && d.users.find((x) => x.id === c.userId);
+        if (u) u.contractorId = null;
+        c.userId = null; c.inviteCode = null;
+        writeDb(d);
+      },
+    },
+
+    // Crew login: invite → own password → see only their own assigned jobs. Never customer prices.
+    crewPortal: {
+      async inviteInfo(code) {
+        const d = await db();
+        const c = code && code.length >= 32 && d.contractors.find((x) => x.inviteCode === code);
+        return c ? { name: c.name } : null;
+      },
+      async acceptInvite(code, { email, password }) {
+        const d = await db();
+        const c = code && code.length >= 32 && d.contractors.find((x) => x.inviteCode === code);
+        if (!c) throw new Error('This invite link has already been used or was cancelled. Ask the office for a new one.');
+        email = normEmail(email);
+        if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error('Please enter a valid email address.');
+        if (!password || password.length < 8) throw new Error('Password must be at least 8 characters.');
+        if (d.users.some((u) => u.email === email)) throw new Error('That email already has an account. Use a different email, or ask the office.');
+        const user = { id: uid(), role: 'crew', contractorId: c.id, name: c.name, email, phone: c.phone || '', password: await hash(password), created: Date.now() };
+        d.users.push(user);
+        c.userId = user.id; c.inviteCode = null;
+        writeDb(d); setSession(user.id);
+        return clean(user);
+      },
+      async jobs() {
+        const { d, c } = await requireCrew();
+        const showPay = d.settings.showCrewPay !== false;
+        return d.jobs.filter((j) => j.contractorId === c.id && ['scheduled', 'in_progress', 'completed'].includes(j.status)).map((j) => {
+          const b = d.users.find((u) => u.id === j.buyerId) || {};
+          return {
+            id: j.id, number: j.number, trade: j.trade, status: j.status, scheduledFor: j.scheduledFor,
+            address: j.address, zip: j.zip, description: j.description,
+            customerName: b.name || '', customerPhone: b.phone || '',
+            crewToken: j.crewToken, crewPay: showPay ? j.crewPay : null,
+            photos: j.files.filter((f) => f.source === 'crew' && f.contractorId === c.id).length,
+          };
+        });
+      },
+      async setStatus(jobId, status) {
+        const { d, c, u } = await requireCrew();
+        const j = d.jobs.find((x) => x.id === jobId && x.contractorId === c.id);
+        const ok = j && ((status === 'in_progress' && j.status === 'scheduled') || (status === 'completed' && ['scheduled', 'in_progress'].includes(j.status)));
+        if (!ok) throw new Error('That update isn’t available for this job.');
+        j.status = status;
+        j.log.push({ at: Date.now(), text: `Status → ${STATUSES.find((x) => x.id === status).label} (by ${u.name}, crew)` });
         writeDb(d);
       },
     },

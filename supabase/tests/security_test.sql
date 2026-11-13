@@ -235,6 +235,94 @@ end $$;
 select t.ok(public.crew_job(current_setting('t.token2'))::text !~ 'E-1001|INV-1001|422', 'crew link shows no documents or totals');
 reset role;
 
+-- ========== Crew logins ==========
+\set C '44444444-4444-4444-4444-444444444444'
+\set D '55555555-5555-5555-5555-555555555555'
+insert into auth.users (id, email, raw_user_meta_data) values (:'C', 'ray@crew.test', '{"name":"Ray J"}'), (:'D', 'dave@crew.test', '{}');
+
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+do $$ begin
+  begin perform public.staff_invite_crew((select id from public.contractors limit 1)); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'customer cannot create crew invites'); end;
+end $$;
+reset role;
+
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+select set_config('t.invite', public.staff_invite_crew((select id from public.contractors where name = 'Ray Johnson')), false);
+select t.ok(length(current_setting('t.invite')) >= 32, 'office makes a long invite code');
+reset role;
+
+select set_config('request.jwt.claim.sub', '', false);
+set role anon;
+select t.ok((public.crew_invite_info(current_setting('t.invite'))->>'name') = 'Ray Johnson', 'invite link shows who it is for');
+select t.ok(public.crew_invite_info(left(current_setting('t.invite'), 20)) is null, 'partial invite code shows nothing');
+do $$ begin
+  begin perform public.crew_my_jobs(); perform t.ok(false, 'x');
+  exception when insufficient_privilege then perform t.ok(true, 'not-logged-in cannot list crew jobs'); end;
+end $$;
+reset role;
+
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+do $$ begin
+  begin perform public.claim_crew_invite(current_setting('t.invite')); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'existing customer account cannot become crew'); end;
+  begin perform public.crew_my_jobs(); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'customer cannot list crew jobs'); end;
+end $$;
+reset role;
+
+select set_config('request.jwt.claim.sub', :'C', false);
+set role authenticated;
+select public.claim_crew_invite(current_setting('t.invite'));
+select t.ok((select role from public.profiles where id = :'C') = 'crew', 'invite turns new login into crew');
+select t.ok(jsonb_array_length(public.crew_my_jobs()) = 1, 'crew sees their assigned job');
+select t.ok(public.crew_my_jobs()::text ~ '1150.5', 'crew sees their own pay');
+select t.ok(public.crew_my_jobs()::text !~ '422.28|"price"|Gate code|ann@example|E-1001|INV-1001', 'crew never sees customer price, notes, email or documents');
+select t.ok((select count(*) from public.jobs) = 0 and (select count(*) from public.job_private) = 0 and (select count(*) from public.documents) = 0 and (select count(*) from public.contractors) = 0,
+  'crew cannot read any tables directly');
+select public.crew_set_status(current_setting('t.job')::uuid, 'in_progress');
+do $$ begin
+  begin perform public.crew_set_status(current_setting('t.job')::uuid, 'lost'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'crew can only mark started or finished'); end;
+  begin perform public.crew_set_status(gen_random_uuid(), 'completed'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'crew cannot update jobs that are not theirs'); end;
+end $$;
+reset role;
+select t.ok((select status from public.jobs where id = current_setting('t.job')::uuid) = 'in_progress', 'crew marked job started');
+select t.ok(exists (select 1 from public.job_events where text = 'Updated by Ray J (crew)'), 'crew update logged with name');
+
+select set_config('request.jwt.claim.sub', :'D', false);
+set role authenticated;
+do $$ begin
+  begin perform public.claim_crew_invite(current_setting('t.invite')); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'invite code works only once'); end;
+end $$;
+reset role;
+
+update public.settings set data = data || '{"showCrewPay": false}';
+select set_config('request.jwt.claim.sub', :'C', false);
+set role authenticated;
+select t.ok(public.crew_my_jobs()::text !~ '1150', 'crew pay hidden when office switches it off');
+reset role;
+update public.settings set data = data || '{"showCrewPay": true}';
+
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+select public.staff_revoke_crew((select id from public.contractors where name = 'Ray Johnson'));
+reset role;
+select set_config('request.jwt.claim.sub', :'C', false);
+set role authenticated;
+do $$ begin
+  begin perform public.crew_my_jobs(); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'turned-off crew login sees nothing'); end;
+  begin perform public.crew_set_status(current_setting('t.job')::uuid, 'completed'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'turned-off crew login cannot update jobs'); end;
+end $$;
+reset role;
+
 -- ========== Closed job: crew link off ==========
 select set_config('request.jwt.claim.sub', :'S', false);
 set role authenticated;

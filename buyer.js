@@ -34,6 +34,8 @@
     const nav = document.getElementById('nav');
     if (me && me.role === 'staff') {
       nav.replaceChildren(el('a', { class: 'btn ghost small', href: 'admin.html' }, 'Staff area'));
+    } else if (me && me.role === 'crew') {
+      nav.replaceChildren(el('a', { class: 'btn ghost small', href: 'crew.html' }, 'My crew jobs'));
     } else if (me) {
       nav.replaceChildren(
         el('a', { class: 'btn ghost small', href: '#/jobs' }, 'My jobs'),
@@ -291,6 +293,7 @@
       try {
         const u = await api.auth.signIn(f.get('email'), f.get('password'));
         if (u.role === 'staff') { location.href = 'admin.html'; return; }
+        if (u.role === 'crew') { location.href = 'crew.html'; return; }
         if (next === 'request') { draft.step = 2; saveDraft(); }
         go(next);
       } catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }

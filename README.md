@@ -21,6 +21,7 @@ A job-request app for Top Hat Contracting. Customers post a job and create an ac
 - **Estimates & invoices:** create them from any job, prefilled with the customer, job number, address and description. Add line items and tax, then **Send to customer**. The customer sees it in My jobs and can **approve an estimate with one tap**, which also sets the job's customer price. You can **turn an approved estimate into an invoice** in one tap, and **record payments** by cash, check, Zelle, card, Venmo, Cash App or other, including partial payments. The invoice shows Partly paid, Paid or Overdue on its own. You can add an optional Square or Stripe **"Pay by card" link**, text or email the customer a link, void an invoice, and **print or save a PDF**. Approved estimates and paid invoices are locked. **Crew pay never appears** on any estimate or invoice.
 - **Business tab:** company name, phone, email, address, license #, default tax rate, invoice due days, "how customers can pay" (Zelle, Venmo and so on), and default terms. All of these print on every estimate and invoice.
 - **Crew:** add, edit or deactivate your contractors and the trades they cover.
+- **Crew login:** open a crew member and tap **Create invite link**, then **Text invite**. The link works once and only for that person. They set their own email and password, then sign in at `crew.html` to see **only the jobs assigned to them**: date, address, customer name and phone, and the job description. From there they can send photos and tap **Started** or **Finished**, which updates the job's status (shown in the job history with their name). They see their **own crew pay** and totals, and you can switch that off under **Business → Show crew their pay**. **Turn off login** removes access right away. Crew can still use the per-job photo link from the job text without logging in.
 
 ### Who sees what
 
@@ -28,12 +29,13 @@ A job-request app for Top Hat Contracting. Customers post a job and create an ac
 |---|---|---|---|
 | Job details, address, schedule | ✓ | ✓ | ✓ (via text) |
 | Customer price | ✓ | only in documents you share | **never** |
-| Crew pay and profit | ✓ | **never** | **never** |
+| Crew pay | ✓ | **never** | their own only (can be switched off) |
+| Profit | ✓ | **never** | **never** |
 | Internal notes and activity | ✓ | never | never |
 | Estimates & invoices | ✓ (incl. drafts) | the ones you send (never drafts) | **never** |
 | Files | ✓ | only files marked "Customer can see" | only the photos they uploaded |
 
-Crew don't log in. They receive the job text and use the photo upload link. Neither includes prices, the customer's budget, staff notes or other files. On the upload page they see only the job basics and the photos they sent themselves. Crew photos start out hidden from the customer.
+Crew either sign in with their crew login, or just use the photo upload link from the job text. Neither includes prices, the customer's budget, staff notes or other files. On the upload page they see only the job basics and the photos they sent themselves. Crew photos start out hidden from the customer.
 
 Status names: staff see *New lead, Qualifying, Scheduled, In progress, Completed, Not a fit*. Customers see *Received, Reviewing, Scheduled, In progress, Completed, Closed*.
 
@@ -43,6 +45,7 @@ Right now all data is saved in the browser (`localStorage`, with files in Indexe
 
 1. Open `index.html` and request a job.
 2. Open `admin.html` and log in with **office@tophat.demo** / **tophat**.
+3. Open `crew.html` and log in as a crew member with **ray@tophat.demo** / **crew1234**.
 
 Sample leads and crew are included. Use **Reset preview data** at the bottom of the staff area to start over.
 
@@ -64,7 +67,7 @@ Who-sees-what is enforced by the database (row-level security and storage polici
 - Prices, crew pay and notes live in the staff-only `job_private` table.
 - Crew reach a job only through its private upload code.
 
-`supabase/` also holds the security test that runs the schema against Postgres and checks each rule (76 checks).
+`supabase/` also holds the security test that runs the schema against Postgres and checks each rule (96 checks).
 
 ## Run it locally
 
@@ -78,7 +81,7 @@ python3 -m http.server 8000
 
 - `index.html`, `buyer.js`: customer site
 - `admin.html`, `admin.js`: staff area
-- `crew.html`, `crew.js`: crew photo upload page (opened from the link in the job text)
+- `crew.html`, `crew.js`: crew sign-in and My jobs, crew invite setup, and the per-job photo upload page
 - `data.js`: preview data layer (`TH.api`, browser storage), plus the lists of trades, timeframes, budgets and statuses
 - `supabase-backend.js`: live data layer (same `TH.api`, backed by Supabase)
 - `config.js`: Supabase project URL and publishable key (empty = preview mode)

@@ -327,7 +327,12 @@
       async list() {
         await requireStaff();
         const rows = await fetchAll(() => sb.from('contractors').select('*').order('name'));
-        return rows.map((c) => ({ id: c.id, name: c.name, phone: c.phone, trades: c.trades || [], active: c.active }));
+        const ids = rows.map((c) => c.user_id).filter(Boolean);
+        const emails = ids.length ? Object.fromEntries(must(await sb.from('profiles').select('id, email').in('id', ids)).map((p) => [p.id, p.email])) : {};
+        return rows.map((c) => ({
+          id: c.id, name: c.name, phone: c.phone, trades: c.trades || [], active: c.active,
+          login: c.user_id ? 'active' : c.invite_code ? 'invited' : 'none', inviteCode: c.invite_code || null, loginEmail: emails[c.user_id] || '',
+        }));
       },
       async save(c) {
         await requireStaff();
@@ -338,7 +343,53 @@
       },
       async remove(id) {
         await requireStaff();
+        must(await sb.rpc('staff_revoke_crew', { p_contractor: id }));
         must(await sb.from('contractors').delete().eq('id', id));
+      },
+      async invite(id) {
+        await requireStaff();
+        return must(await sb.rpc('staff_invite_crew', { p_contractor: id }));
+      },
+      async revokeLogin(id) {
+        await requireStaff();
+        must(await sb.rpc('staff_revoke_crew', { p_contractor: id }));
+      },
+    },
+
+    crewPortal: {
+      async inviteInfo(code) {
+        if (!code || code.length < 32) return null;
+        return must(await sb.rpc('crew_invite_info', { p_code: code })) || null;
+      },
+      async acceptInvite(code, { email, password }) {
+        const info = await api.crewPortal.inviteInfo(code);
+        if (!info) throw new Error('This invite link has already been used or was cancelled. Ask the office for a new one.');
+        email = normEmail(email);
+        if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error('Please enter a valid email address.');
+        if (!password || password.length < 8) throw new Error('Password must be at least 8 characters.');
+        const data = must(await sb.auth.signUp({ email, password, options: { data: { name: info.name } } }));
+        if (!data.session) {
+          if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+            throw new Error('That email already has an account. Use a different email, or ask the office.');
+          }
+          throw new Error('Check your email for a link to confirm your address, then open this invite again.');
+        }
+        const { error } = await sb.rpc('claim_crew_invite', { p_code: code });
+        if (error) { await sb.auth.signOut(); profile = null; throw new Error(friendly(error)); }
+        profile = null;
+        return me();
+      },
+      async jobs() {
+        const list = must(await sb.rpc('crew_my_jobs')) || [];
+        return list.map((j) => ({
+          id: j.id, number: j.number, trade: j.trade, status: j.status, scheduledFor: local16(j.scheduled_for),
+          address: j.address, zip: j.zip, description: j.description,
+          customerName: j.customer_name || '', customerPhone: j.customer_phone || '',
+          crewToken: j.crew_token || null, crewPay: num(j.crew_pay), photos: Number(j.photos) || 0,
+        }));
+      },
+      async setStatus(jobId, status) {
+        must(await sb.rpc('crew_set_status', { p_job: jobId, p_status: status }));
       },
     },
 
