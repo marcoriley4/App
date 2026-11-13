@@ -43,7 +43,25 @@ Right now all data is saved in the browser (`localStorage`, with files in Indexe
 
 Sample leads and crew are included. Use **Reset preview data** at the bottom of the staff area to start over.
 
-**Next step to go live:** connect a hosted database, file storage and login service (Supabase is the plan), so leads and files are shared across every phone and computer. All data access goes through `TH.api` in `data.js`, so only that file changes. The staff-only rules above must then be enforced by the database's access rules, not just hidden in the screens.
+## Going live (Supabase)
+
+The app switches from preview mode to the live database as soon as `config.js` has a Supabase project URL and publishable (anon) key.
+
+1. Create a Supabase project.
+2. Run `supabase/schema.sql` once in the project's SQL Editor. It creates the tables, job numbers, file storage and all the security rules, and refuses to run again once real jobs exist.
+3. In **Authentication → Sign In / Providers → Email**, turn off **Confirm email**, so customers can send their request right after signing up. Set **Authentication → URL Configuration → Site URL** to the app's address.
+4. Create staff logins under **Authentication → Users → Add user**. Then mark them as staff in the SQL Editor:
+   ```sql
+   update public.profiles set role = 'staff' where email = 'office@yourcompany.com';
+   ```
+5. Put the project URL and publishable key in `config.js`. Never use the secret / service_role key.
+
+Who-sees-what is enforced by the database (row-level security and storage policies in `schema.sql`):
+- Customers only reach their own jobs, through `my_jobs()`.
+- Prices, crew pay and notes live in the staff-only `job_private` table.
+- Crew reach a job only through its private upload code.
+
+`supabase/` also holds the security test that runs the schema against Postgres and checks each rule.
 
 ## Run it locally
 
@@ -58,5 +76,9 @@ python3 -m http.server 8000
 - `index.html`, `buyer.js`: customer site
 - `admin.html`, `admin.js`: staff area
 - `crew.html`, `crew.js`: crew photo upload page (opened from the link in the job text)
-- `data.js`: data layer (`TH.api`), plus the lists of trades, timeframes, budgets and statuses
+- `data.js`: preview data layer (`TH.api`, browser storage), plus the lists of trades, timeframes, budgets and statuses
+- `supabase-backend.js`: live data layer (same `TH.api`, backed by Supabase)
+- `config.js`: Supabase project URL and publishable key (empty = preview mode)
+- `supabase/schema.sql`: database setup and security rules
+- `vendor/supabase-2.118.0.js`: Supabase JavaScript client (MIT license)
 - `styles.css`: shared styling

@@ -198,6 +198,12 @@
     if (!dbPromise) dbPromise = (async () => { let d = readDb(); if (!d) { d = await seed(); } migrate(d); writeDb(d); return d; })();
     return dbPromise;
   }
+  function validateSignUp({ name, email, phone, password }) {
+    if (!name?.trim()) throw new Error('Please enter your name.');
+    if (!/^\S+@\S+\.\S+$/.test(normEmail(email))) throw new Error('Please enter a valid email address.');
+    if (digits(phone).length < 10) throw new Error('Please enter a phone number we can call, with area code.');
+    if (!password || password.length < 8) throw new Error('Password must be at least 8 characters.');
+  }
   const clean = (u) => u && { id: u.id, role: u.role, name: u.name, email: u.email, phone: u.phone };
   const normEmail = (e) => String(e || '').trim().toLowerCase();
   const digits = (p) => String(p || '').replace(/\D/g, '');
@@ -226,10 +232,7 @@
       async signUp({ name, email, phone, password }) {
         const d = await db();
         email = normEmail(email);
-        if (!name?.trim()) throw new Error('Please enter your name.');
-        if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error('Please enter a valid email address.');
-        if (digits(phone).length < 10) throw new Error('Please enter a phone number we can call, with area code.');
-        if (!password || password.length < 8) throw new Error('Password must be at least 8 characters.');
+        validateSignUp({ name, email, phone, password });
         if (d.users.some((u) => u.email === email)) throw new Error('An account with that email already exists. Try logging in.');
         const user = { id: uid(), role: 'buyer', name: name.trim(), email, phone: phone.trim(), password: await hash(password), created: Date.now() };
         d.users.push(user); writeDb(d); setSession(user.id);
@@ -275,6 +278,12 @@
             sharedFiles: j.files.filter((f) => f.shared).length,
           };
         });
+      },
+      // Staff: a job's activity history, oldest first.
+      async log(id) {
+        await requireStaff();
+        const j = (await db()).jobs.find((x) => x.id === id);
+        return j ? j.log.slice() : [];
       },
       // Staff view: everything, with buyer contact details attached.
       async all() {
@@ -470,5 +479,5 @@
     });
   }
 
-  window.TH = { api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+  window.TH = { _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();

@@ -137,7 +137,7 @@
     const j = jobs.find((x) => x.id === id);
     if (!j) return;
     releaseUrls();
-    const files = await api.files.list(j.id);
+    const [files, history] = await Promise.all([api.files.list(j.id), api.jobs.log(j.id)]);
     fileUrls = files.map((f) => f.url).filter(Boolean);
     const t = tradeOf(j.trade);
     const close = closeDrawer;
@@ -270,7 +270,7 @@
               el('select', { 'aria-label': `Type of ${f.name}`, onchange: (e) => fileUpdate(f.id, { kind: e.target.value }) },
                 ...FILE_KINDS.map((x) => el('option', { value: x.id, selected: x.id === f.kind }, x.label))),
               f.stage ? el('span', { class: 'pill' }, (find(PHOTO_STAGES, f.stage) || {}).label || f.stage) : null,
-              el('span', {}, `${fileSize(f.size)} · ${new Date(f.uploaded).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}${f.source === 'crew' ? ` · from ${f.by}` : ''}`)),
+              el('span', {}, `${fileSize(f.size)} · ${new Date(f.uploaded).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}${f.source === 'crew' ? ` · from ${f.by}` : f.source === 'customer' ? ` · from customer${f.by ? ` (${f.by})` : ''}` : ''}`)),
             f.note ? el('p', { class: 'small', style: 'font-style:italic' }, `“${f.note}”`) : null,
             el('label', { class: 'share' },
               el('input', { type: 'checkbox', checked: f.shared, onchange: (e) => fileUpdate(f.id, { shared: e.target.checked }) }),
@@ -309,7 +309,7 @@
     // Activity
     const log = el('section', { class: 'card stack' },
       el('h3', {}, 'Activity'),
-      el('ul', { class: 'log' }, ...j.log.slice().reverse().map((l) => el('li', {},
+      el('ul', { class: 'log' }, ...history.slice().reverse().map((l) => el('li', {},
         el('span', {}, new Date(l.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })), el('span', {}, l.text)))),
     );
 

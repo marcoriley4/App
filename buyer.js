@@ -12,9 +12,9 @@
   /* ---------- draft (survives a refresh while filling the form) ---------- */
   const emptyDraft = () => ({ step: 1, trade: '', description: '', address: '', zip: '', timeframe: '', budget: '', photos: [] });
   let draft = emptyDraft();
-  try { draft = { ...draft, ...JSON.parse(sessionStorage.getItem(DRAFT_KEY) || '{}') }; } catch (e) { /* ignore */ }
-  function saveDraft() { try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch (e) { /* photos may not fit; fine */ } }
-  function clearDraft() { draft = emptyDraft(); try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) { /* ignore */ } }
+  try { draft = { ...draft, ...JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}') }; } catch (e) { /* ignore */ }
+  function saveDraft() { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch (e) { /* photos may not fit; fine */ } }
+  function clearDraft() { draft = emptyDraft(); try { localStorage.removeItem(DRAFT_KEY); } catch (e) { /* ignore */ } }
 
   /* ---------- routing ---------- */
   const routes = { '': home, request, done, jobs: myJobs, login };
