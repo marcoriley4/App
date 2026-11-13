@@ -12,7 +12,7 @@ A job-request app for Top Hat Contracting. Customers post a job and create an ac
 
 **Top Hat staff** (`admin.html`)
 - **Leads:** every request, with counts by status, an open-job value total, filters and search.
-- **Lead details:** call, text or email the customer in one tap. Set the status, pick a crew (★ marks crews who do that kind of work), set the date and estimated value, and keep internal notes the customer never sees. Each lead also keeps an activity history.
+- **Lead details:** call, text or email the customer in one tap. Set the status, pick a crew (★ marks crews who do that kind of work), set the date, and keep internal notes the customer never sees. Each lead also keeps an activity history.
 - **Job numbers:** every job gets a number like **TH-1042**. Search by number, name, phone or address.
 - **Money (staff only):** each job has a **customer price** (what the customer pays) and a **crew pay** (what Top Hat pays the contractor). The app shows Top Hat's profit and margin.
 - **Files, one folder per job:** upload estimates, contracts, invoices, receipts, permits and photos to the job. The file type is guessed from the file name and can be changed. A checklist shows whether the estimate, contract and invoice are in. The customer's own request photos are included.
