@@ -62,6 +62,17 @@
 
   /* ---------- storage ---------- */
   function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36); }
+  // Long random code for a job's private crew upload link (unguessable).
+  function newToken() {
+    const a = new Uint8Array(16);
+    (window.crypto || {}).getRandomValues ? crypto.getRandomValues(a) : a.forEach((_, i) => { a[i] = Math.random() * 256; });
+    return [...a].map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  const PHOTO_STAGES = [
+    { id: 'before', label: 'Before' },
+    { id: 'during', label: 'During' },
+    { id: 'after', label: 'After' },
+  ];
   function readDb() {
     try {
       const raw = localStorage.getItem(DB_KEY);
@@ -161,7 +172,7 @@
           id: uid(), buyerId: b1, trade: 'roofing', status: 'scheduled', created: now - 70 * H,
           description: 'A few shingles blew off in last week\'s storm. Need them replaced and the roof checked.',
           address: '42 Maple Ave, Springfield', zip: '62704', timeframe: '2weeks', budget: '1-5k', photos: [],
-          number: 1003, files: [], contractorId: c3, scheduledFor: (() => { const t = new Date(now + 48 * H); t.setHours(9, 0, 0, 0); return new Date(t - t.getTimezoneOffset() * 60e3).toISOString().slice(0, 16); })(), price: 1800, crewPay: 1150, notes: 'Insurance claim filed.',
+          number: 1003, files: [], contractorId: c3, crewToken: newToken(), scheduledFor: (() => { const t = new Date(now + 48 * H); t.setHours(9, 0, 0, 0); return new Date(t - t.getTimezoneOffset() * 60e3).toISOString().slice(0, 16); })(), price: 1800, crewPay: 1150, notes: 'Insurance claim filed.',
           log: [{ at: now - 70 * H, text: 'Lead received' }, { at: now - 60 * H, text: 'Status → Qualifying' }, { at: now - 40 * H, text: 'Status → Scheduled · Ray Johnson' }],
         },
       ],
@@ -177,6 +188,7 @@
       if (!j.files) j.files = [];
       if ('value' in j) { if (j.price == null) j.price = j.value; delete j.value; }
       if (!('crewPay' in j)) j.crewPay = null;
+      if (j.contractorId && !j.crewToken) j.crewToken = newToken();
     });
     return d;
   }
@@ -281,7 +293,11 @@
         const label = (s) => STATUSES.find((x) => x.id === s)?.label || s;
         const cname = (cid) => d.contractors.find((c) => c.id === cid)?.name || 'nobody';
         if ('status' in patch && patch.status !== j.status) j.log.push({ at: Date.now(), text: `Status → ${label(patch.status)}` });
-        if ('contractorId' in patch && patch.contractorId !== j.contractorId) j.log.push({ at: Date.now(), text: `Assigned to ${cname(patch.contractorId)}` });
+        if ('contractorId' in patch && patch.contractorId !== j.contractorId) {
+          j.log.push({ at: Date.now(), text: `Assigned to ${cname(patch.contractorId)}` });
+          // New crew → new upload link, so the previous crew's link stops working.
+          j.crewToken = patch.contractorId ? newToken() : null;
+        }
         if ('scheduledFor' in patch && patch.scheduledFor !== j.scheduledFor && patch.scheduledFor) j.log.push({ at: Date.now(), text: `Scheduled for ${new Date(patch.scheduledFor).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}` });
         const usd = (n) => n == null ? 'cleared' : '$' + Number(n).toLocaleString();
         if ('price' in patch && patch.price !== j.price) j.log.push({ at: Date.now(), text: `Customer price → ${usd(patch.price)}` });
@@ -344,6 +360,43 @@
           const { id, name, kind, size, uploaded, url } = await withUrl(f);
           return { id, name, kind, size, uploaded, url };
         }));
+      },
+    },
+
+    // Crew upload link: no login, the link's code is the key. Shows only safe job basics.
+    crew: {
+      async job(token) {
+        const d = await db();
+        const j = token && d.jobs.find((x) => x.crewToken && x.crewToken === token);
+        if (!j || j.status === 'lost') return null;
+        const c = d.contractors.find((x) => x.id === j.contractorId);
+        const b = d.users.find((u) => u.id === j.buyerId);
+        const mine = j.files.filter((f) => f.source === 'crew' && f.contractorId === j.contractorId);
+        return {
+          number: j.number, trade: j.trade, status: j.status, address: j.address, zip: j.zip,
+          description: j.description, scheduledFor: j.scheduledFor,
+          customerName: b ? b.name : '', customerPhone: b ? b.phone : '',
+          crewName: c ? c.name : '',
+          uploads: await Promise.all(mine.map(async (f) => {
+            const { id, name, mime, stage, note, uploaded, url } = await withUrl(f);
+            return { id, name, mime, stage, note, uploaded, url };
+          })),
+        };
+      },
+      async upload(token, file, { stage = '', note = '' } = {}) {
+        const d = await db();
+        const j = token && d.jobs.find((x) => x.crewToken && x.crewToken === token);
+        if (!j || j.status === 'lost') throw new Error('This upload link is no longer active. Ask the Top Hat office for a new one.');
+        if (file.size > MAX_FILE_MB * 1024 * 1024) throw new Error(`"${file.name}" is over ${MAX_FILE_MB} MB.`);
+        const c = d.contractors.find((x) => x.id === j.contractorId);
+        const meta = { id: uid(), name: file.name, mime: file.type || 'application/octet-stream', size: file.size,
+          kind: guessKind(file.name, file.type || ''), shared: false, uploaded: Date.now(),
+          source: 'crew', contractorId: j.contractorId, by: c ? c.name : 'Crew', stage, note: note.trim() };
+        await blobs.put(meta.id, file);
+        j.files.push(meta);
+        j.log.push({ at: Date.now(), text: `${meta.by} uploaded ${meta.name}${stage ? ` (${stage})` : ''}` });
+        writeDb(d);
+        return meta;
       },
     },
 
@@ -417,5 +470,5 @@
     });
   }
 
-  window.TH = { api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, el, ago, fmtWhen, find, shrinkImage };
+  window.TH = { api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();

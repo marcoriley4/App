@@ -17,6 +17,7 @@ A job-request app for Top Hat Contracting. Customers post a job and create an ac
 - **Money (staff only):** each job has a **customer price** (what the customer pays) and a **crew pay** (what Top Hat pays the contractor). The app shows Top Hat's profit and margin.
 - **Files, one folder per job:** upload estimates, contracts, invoices, receipts, permits and photos to the job. The file type is guessed from the file name and can be changed. A checklist shows whether the estimate, contract and invoice are in. The customer's own request photos are included.
 - **Text job details to the crew:** opens a text message to the assigned crew lead with the job number, address, time, customer contact and job description filled in.
+- **Crew photo upload link:** each assigned job gets a private link, included at the end of the crew text (there's also a **Copy link** button). The contractor taps it, with no app or password, sees the job basics, picks **Before / During / After**, adds an optional note and uploads photos. They land in that job's Files, labeled with who sent them. Reassigning the job to another crew makes a new link and turns the old one off.
 - **Crew:** add, edit or deactivate your contractors and the trades they cover.
 
 ### Who sees what
@@ -27,9 +28,9 @@ A job-request app for Top Hat Contracting. Customers post a job and create an ac
 | Customer price | ✓ | only in documents you share | **never** |
 | Crew pay and profit | ✓ | **never** | **never** |
 | Internal notes and activity | ✓ | never | never |
-| Files | ✓ | only files marked "Customer can see" | **never** |
+| Files | ✓ | only files marked "Customer can see" | only the photos they uploaded |
 
-Crew don't log in. They only receive the job text, which never includes prices, the customer's budget, notes or files.
+Crew don't log in. They receive the job text and use the photo upload link. Neither includes prices, the customer's budget, staff notes or other files. On the upload page they see only the job basics and the photos they sent themselves. Crew photos start out hidden from the customer.
 
 Status names: staff see *New lead, Qualifying, Scheduled, In progress, Completed, Not a fit*. Customers see *Received, Reviewing, Scheduled, In progress, Completed, Closed*.
 
@@ -56,5 +57,6 @@ python3 -m http.server 8000
 
 - `index.html`, `buyer.js`: customer site
 - `admin.html`, `admin.js`: staff area
+- `crew.html`, `crew.js`: crew photo upload page (opened from the link in the job text)
 - `data.js`: data layer (`TH.api`), plus the lists of trades, timeframes, budgets and statuses
 - `styles.css`: shared styling

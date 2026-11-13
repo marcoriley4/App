@@ -242,3 +242,10 @@ label.field .hint { font-weight: 400; color: var(--muted); font-size: .82rem; }
 .docs a { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; text-decoration: none; color: var(--text); font-weight: 600; font-size: .92rem; }
 .docs a span:last-child { margin-left: auto; color: var(--muted); font-weight: 400; font-size: .8rem; }
 @media (max-width: 380px) { .two { grid-template-columns: 1fr; } }
+
+/* Crew upload page */
+.seg3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: var(--surface-2); border-radius: 12px; padding: 4px; margin-top: 6px; }
+.seg3 button { background: none; color: var(--text); border: none; min-height: 42px; font-weight: 600; }
+.seg3 button[aria-checked="true"] { background: var(--surface); box-shadow: 0 1px 3px rgba(0,0,0,.15); color: var(--brand); }
+.btn.big { min-height: 60px; font-size: 1.1rem; }
+.crew-link { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--surface-2); border-radius: 10px; padding: 8px 10px; }

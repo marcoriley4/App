@@ -1,7 +1,7 @@
 'use strict';
 /* Top Hat staff area: qualify leads, schedule jobs, assign crews. */
 (function () {
-  const { api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, el, ago, fmtWhen, find } = TH;
+  const { api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find } = TH;
   const view = document.getElementById('view');
   const drawerRoot = document.getElementById('drawerRoot');
   const OPEN = ['new', 'qualifying', 'scheduled', 'in_progress'];
@@ -194,6 +194,7 @@
       ...sortedCrew.map((c) => el('option', { value: c.id, selected: c.id === j.contractorId }, `${c.trades.includes(j.trade) ? '★ ' : ''}${c.name}`)));
     const whenInput = el('input', { type: 'datetime-local', name: 'scheduledFor', value: j.scheduledFor || '' });
     const assigned = find(crew, j.contractorId);
+    const crewLink = j.crewToken ? new URL(`crew.html?t=${j.crewToken}`, location.href).href : null;
     // Sent to the crew lead. Never include prices, budget or notes here.
     const dispatchText = assigned && [
       `Top Hat job ${jobNo(j)}: ${t.label}`,
@@ -201,6 +202,7 @@
       `Customer: ${b.name} ${b.phone}`,
       `Address: ${j.address} ${j.zip}`,
       `Details: ${j.description}`,
+      crewLink ? `Upload job photos here: ${crewLink}` : null,
     ].filter(Boolean).join('\n');
 
     const setup = el('form', { class: 'card stack', onsubmit: (e) => {
@@ -215,7 +217,13 @@
       el('p', { class: 'muted small' }, 'Picking a crew and a date moves a new lead to “Scheduled”.'),
       el('button', { type: 'submit' }, 'Save'),
       assigned?.phone ? el('a', { class: 'btn ghost', href: smsHref(assigned.phone, dispatchText) }, `💬 Text job details to ${assigned.name.split(' ')[0]}`) : null,
-      assigned?.phone ? el('p', { class: 'muted small' }, 'The text includes the date, address, customer contact and job description. Never prices.') : null,
+      assigned?.phone ? el('p', { class: 'muted small' }, 'The text includes the date, address, customer contact, job description and the photo upload link. Never prices.') : null,
+      crewLink ? el('div', { class: 'crew-link' },
+        el('span', { class: 'small' }, `📷 ${assigned ? assigned.name.split(' ')[0] + '’s' : 'Crew'} photo upload link`),
+        el('button', { type: 'button', class: 'ghost small', onclick: async (e) => {
+          try { await navigator.clipboard.writeText(crewLink); e.target.textContent = 'Copied ✓'; }
+          catch { prompt('Copy this link:', crewLink); }
+        } }, 'Copy link')) : null,
     );
 
     // Money (staff only)
@@ -261,7 +269,9 @@
             el('div', { class: 'meta' },
               el('select', { 'aria-label': `Type of ${f.name}`, onchange: (e) => fileUpdate(f.id, { kind: e.target.value }) },
                 ...FILE_KINDS.map((x) => el('option', { value: x.id, selected: x.id === f.kind }, x.label))),
-              el('span', {}, `${fileSize(f.size)} · ${new Date(f.uploaded).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`)),
+              f.stage ? el('span', { class: 'pill' }, (find(PHOTO_STAGES, f.stage) || {}).label || f.stage) : null,
+              el('span', {}, `${fileSize(f.size)} · ${new Date(f.uploaded).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}${f.source === 'crew' ? ` · from ${f.by}` : ''}`)),
+            f.note ? el('p', { class: 'small', style: 'font-style:italic' }, `“${f.note}”`) : null,
             el('label', { class: 'share' },
               el('input', { type: 'checkbox', checked: f.shared, onchange: (e) => fileUpdate(f.id, { shared: e.target.checked }) }),
               f.shared ? 'Customer can see this' : 'Customer can’t see this')),
