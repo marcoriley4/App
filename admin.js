@@ -11,6 +11,11 @@
   let search = '';
   let jobs = [];
   let crew = [];
+  let settings = {};
+  const docs = TH.docs;
+  const siteUrl = () => new URL('index.html', location.href).href;
+  const addDays = (n) => { const d = new Date(Date.now() + n * 86400e3); return new Date(d - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 10); };
+  const owedOn = (j) => (j.docs || []).reduce((t, d) => t + docs.owed(d), 0);
 
   if (api.mode === 'preview') {
     document.getElementById('previewBanner').hidden = false;
@@ -54,7 +59,7 @@
     await load();
     render();
   }
-  async function load() { [jobs, crew] = await Promise.all([api.jobs.all(), api.contractors.list()]); }
+  async function load() { [jobs, crew, settings] = await Promise.all([api.jobs.all(), api.contractors.list(), api.settings.get()]); }
 
   function loginView(me) {
     const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
@@ -81,9 +86,9 @@
   /* ---------- main ---------- */
   function render() {
     const tabs = el('div', { class: 'tabs-bar', role: 'tablist', style: 'margin-top:8px' },
-      ...[['leads', 'Leads', jobs.filter((j) => j.status === 'new').length], ['crew', 'Crew', crew.filter((c) => c.active).length]].map(([id, label, n]) =>
+      ...[['leads', 'Leads', jobs.filter((j) => j.status === 'new').length], ['crew', 'Crew', crew.filter((c) => c.active).length], ['business', 'Business', 0]].map(([id, label, n]) =>
         el('button', { role: 'tab', 'aria-current': String(tab === id), onclick: () => { tab = id; render(); } }, label, n ? el('span', { class: 'count' }, String(n)) : null)));
-    view.replaceChildren(tabs, el('div', { class: 'stack', style: 'margin:16px 0' }, tab === 'leads' ? leadsView() : crewView()));
+    view.replaceChildren(tabs, el('div', { class: 'stack', style: 'margin:16px 0' }, tab === 'leads' ? leadsView() : tab === 'crew' ? crewView() : businessView()));
   }
 
   /* ---------- leads ---------- */
@@ -91,7 +96,7 @@
     const count = (s) => jobs.filter((j) => j.status === s).length;
     const pipeline = jobs.filter((j) => OPEN.includes(j.status) && j.price).reduce((s, j) => s + Number(j.price), 0);
     const kpis = el('div', { class: 'kpis' },
-      ...[[count('new'), 'New leads'], [count('qualifying'), 'Qualifying'], [count('scheduled') + count('in_progress'), 'Scheduled / active'], [money(pipeline), 'Open job value']]
+      ...[[count('new'), 'New leads'], [count('scheduled') + count('in_progress'), 'Scheduled / active'], [money(pipeline), 'Open job value'], [docs.usd(jobs.reduce((t, j) => t + owedOn(j), 0)), 'Unpaid invoices']]
         .map(([v, k]) => el('div', { class: 'kpi' }, el('b', {}, String(v)), el('span', {}, k))));
 
     const filters = [['open', 'Open', jobs.filter((j) => OPEN.includes(j.status)).length], ...STATUSES.map((s) => [s.id, s.label, count(s.id)]), ['all', 'All', jobs.length]];
@@ -128,6 +133,8 @@
           j.scheduledFor ? el('span', {}, '📅 ' + fmtWhen(j.scheduledFor)) : null,
           c ? el('span', {}, '👷 ' + c.name) : null,
           j.files.length ? el('span', {}, `📁 ${j.files.length}`) : null,
+          owedOn(j) > 0 ? el('span', { style: 'color:var(--warn);font-weight:600' }, `🧾 ${docs.usd(owedOn(j))} due`)
+            : (j.docs || []).some((d) => d.type === 'estimate' && d.status === 'sent') ? el('span', {}, '📝 Estimate sent') : null,
           el('span', {}, ago(j.created)))),
     );
   }
@@ -137,7 +144,7 @@
     const j = jobs.find((x) => x.id === id);
     if (!j) return;
     releaseUrls();
-    const [files, history] = await Promise.all([api.files.list(j.id), api.jobs.log(j.id)]);
+    const [files, history, jobDocs] = await Promise.all([api.files.list(j.id), api.jobs.log(j.id), api.docs.list(j.id)]);
     fileUrls = files.map((f) => f.url).filter(Boolean);
     const t = tradeOf(j.trade);
     const close = closeDrawer;
@@ -253,6 +260,23 @@
       el('button', { type: 'submit' }, 'Save prices'),
     );
 
+    // Estimates & invoices
+    const approvedEst = jobDocs.find((x) => x.type === 'estimate' && x.status === 'approved');
+    const docsCard = el('section', { class: 'card stack' },
+      el('div', { class: 'row' }, el('h3', {}, 'Estimates & invoices')),
+      jobDocs.length ? el('div', { class: 'doc-list' }, ...jobDocs.map((dc) => {
+        const tt = docs.totals(dc);
+        return el('button', { type: 'button', class: 'doc-row', onclick: () => openDoc(j.id, dc.id) },
+          el('span', { class: 'ic' }, dc.type === 'invoice' ? '🧾' : '📝'),
+          el('span', { class: 'body' }, el('b', {}, dc.number),
+            el('span', { class: 'muted small' }, dc.type === 'invoice' && !['draft', 'void'].includes(dc.status) ? `${docs.usd(tt.total)} · ${docs.usd(Math.max(0, tt.balance))} due` : docs.usd(tt.total))),
+          el('span', { class: `pill ${docs.pillClass(dc)}` }, docs.label(dc)));
+      })) : el('p', { class: 'muted small' }, 'No estimates or invoices yet. They’re filled in with this job’s details. Crew pay never appears on them.'),
+      el('div', { class: 'row' },
+        el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: () => openDoc(j.id, null, 'estimate') }, '+ Estimate'),
+        el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: () => openDoc(j.id, null, 'invoice', approvedEst && !jobDocs.some((x) => x.type === 'invoice' && x.fromEstimateId === approvedEst.id) ? approvedEst : null) }, '+ Invoice')),
+    );
+
     // Files: this job's folder
     const uploadNote = el('span', { class: 'muted small', hidden: true }, 'Uploading…');
     const has = (k) => files.some((f) => f.kind === k);
@@ -318,12 +342,192 @@
         el('button', { class: 'ghost small', onclick: close, 'aria-label': 'Close' }, '← Back'),
         el('b', { style: 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, `${jobNo(j)} · ${t.icon} ${t.label}`),
         el('span', { class: `pill s-${j.status}` }, statusOf(j.status).label)),
-      el('div', { class: 'panel-body' }, errorBox, contact, status, setup, moneyCard, filesCard, details, notesCard, log),
+      el('div', { class: 'panel-body' }, errorBox, contact, status, setup, moneyCard, docsCard, filesCard, details, notesCard, log),
     );
     const scroll = drawerRoot.querySelector('.panel')?.scrollTop || 0;
     drawerRoot.replaceChildren(el('div', { class: 'drawer', onclick: (e) => { if (e.target === e.currentTarget) close(); } }, panel));
     panel.scrollTop = scroll;
     document.body.style.overflow = 'hidden';
+  }
+
+  /* ---------- estimate / invoice editor ---------- */
+  async function openDoc(jobId, docId, type, fromEstimate) {
+    const j = jobs.find((x) => x.id === jobId);
+    if (!j) return;
+    const t = tradeOf(j.trade);
+    const list = await api.docs.list(jobId);
+    let doc = docId && list.find((x) => x.id === docId);
+    if (!doc) {
+      const firstOfType = !list.some((x) => x.type === type);
+      doc = {
+        type, status: 'new', payments: [], number: type === 'invoice' ? 'New invoice' : 'New estimate',
+        items: fromEstimate ? fromEstimate.items.map((i) => ({ ...i })) : [{ desc: `${t.label}: ${j.description}`.slice(0, 300), qty: 1, price: firstOfType && j.price ? j.price : '' }],
+        taxRate: fromEstimate ? fromEstimate.taxRate : (Number(settings.taxRate) || 0),
+        notes: type === 'invoice' ? (settings.invoiceTerms || '') : (settings.estimateTerms || ''),
+        dueDate: type === 'invoice' ? addDays(Number(settings.dueDays) || 14) : null,
+        payLink: '', fromEstimateId: fromEstimate ? fromEstimate.id : null,
+      };
+    }
+    type = doc.type;
+    const isInv = type === 'invoice';
+    const isNew = doc.status === 'new';
+    const canEdit = isNew || docs.editable(doc);
+    const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const fail = (err) => { errorBox.textContent = err.message; errorBox.hidden = false; errorBox.scrollIntoView({ block: 'center' }); };
+    const reopen = async (id) => { await load(); openDoc(jobId, id); };
+
+    const items = (doc.items || []).map((i) => ({ ...i }));
+    const taxInput = el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01', value: doc.taxRate ?? 0, disabled: !canEdit, oninput: () => renderTotals() });
+    const notesInput = el('textarea', { rows: 3, value: doc.notes || '', disabled: !canEdit });
+    const dueInput = isInv ? el('input', { type: 'date', value: doc.dueDate || '', disabled: !canEdit }) : null;
+    const linkInput = isInv ? el('input', { type: 'url', inputmode: 'url', placeholder: 'https://square.link/… (optional)', value: doc.payLink || '', disabled: !canEdit }) : null;
+    const current = () => ({ ...doc, items, taxRate: Number(taxInput.value) || 0, notes: notesInput.value, dueDate: dueInput ? dueInput.value || null : null, payLink: linkInput ? linkInput.value : '' });
+
+    const totalsBox = el('dl', { class: 'tot' });
+    function renderTotals() {
+      const tt = docs.totals(current());
+      totalsBox.replaceChildren(...[
+        el('dt', {}, 'Subtotal'), el('dd', {}, docs.usd(tt.subtotal)),
+        el('dt', {}, 'Tax'), el('dd', {}, docs.usd(tt.tax)),
+        el('dt', { class: 'big' }, 'Total'), el('dd', { class: 'big' }, docs.usd(tt.total)),
+        isInv && tt.paid ? el('dt', {}, 'Paid') : null, isInv && tt.paid ? el('dd', {}, docs.usd(tt.paid)) : null,
+        isInv && !isNew ? el('dt', { class: 'big' }, 'Balance due') : null, isInv && !isNew ? el('dd', { class: 'big' }, docs.usd(Math.max(0, tt.balance))) : null].filter(Boolean));
+    }
+    const itemsWrap = el('div', { class: 'items-edit' });
+    function renderItems() {
+      itemsWrap.replaceChildren(...[...items.map((it, idx) => {
+        const amt = el('span', { class: 'amt' });
+        const upd = () => { amt.textContent = docs.usd((Number(it.qty) || 0) * (Number(it.price) || 0)); renderTotals(); };
+        upd();
+        return el('div', { class: 'item-row' },
+          el('textarea', { rows: 2, placeholder: 'Description, e.g. Labor, Materials, Haul-away…', value: it.desc || '', disabled: !canEdit, 'aria-label': `Line ${idx + 1} description`, oninput: (e) => { it.desc = e.target.value; } }),
+          el('div', { class: 'item-nums' },
+            el('label', {}, 'Qty', el('input', { type: 'number', inputmode: 'decimal', min: '0', step: 'any', value: it.qty, disabled: !canEdit, oninput: (e) => { it.qty = e.target.value; upd(); } })),
+            el('label', {}, 'Price ($)', el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01', value: it.price, disabled: !canEdit, oninput: (e) => { it.price = e.target.value; upd(); } })),
+            amt,
+            canEdit && items.length > 1 ? el('button', { type: 'button', class: 'icon', 'aria-label': `Remove line ${idx + 1}`, onclick: () => { items.splice(idx, 1); renderItems(); renderTotals(); } }, '✕') : null));
+      }), canEdit ? el('button', { type: 'button', class: 'ghost small', onclick: () => { items.push({ desc: '', qty: 1, price: '' }); renderItems(); renderTotals(); itemsWrap.querySelector('.item-row:last-of-type textarea').focus(); } }, '+ Add line') : null].filter(Boolean));
+    }
+    renderItems(); renderTotals();
+
+    const ctx = () => ({ job: j, customer: j.buyer, company: settings });
+    const first = (j.buyer.name || '').split(' ')[0] || 'there';
+    const shareMsg = `Hi ${first}, your ${isInv ? 'invoice' : 'estimate'} ${doc.number} from ${settings.name || 'Top Hat Contracting'} is ready. View it here: ${siteUrl()}#/jobs`;
+
+    async function save() {
+      const saved = await api.docs.save(jobId, current());
+      return saved;
+    }
+    const busy = async (btn, fn) => { btn.disabled = true; try { await fn(); } catch (err) { fail(err); } finally { btn.disabled = false; } };
+
+    const actions = el('div', { class: 'stack' });
+    if (canEdit) actions.append(el('button', { type: 'button', onclick: (e) => busy(e.currentTarget, async () => { const sv = await save(); await reopen(sv.id); }) }, isNew ? 'Save draft' : 'Save changes'));
+    if (isNew || doc.status === 'draft') {
+      actions.append(el('button', { type: 'button', class: 'gold', onclick: (e) => busy(e.currentTarget, async () => {
+        const sv = await save();
+        await api.docs.send(jobId, sv.id);
+        await reopen(sv.id);
+      }) }, `Send to customer`));
+    }
+    actions.append(el('button', { type: 'button', class: 'ghost', onclick: () => docs.view(current(), ctx()) }, '👁 Preview / Print PDF'));
+    if (!isNew && doc.status !== 'draft') {
+      actions.append(el('div', { class: 'share-box' },
+        el('span', { class: 'small' }, 'The customer sees this in their My jobs. Let them know:'),
+        el('div', { class: 'row' },
+          j.buyer.phone ? el('a', { class: 'btn ghost small', style: 'flex:1', href: smsHref(j.buyer.phone, shareMsg) }, '💬 Text') : null,
+          j.buyer.email ? el('a', { class: 'btn ghost small', style: 'flex:1', href: `mailto:${j.buyer.email}?subject=${encodeURIComponent(`${isInv ? 'Invoice' : 'Estimate'} ${doc.number} from ${settings.name || 'Top Hat Contracting'}`)}&body=${encodeURIComponent(shareMsg)}` }, '✉️ Email') : null)));
+    }
+    if (!isInv && doc.status === 'sent') {
+      actions.append(el('div', { class: 'row' },
+        el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: (e) => busy(e.currentTarget, async () => { if (!confirm('Mark approved? Use this if the customer said yes by phone or in person.')) return; await api.docs.setStatus(jobId, doc.id, 'approved'); await reopen(doc.id); }) }, '✓ Mark approved'),
+        el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: (e) => busy(e.currentTarget, async () => { if (!confirm('Mark this estimate declined?')) return; await api.docs.setStatus(jobId, doc.id, 'declined'); await reopen(doc.id); }) }, 'Mark declined')));
+    }
+    if (!isInv && doc.status === 'approved') {
+      actions.append(el('button', { type: 'button', class: 'gold', onclick: () => openDoc(jobId, null, 'invoice', doc) }, '🧾 Create invoice from this estimate'));
+    }
+    if (doc.status === 'draft') {
+      actions.append(el('button', { type: 'button', class: 'link', style: 'color:var(--bad)', onclick: (e) => busy(e.currentTarget, async () => { if (!confirm(`Delete draft ${doc.number}?`)) return; await api.docs.remove(jobId, doc.id); await load(); openLead(jobId); }) }, 'Delete draft'));
+    }
+
+    // Payments (invoices that have been sent)
+    let paymentsCard = null;
+    if (isInv && !isNew && !['draft', 'void'].includes(doc.status)) {
+      const tt = docs.totals(doc);
+      const amount = el('input', { type: 'number', inputmode: 'decimal', min: '0.01', step: '0.01', value: tt.balance > 0 ? tt.balance : '', 'aria-label': 'Amount received' });
+      const method = el('select', { 'aria-label': 'Payment method' }, ...docs.METHODS.map((m) => el('option', {}, m)));
+      const date = el('input', { type: 'date', value: docs.todayKey(), 'aria-label': 'Date received' });
+      const note = el('input', { type: 'text', placeholder: 'Note, e.g. check #1042 (optional)' });
+      paymentsCard = el('section', { class: 'card stack' },
+        el('div', { class: 'row' }, el('h3', {}, 'Payments'), el('span', { class: 'spacer' }), el('span', { class: `pill ${docs.pillClass(doc)}` }, docs.label(doc))),
+        doc.payments.length ? el('ul', { class: 'log' }, ...doc.payments.map((p) => el('li', {},
+          el('span', {}, docs.fmtDate(p.date)),
+          el('span', { style: 'flex:1' }, `${docs.usd(p.amount)} · ${p.method}${p.note ? ' · ' + p.note : ''}`),
+          el('button', { type: 'button', class: 'icon', 'aria-label': 'Remove payment', onclick: (e) => busy(e.currentTarget, async () => { if (!confirm('Remove this payment?')) return; await api.docs.removePayment(jobId, doc.id, p.id); await reopen(doc.id); }) }, '✕')))) : el('p', { class: 'muted small' }, 'No payments recorded yet.'),
+        tt.balance > 0 ? el('form', { class: 'stack', onsubmit: (e) => { e.preventDefault(); busy(e.submitter || e.target.querySelector('button'), async () => {
+          await api.docs.addPayment(jobId, doc.id, { amount: amount.value, method: method.value, date: date.value, note: note.value });
+          await reopen(doc.id);
+        }); } },
+          el('b', { class: 'small' }, 'Record a payment'),
+          el('div', { class: 'two' }, el('label', { class: 'field' }, 'Amount ($)', amount), el('label', { class: 'field' }, 'Method', method)),
+          el('label', { class: 'field' }, 'Date received', date),
+          note,
+          el('button', { type: 'submit' }, 'Record payment')) : el('div', { class: 'callout' }, '✓ Paid in full'),
+        doc.status !== 'void' ? el('button', { type: 'button', class: 'link', style: 'color:var(--bad)', onclick: (e) => busy(e.currentTarget, async () => { if (!confirm(`Void ${doc.number}? The customer will see it as void.`)) return; await api.docs.setStatus(jobId, doc.id, 'void'); await reopen(doc.id); }) }, 'Void invoice') : null,
+      );
+    }
+
+    const editor = el('section', { class: 'card stack' },
+      el('div', { class: 'row' }, el('h3', {}, isInv ? 'Invoice' : 'Estimate'), el('span', { class: 'spacer' }), isNew ? null : el('span', { class: `pill ${docs.pillClass(doc)}` }, docs.label(doc))),
+      canEdit ? null : el('p', { class: 'muted small' }, doc.status === 'approved' ? `Approved${doc.respondedBy ? ' by ' + doc.respondedBy : ''}${doc.respondedAt ? ' on ' + docs.fmtDate(doc.respondedAt) : ''}. Locked so it matches what the customer agreed to.` : 'Locked. Payments have been recorded or it’s closed.'),
+      el('p', { class: 'muted small' }, `For ${j.buyer.name} · ${jobNo(j)} · ${j.address}`),
+      itemsWrap,
+      el('div', { class: 'two' }, el('label', { class: 'field' }, 'Tax rate (%)', taxInput), isInv ? el('label', { class: 'field' }, 'Due date', dueInput) : el('span')),
+      totalsBox,
+      el('label', { class: 'field' }, isInv ? 'Notes on the invoice' : 'Terms on the estimate', notesInput),
+      isInv ? el('label', { class: 'field' }, 'Card payment link', el('span', { class: 'hint' }, 'Optional. Paste a Square or Stripe payment link to show a “Pay by card” button.'), linkInput) : null,
+    );
+
+    const panel = el('div', { class: 'panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': `${isInv ? 'Invoice' : 'Estimate'} for ${jobNo(j)}` },
+      el('div', { class: 'panel-head' },
+        el('button', { class: 'ghost small', onclick: () => openLead(jobId) }, `← ${jobNo(j)}`),
+        el('b', { style: 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, doc.number)),
+      el('div', { class: 'panel-body' }, errorBox, editor, paymentsCard, el('section', { class: 'card stack' }, actions)),
+    );
+    releaseUrls();
+    drawerRoot.replaceChildren(el('div', { class: 'drawer', onclick: (e) => { if (e.target === e.currentTarget) closeDrawer(); } }, panel));
+    document.body.style.overflow = 'hidden';
+  }
+
+  /* ---------- business settings ---------- */
+  function businessView() {
+    const saved = el('span', { class: 'saved-note', hidden: true }, 'Saved ✓');
+    const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const f = (name, label, attrs = {}, hint) => el('label', { class: 'field' }, label, hint ? el('span', { class: 'hint' }, hint) : null,
+      attrs.rows ? el('textarea', { name, rows: attrs.rows, value: settings[name] ?? '' }) : el('input', { name, value: settings[name] ?? '', ...attrs }));
+    const form = el('form', { class: 'card stack', onsubmit: async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const patch = Object.fromEntries([...fd.entries()].map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v]));
+      patch.taxRate = Number(patch.taxRate) || 0;
+      patch.dueDays = Math.max(0, Math.round(Number(patch.dueDays) || 0));
+      try { settings = await api.settings.save(patch); saved.hidden = false; setTimeout(() => { saved.hidden = true; }, 1600); }
+      catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
+    } },
+      el('div', { class: 'row' }, el('h2', {}, 'Business details'), el('span', { class: 'spacer' }), saved),
+      el('p', { class: 'muted small' }, 'Shown at the top of every estimate and invoice.'),
+      errorBox,
+      f('name', 'Company name'),
+      el('div', { class: 'two' }, f('phone', 'Phone', { type: 'tel' }), f('email', 'Email', { type: 'email' })),
+      f('address', 'Address', { rows: 2 }),
+      f('license', 'License # (optional)'),
+      el('h3', { style: 'margin-top:8px' }, 'Defaults'),
+      el('div', { class: 'two' }, f('taxRate', 'Tax rate (%)', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01' }), f('dueDays', 'Invoices due in (days)', { type: 'number', inputmode: 'numeric', min: '0', step: '1' })),
+      f('paymentInstructions', 'How customers can pay', { rows: 4 }, 'Shown on every invoice. Include your Zelle phone or email, Venmo and Cash App names, and who checks are payable to.'),
+      f('estimateTerms', 'Terms on estimates', { rows: 2 }),
+      f('invoiceTerms', 'Notes on invoices', { rows: 2 }),
+      el('button', { type: 'submit' }, 'Save'),
+    );
+    return [form];
   }
 
   /* ---------- crew ---------- */

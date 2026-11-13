@@ -129,6 +129,112 @@ end $$;
 select t.ok(jsonb_array_length(public.crew_job(current_setting('t.token2'))->'uploads') = 0, 'new crew does not see previous crew uploads');
 reset role;
 
+-- ========== Estimates & invoices ==========
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+insert into public.documents (job_id, type, items, tax_rate)
+  values (current_setting('t.job')::uuid, 'estimate', '[{"desc":"Labor","qty":1,"price":300},{"desc":"Parts","qty":2,"price":45.5}]', 8);
+select set_config('t.est', (select id::text from public.documents where type = 'estimate'), false);
+select t.ok((select number from public.documents where id = current_setting('t.est')::uuid) = 'E-1001', 'estimate numbered from job number');
+reset role;
+select t.ok(public.doc_total((select items from public.documents where id = current_setting('t.est')::uuid), 8) = 422.28, 'estimate total with tax is right');
+
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+select t.ok(public.my_documents() = '{}'::jsonb, 'customer cannot see draft estimates');
+select t.ok((select count(*) from public.documents) = 0, 'customer cannot read documents table');
+select t.ok((select data->>'name' from public.settings) = 'Top Hat Contracting', 'customer can read company details');
+update public.settings set data = '{}';
+reset role;
+select t.ok((select data->>'name' from public.settings) = 'Top Hat Contracting', 'customer cannot change company details');
+
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+update public.documents set status = 'sent' where id = current_setting('t.est')::uuid;
+select t.ok((select sent_at is not null from public.documents where id = current_setting('t.est')::uuid), 'sending stamps the date');
+reset role;
+
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+select t.ok(jsonb_array_length(public.my_documents() -> current_setting('t.job')) = 1, 'customer sees sent estimate');
+select t.ok(public.my_documents()::text !~ '1150|crew_pay|Gate code', 'customer documents have no crew pay or notes');
+update public.documents set status = 'approved';
+select t.ok((public.my_documents() -> current_setting('t.job') -> 0 ->> 'status') = 'sent', 'customer cannot change status directly');
+reset role;
+
+select set_config('request.jwt.claim.sub', :'B', false);
+set role authenticated;
+do $$ begin
+  begin perform public.respond_estimate(current_setting('t.est')::uuid, true); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'other customer cannot approve someone else''s estimate'); end;
+end $$;
+select t.ok(public.my_documents() = '{}'::jsonb, 'other customer sees no documents');
+reset role;
+
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+select public.respond_estimate(current_setting('t.est')::uuid, true);
+select t.ok((public.my_documents() -> current_setting('t.job') -> 0 ->> 'status') = 'approved', 'customer approves own estimate');
+do $$ begin
+  begin perform public.respond_estimate(current_setting('t.est')::uuid, false); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'approved estimate cannot be changed again'); end;
+end $$;
+reset role;
+
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+select t.ok((select price from public.job_private) = 422.28, 'approval sets the customer price');
+select t.ok((select crew_pay from public.job_private) = 1150.50, 'approval leaves crew pay alone');
+select t.ok(exists (select 1 from public.job_events where text like 'E-1001 approved by Ann B. (customer)'), 'approval logged with who');
+do $$ begin
+  begin update public.documents set items = '[]' where id = current_setting('t.est')::uuid; perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'approved estimate is locked'); end;
+  begin insert into public.documents (job_id, type, items) values (current_setting('t.job')::uuid, 'estimate', '[{"desc":"x","qty":1,"price":-5}]'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'negative prices refused'); end;
+end $$;
+insert into public.documents (job_id, type, items, tax_rate, from_estimate, due_date)
+  select job_id, 'invoice', items, tax_rate, id, current_date + 14 from public.documents where id = current_setting('t.est')::uuid;
+select set_config('t.inv', (select id::text from public.documents where type = 'invoice'), false);
+select t.ok((select number from public.documents where type = 'invoice') = 'INV-1001', 'invoice numbered');
+do $$ begin
+  begin update public.documents set payments = '[{"amount":10,"method":"Cash"}]' where id = current_setting('t.inv')::uuid; perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'no payments on an unsent invoice'); end;
+end $$;
+update public.documents set status = 'sent' where id = current_setting('t.inv')::uuid;
+update public.documents set payments = payments || '[{"id":"p1","amount":200,"method":"Zelle","date":"2026-11-13"}]' where id = current_setting('t.inv')::uuid;
+update public.documents set payments = payments || '[{"id":"p2","amount":222.28,"method":"Check","date":"2026-11-13","note":"check #1042"}]' where id = current_setting('t.inv')::uuid;
+select t.ok(exists (select 1 from public.job_events where text = 'Payment $222.28 (Check) on INV-1001'), 'payment logged');
+select t.ok(exists (select 1 from public.job_events where text = 'INV-1001 paid in full'), 'paid in full logged');
+do $$ begin
+  begin delete from public.documents where id = current_setting('t.inv')::uuid; perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'sent invoice cannot be deleted'); end;
+  begin update public.documents set status = 'draft' where id = current_setting('t.inv')::uuid; perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'sent invoice cannot go back to draft'); end;
+end $$;
+insert into public.documents (job_id, type) values (current_setting('t.job')::uuid, 'estimate');
+select t.ok(exists (select 1 from public.documents where number = 'E-1001-2'), 'second estimate gets -2');
+delete from public.documents where number = 'E-1001-2';
+select t.ok(not exists (select 1 from public.documents where number = 'E-1001-2'), 'draft can be deleted');
+reset role;
+
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+select t.ok((public.my_documents() -> current_setting('t.job'))::text ~ 'INV-1001' and (public.my_documents() -> current_setting('t.job'))::text ~ 'check #1042', 'customer sees invoice and payments');
+reset role;
+
+select set_config('request.jwt.claim.sub', '', false);
+set role anon;
+do $$ begin
+  begin perform * from public.documents; perform t.ok(false, 'x');
+  exception when insufficient_privilege then perform t.ok(true, 'crew cannot read estimates or invoices'); end;
+  begin perform * from public.settings; perform t.ok(false, 'x');
+  exception when insufficient_privilege then perform t.ok(true, 'not-logged-in cannot read settings'); end;
+  begin perform public.my_documents(); perform t.ok(false, 'x');
+  exception when insufficient_privilege then perform t.ok(true, 'not-logged-in cannot list documents'); end;
+end $$;
+select t.ok(public.crew_job(current_setting('t.token2'))::text !~ 'E-1001|INV-1001|422', 'crew link shows no documents or totals');
+reset role;
+
 -- ========== Closed job: crew link off ==========
 select set_config('request.jwt.claim.sub', :'S', false);
 set role authenticated;

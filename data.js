@@ -134,6 +134,20 @@
     let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return 'x' + h; // insecure fallback for file://
   }
 
+  const DEFAULT_SETTINGS = {
+    name: 'Top Hat Contracting', phone: '', email: '', address: '', license: '',
+    taxRate: 0, dueDays: 14,
+    paymentInstructions: 'We accept cash, check, Zelle, card, Venmo and Cash App.\nMake checks payable to Top Hat Contracting.',
+    estimateTerms: 'This estimate is valid for 30 days. Work begins once the estimate is approved.',
+    invoiceTerms: 'Thank you for choosing Top Hat Contracting!',
+  };
+  const isoDay = (ms) => new Date(ms - new Date(ms).getTimezoneOffset() * 60e3).toISOString().slice(0, 10);
+  const docTotal = (doc) => {
+    const sub = (doc.items || []).reduce((t, i) => t + (Number(i.qty) || 0) * (Number(i.price) || 0), 0);
+    return Math.round(sub * (1 + (Number(doc.taxRate) || 0) / 100) * 100) / 100;
+  };
+  const usd = (n) => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+
   // Sample data so the staff area isn't empty in preview mode.
   async function seed() {
     const now = Date.now();
@@ -172,20 +186,32 @@
           id: uid(), buyerId: b1, trade: 'roofing', status: 'scheduled', created: now - 70 * H,
           description: 'A few shingles blew off in last week\'s storm. Need them replaced and the roof checked.',
           address: '42 Maple Ave, Springfield', zip: '62704', timeframe: '2weeks', budget: '1-5k', photos: [],
-          number: 1003, files: [], contractorId: c3, crewToken: newToken(), scheduledFor: (() => { const t = new Date(now + 48 * H); t.setHours(9, 0, 0, 0); return new Date(t - t.getTimezoneOffset() * 60e3).toISOString().slice(0, 16); })(), price: 1800, crewPay: 1150, notes: 'Insurance claim filed.',
+          number: 1003, files: [], docs: [{
+            id: uid(), type: 'estimate', number: 'E-1003', status: 'approved', taxRate: 0, payments: [], dueDate: null, payLink: '',
+            items: [
+              { desc: 'Replace storm-damaged shingles (about 2 squares)', qty: 1, price: 1250 },
+              { desc: 'Roof inspection and sealing', qty: 1, price: 350 },
+              { desc: 'Debris haul-away', qty: 1, price: 200 },
+            ],
+            notes: DEFAULT_SETTINGS.estimateTerms, created: now - 55 * H, sentAt: now - 54 * H, respondedAt: now - 45 * H, respondedBy: 'Dana Whitfield',
+          }],
+          contractorId: c3, crewToken: newToken(), scheduledFor: (() => { const t = new Date(now + 48 * H); t.setHours(9, 0, 0, 0); return new Date(t - t.getTimezoneOffset() * 60e3).toISOString().slice(0, 16); })(), price: 1800, crewPay: 1150, notes: 'Insurance claim filed.',
           log: [{ at: now - 70 * H, text: 'Lead received' }, { at: now - 60 * H, text: 'Status → Qualifying' }, { at: now - 40 * H, text: 'Status → Scheduled · Ray Johnson' }],
         },
       ],
       nextNumber: 1004,
+      settings: { ...DEFAULT_SETTINGS },
     };
   }
 
   // Bring older preview data up to date.
   function migrate(d) {
+    d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
     d.nextNumber = d.nextNumber || Math.max(1000, ...d.jobs.map((j) => j.number || 0)) + 1;
     d.jobs.slice().sort((a, b) => a.created - b.created).forEach((j) => {
       if (!j.number) j.number = d.nextNumber++;
       if (!j.files) j.files = [];
+      if (!j.docs) j.docs = [];
       if ('value' in j) { if (j.price == null) j.price = j.value; delete j.value; }
       if (!('crewPay' in j)) j.crewPay = null;
       if (j.contractorId && !j.crewToken) j.crewToken = newToken();
@@ -255,7 +281,7 @@
         const d = await db();
         const now = Date.now();
         const rec = {
-          id: uid(), number: d.nextNumber++, buyerId: u.id, status: 'new', created: now, files: [],
+          id: uid(), number: d.nextNumber++, buyerId: u.id, status: 'new', created: now, files: [], docs: [],
           trade: job.trade, description: job.description.trim(), address: job.address.trim(), zip: (job.zip || '').trim(),
           timeframe: job.timeframe, budget: job.budget || '', photos: job.photos || [],
           contractorId: null, scheduledFor: null, price: null, crewPay: null, notes: '',
@@ -272,7 +298,7 @@
         return d.jobs.filter((j) => j.buyerId === u.id).sort((a, b) => b.created - a.created).map((j) => {
           const c = d.contractors.find((x) => x.id === j.contractorId);
           return {
-            id: j.id, number: j.number, trade: j.trade, status: j.status, created: j.created, description: j.description, address: j.address,
+            id: j.id, number: j.number, trade: j.trade, status: j.status, created: j.created, description: j.description, address: j.address, zip: j.zip,
             timeframe: j.timeframe, budget: j.budget, photos: j.photos, scheduledFor: j.scheduledFor,
             contractorName: c && ['scheduled', 'in_progress', 'completed'].includes(j.status) ? c.name : null,
             sharedFiles: j.files.filter((f) => f.shared).length,
@@ -369,6 +395,141 @@
           const { id, name, kind, size, uploaded, url } = await withUrl(f);
           return { id, name, kind, size, uploaded, url };
         }));
+      },
+    },
+
+    // Company details shown on estimates and invoices.
+    settings: {
+      async get() { return { ...(await db()).settings }; },
+      async save(patch) {
+        await requireStaff();
+        const d = await db();
+        d.settings = { ...d.settings, ...patch };
+        writeDb(d);
+        return { ...d.settings };
+      },
+    },
+
+    // Estimates & invoices. Crew pay is never part of these.
+    docs: {
+      async list(jobId) {
+        await requireStaff();
+        const j = (await db()).jobs.find((x) => x.id === jobId);
+        return j ? JSON.parse(JSON.stringify(j.docs)) : [];
+      },
+      async save(jobId, doc) {
+        await requireStaff();
+        const d = await db();
+        const j = d.jobs.find((x) => x.id === jobId);
+        if (!j) throw new Error('Job not found.');
+        const fields = {
+          items: (doc.items || []).map((i) => ({ desc: String(i.desc || '').trim(), qty: Number(i.qty) || 0, price: Number(i.price) || 0 })),
+          taxRate: Number(doc.taxRate) || 0, notes: doc.notes || '', dueDate: doc.dueDate || null, payLink: (doc.payLink || '').trim(),
+        };
+        if (fields.items.some((i) => i.qty < 0 || i.price < 0) || fields.taxRate < 0) throw new Error('Amounts can’t be negative.');
+        if (fields.payLink && !/^https:\/\//i.test(fields.payLink)) throw new Error('The card payment link must start with https://');
+        let rec = doc.id && j.docs.find((x) => x.id === doc.id);
+        if (rec) {
+          const paid = (rec.payments || []).length > 0;
+          if (!(rec.status === 'draft' || (rec.status === 'sent' && !paid))) throw new Error('This document is locked and can’t be edited.');
+          Object.assign(rec, fields);
+        } else {
+          const prefix = doc.type === 'invoice' ? 'INV' : 'E';
+          const n = j.docs.filter((x) => x.type === doc.type).length + 1;
+          rec = { id: uid(), type: doc.type, number: `${prefix}-${j.number}${n > 1 ? '-' + n : ''}`, status: 'draft',
+            payments: [], created: Date.now(), fromEstimateId: doc.fromEstimateId || null, ...fields };
+          j.docs.push(rec);
+          j.log.push({ at: Date.now(), text: `${doc.type === 'invoice' ? 'Invoice' : 'Estimate'} ${rec.number} created` });
+        }
+        writeDb(d);
+        return JSON.parse(JSON.stringify(rec));
+      },
+      async send(jobId, docId) {
+        await requireStaff();
+        const d = await db();
+        const j = d.jobs.find((x) => x.id === jobId);
+        const rec = j && j.docs.find((x) => x.id === docId);
+        if (!rec || rec.status !== 'draft') throw new Error('Only drafts can be sent.');
+        if (!(rec.items || []).some((i) => i.desc && i.qty && i.price)) throw new Error('Add at least one line with a description, quantity and price.');
+        rec.status = 'sent'; rec.sentAt = Date.now();
+        j.log.push({ at: Date.now(), text: `${rec.number} sent to customer (${usd(docTotal(rec))})` });
+        writeDb(d);
+      },
+      // Staff: mark an estimate approved/declined (e.g. customer said yes by phone), or void an invoice.
+      async setStatus(jobId, docId, status) {
+        const u = await requireStaff();
+        const d = await db();
+        const j = d.jobs.find((x) => x.id === jobId);
+        const rec = j && j.docs.find((x) => x.id === docId);
+        if (!rec) throw new Error('Not found.');
+        const ok = rec.type === 'estimate' ? ['approved', 'declined'].includes(status) && rec.status === 'sent'
+          : status === 'void' && rec.status !== 'void';
+        if (!ok) throw new Error('That change isn’t allowed.');
+        rec.status = status; rec.respondedAt = Date.now(); rec.respondedBy = `${u.name} (office)`;
+        if (status === 'approved') { j.price = docTotal(rec); j.log.push({ at: Date.now(), text: `Customer price → ${usd(j.price)} (from ${rec.number})` }); }
+        j.log.push({ at: Date.now(), text: `${rec.number} marked ${status} by office` });
+        writeDb(d);
+      },
+      async remove(jobId, docId) {
+        await requireStaff();
+        const d = await db();
+        const j = d.jobs.find((x) => x.id === jobId);
+        const rec = j && j.docs.find((x) => x.id === docId);
+        if (!rec) return;
+        if (rec.status !== 'draft') throw new Error('Only drafts can be deleted. Void an invoice instead.');
+        j.docs = j.docs.filter((x) => x !== rec);
+        j.log.push({ at: Date.now(), text: `Draft ${rec.number} deleted` });
+        writeDb(d);
+      },
+      async addPayment(jobId, docId, p) {
+        await requireStaff();
+        const d = await db();
+        const j = d.jobs.find((x) => x.id === jobId);
+        const rec = j && j.docs.find((x) => x.id === docId);
+        if (!rec || rec.type !== 'invoice' || ['draft', 'void'].includes(rec.status)) throw new Error('Send the invoice before recording payments.');
+        const amount = Math.round(Number(p.amount) * 100) / 100;
+        if (!(amount > 0)) throw new Error('Enter the amount received.');
+        rec.payments.push({ id: uid(), amount, method: p.method || 'Other', date: p.date || isoDay(Date.now()), note: (p.note || '').trim() });
+        const paid = rec.payments.reduce((t, x) => t + x.amount, 0);
+        j.log.push({ at: Date.now(), text: `Payment ${usd(amount)} (${p.method || 'Other'}) on ${rec.number}` });
+        if (paid >= docTotal(rec)) j.log.push({ at: Date.now(), text: `${rec.number} paid in full` });
+        writeDb(d);
+      },
+      async removePayment(jobId, docId, paymentId) {
+        await requireStaff();
+        const d = await db();
+        const j = d.jobs.find((x) => x.id === jobId);
+        const rec = j && j.docs.find((x) => x.id === docId);
+        const pay = rec && rec.payments.find((x) => x.id === paymentId);
+        if (!pay) return;
+        rec.payments = rec.payments.filter((x) => x !== pay);
+        j.log.push({ at: Date.now(), text: `Payment ${usd(pay.amount)} removed from ${rec.number}` });
+        writeDb(d);
+      },
+      // Customer: everything sent to them (never drafts), keyed by job.
+      async mine() {
+        const u = await me();
+        if (!u) return {};
+        const d = await db();
+        const out = {};
+        d.jobs.filter((j) => j.buyerId === u.id).forEach((j) => {
+          out[j.id] = j.docs.filter((x) => x.status !== 'draft').map((x) => {
+            const { id, type, number, status, items, taxRate, notes, dueDate, payLink, payments, created, sentAt, respondedAt } = x;
+            return JSON.parse(JSON.stringify({ id, type, number, status, items, taxRate, notes, dueDate, payLink, payments, created, sentAt, respondedAt }));
+          });
+        });
+        return out;
+      },
+      async respond(docId, approve) {
+        const u = await me();
+        const d = await db();
+        const j = u && d.jobs.find((x) => x.buyerId === u.id && x.docs.some((y) => y.id === docId));
+        const rec = j && j.docs.find((x) => x.id === docId);
+        if (!rec || rec.type !== 'estimate' || rec.status !== 'sent') throw new Error('This estimate can no longer be changed. Call us if you have questions.');
+        rec.status = approve ? 'approved' : 'declined'; rec.respondedAt = Date.now(); rec.respondedBy = u.name;
+        if (approve) { j.price = docTotal(rec); j.log.push({ at: Date.now(), text: `Customer price → ${usd(j.price)} (from ${rec.number})` }); }
+        j.log.push({ at: Date.now(), text: `Customer ${approve ? 'approved' : 'declined'} ${rec.number}` });
+        writeDb(d);
       },
     },
 
@@ -479,5 +640,5 @@
     });
   }
 
-  window.TH = { _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+  window.TH = { _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();

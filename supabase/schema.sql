@@ -28,11 +28,12 @@ end $$;
 
 -- ---------- clean slate for re-runs ----------
 drop trigger if exists on_auth_user_created on auth.users;
-drop table if exists public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
+drop table if exists public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
 drop function if exists public.handle_new_user, public.is_staff, public.new_crew_token, public.owns_job,
   public.customer_can_read, public.crew_token_active, public.create_job, public.add_customer_file, public.my_jobs,
   public.crew_job, public.crew_add_file, public.jobs_after_insert, public.jobs_before_update, public.jobs_after_update,
-  public.private_after_update, public.files_after_change, public.status_label, public.log_event, public.usd cascade;
+  public.private_after_update, public.files_after_change, public.status_label, public.log_event, public.usd,
+  public.doc_total, public.doc_paid, public.docs_before, public.docs_after, public.my_documents, public.respond_estimate cascade;
 
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
@@ -277,7 +278,7 @@ create function public.my_jobs() returns jsonb
 language sql stable security definer set search_path = '' as $$
   select coalesce(jsonb_agg(jsonb_build_object(
     'id', j.id, 'number', j.number, 'trade', j.trade, 'status', j.status, 'created_at', j.created_at,
-    'description', j.description, 'address', j.address, 'timeframe', j.timeframe, 'budget', j.budget,
+    'description', j.description, 'address', j.address, 'zip', j.zip, 'timeframe', j.timeframe, 'budget', j.budget,
     'scheduled_for', j.scheduled_for,
     'contractor_name', case when j.status in ('scheduled', 'in_progress', 'completed') then c.name end,
     'shared_files', (select coalesce(jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'kind', f.kind, 'size', f.size,
@@ -336,11 +337,171 @@ begin
           left(coalesce(p_note, ''), 500), 'crew', coalesce(cname, 'Crew'), cid);
 end $$;
 
+-- ---------- estimates & invoices ----------
+-- Company details printed on every estimate and invoice (one row).
+create table public.settings (
+  id int primary key default 1 check (id = 1),
+  data jsonb not null default '{}',
+  updated_at timestamptz not null default now()
+);
+insert into public.settings (id, data) values (1, jsonb_build_object(
+  'name', 'Top Hat Contracting', 'phone', '', 'email', '', 'address', '', 'license', '',
+  'taxRate', 0, 'dueDays', 14,
+  'paymentInstructions', E'We accept cash, check, Zelle, card, Venmo and Cash App.\nMake checks payable to Top Hat Contracting.',
+  'estimateTerms', 'This estimate is valid for 30 days. Work begins once the estimate is approved.',
+  'invoiceTerms', 'Thank you for choosing Top Hat Contracting!'));
+
+-- Customer-facing documents. Only the customer price lives here; crew pay never does.
+create table public.documents (
+  id uuid primary key default gen_random_uuid(),
+  job_id uuid not null references public.jobs(id) on delete cascade,
+  type text not null check (type in ('estimate', 'invoice')),
+  number text not null unique,
+  status text not null default 'draft' check (status in ('draft', 'sent', 'approved', 'declined', 'void')),
+  items jsonb not null default '[]' check (jsonb_typeof(items) = 'array'),
+  tax_rate numeric(6, 3) not null default 0 check (tax_rate >= 0),
+  notes text not null default '',
+  due_date date,
+  pay_link text not null default '' check (pay_link = '' or pay_link ~* '^https://'),
+  payments jsonb not null default '[]' check (jsonb_typeof(payments) = 'array'),
+  from_estimate uuid references public.documents(id) on delete set null,
+  created_at timestamptz not null default now(),
+  sent_at timestamptz,
+  responded_at timestamptz,
+  responded_by text not null default ''
+);
+create index on public.documents (job_id);
+
+create function public.doc_total(items jsonb, tax numeric) returns numeric
+language sql immutable set search_path = '' as $$
+  select round(coalesce((select sum(coalesce((i->>'qty')::numeric, 0) * coalesce((i->>'price')::numeric, 0))
+                         from jsonb_array_elements(items) i), 0) * (1 + coalesce(tax, 0) / 100), 2);
+$$;
+create function public.doc_paid(payments jsonb) returns numeric
+language sql immutable set search_path = '' as $$
+  select coalesce((select sum((p->>'amount')::numeric) from jsonb_array_elements(payments) p), 0);
+$$;
+
+-- Numbers (E-1042, INV-1042, INV-1042-2…) and the rules about what can change when.
+create function public.docs_before() returns trigger
+language plpgsql security definer set search_path = '' as $$
+declare jn bigint; n int;
+begin
+  if exists (select 1 from jsonb_array_elements(new.items) i
+             where coalesce((i->>'qty')::numeric, 0) < 0 or coalesce((i->>'price')::numeric, 0) < 0) then
+    raise exception 'Amounts can''t be negative.';
+  end if;
+  if exists (select 1 from jsonb_array_elements(new.payments) p where coalesce((p->>'amount')::numeric, 0) <= 0) then
+    raise exception 'Payment amounts must be more than zero.';
+  end if;
+  if tg_op = 'INSERT' then
+    select number into jn from public.jobs where id = new.job_id;
+    select count(*) + 1 into n from public.documents where job_id = new.job_id and type = new.type;
+    new.number := case when new.type = 'invoice' then 'INV-' else 'E-' end || jn || case when n > 1 then '-' || n else '' end;
+    new.status := 'draft';
+    new.payments := '[]';
+    return new;
+  end if;
+  new.job_id := old.job_id; new.type := old.type; new.number := old.number; new.created_at := old.created_at;
+  if (new.items, new.tax_rate) is distinct from (old.items, old.tax_rate)
+     and not (old.status = 'draft' or (old.status = 'sent' and jsonb_array_length(old.payments) = 0)) then
+    raise exception 'This document is locked and can''t be edited.';
+  end if;
+  if new.status is distinct from old.status and not (
+       (old.status = 'draft' and new.status = 'sent')
+    or (old.type = 'estimate' and old.status = 'sent' and new.status in ('approved', 'declined'))
+    or (old.type = 'invoice' and old.status <> 'void' and new.status = 'void')) then
+    raise exception 'That change isn''t allowed.';
+  end if;
+  if new.payments is distinct from old.payments and (old.type <> 'invoice' or old.status in ('draft', 'void')) then
+    raise exception 'Send the invoice before recording payments.';
+  end if;
+  if new.status = 'sent' and old.status = 'draft' then new.sent_at := now(); end if;
+  return new;
+end $$;
+create trigger docs_before before insert or update on public.documents
+  for each row execute function public.docs_before();
+
+create function public.docs_after() returns trigger
+language plpgsql security definer set search_path = '' as $$
+declare total numeric; last jsonb;
+begin
+  if tg_op = 'DELETE' then
+    if old.status <> 'draft' then raise exception 'Only drafts can be deleted. Void an invoice instead.'; end if;
+    perform public.log_event(old.job_id, 'Draft ' || old.number || ' deleted');
+    return old;
+  end if;
+  total := public.doc_total(new.items, new.tax_rate);
+  if tg_op = 'INSERT' then
+    perform public.log_event(new.job_id, case when new.type = 'invoice' then 'Invoice ' else 'Estimate ' end || new.number || ' created');
+    return new;
+  end if;
+  if new.status is distinct from old.status then
+    if new.status = 'sent' then
+      perform public.log_event(new.job_id, new.number || ' sent to customer (' || public.usd(total) || ')');
+    else
+      perform public.log_event(new.job_id, new.number || ' ' || new.status || coalesce(nullif(' by ' || new.responded_by, ' by '), ''));
+    end if;
+    if new.status = 'approved' then
+      update public.job_private set price = total where job_id = new.job_id;
+    end if;
+  end if;
+  if jsonb_array_length(new.payments) > jsonb_array_length(old.payments) then
+    last := new.payments -> -1;
+    perform public.log_event(new.job_id, 'Payment ' || public.usd((last->>'amount')::numeric) || ' (' || coalesce(last->>'method', 'Other') || ') on ' || new.number);
+    if public.doc_paid(new.payments) >= total and public.doc_paid(old.payments) < total then
+      perform public.log_event(new.job_id, new.number || ' paid in full');
+    end if;
+  elsif jsonb_array_length(new.payments) < jsonb_array_length(old.payments) then
+    perform public.log_event(new.job_id, 'Payment removed from ' || new.number);
+  end if;
+  return new;
+end $$;
+create trigger docs_after after insert or update or delete on public.documents
+  for each row execute function public.docs_after();
+
+alter table public.settings enable row level security;
+alter table public.documents enable row level security;
+create policy "logged in can read" on public.settings for select to authenticated using (true);
+create policy "staff edit" on public.settings for update to authenticated using (public.is_staff()) with check (public.is_staff());
+create policy "staff only" on public.documents for all to authenticated using (public.is_staff()) with check (public.is_staff());
+revoke all on public.settings, public.documents from anon;
+revoke insert, delete on public.settings from authenticated;
+
+-- Customer: everything sent to them on their own jobs (never drafts), keyed by job.
+create function public.my_documents() returns jsonb
+language sql stable security definer set search_path = '' as $$
+  select coalesce(jsonb_object_agg(job_id, docs), '{}'::jsonb) from (
+    select d.job_id, jsonb_agg(jsonb_build_object(
+      'id', d.id, 'type', d.type, 'number', d.number, 'status', d.status, 'items', d.items, 'tax_rate', d.tax_rate,
+      'notes', d.notes, 'due_date', d.due_date, 'pay_link', d.pay_link, 'payments', d.payments,
+      'created_at', d.created_at, 'sent_at', d.sent_at, 'responded_at', d.responded_at) order by d.created_at) as docs
+    from public.documents d join public.jobs j on j.id = d.job_id
+    where j.buyer_id = auth.uid() and d.status <> 'draft'
+    group by d.job_id) x;
+$$;
+
+-- Customer: approve or decline an estimate that was sent to them.
+create function public.respond_estimate(p_doc uuid, p_approve boolean) returns void
+language plpgsql security definer set search_path = '' as $$
+declare who text;
+begin
+  if not exists (select 1 from public.documents d join public.jobs j on j.id = d.job_id
+                 where d.id = p_doc and j.buyer_id = auth.uid() and d.type = 'estimate' and d.status = 'sent') then
+    raise exception 'This estimate can no longer be changed. Call us if you have questions.';
+  end if;
+  select name into who from public.profiles where id = auth.uid();
+  update public.documents
+     set status = case when p_approve then 'approved' else 'declined' end,
+         responded_at = now(), responded_by = coalesce(who, 'customer') || ' (customer)'
+   where id = p_doc;
+end $$;
+
 -- ---------- function permissions ----------
 revoke execute on all functions in schema public from public, anon, authenticated;
 grant execute on function public.is_staff(), public.owns_job(text), public.customer_can_read(text),
   public.create_job(text, text, text, text, text, text), public.add_customer_file(uuid, text, text, text, bigint),
-  public.my_jobs() to authenticated;
+  public.my_jobs(), public.my_documents(), public.respond_estimate(uuid, boolean) to authenticated;
 grant execute on function public.crew_token_active(text), public.crew_job(text),
   public.crew_add_file(text, text, text, text, bigint, text, text) to anon, authenticated;
 -- Trigger and helper functions run with the table owner's rights; no one needs to call them directly.

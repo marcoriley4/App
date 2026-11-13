@@ -109,7 +109,7 @@
       const trade = find(TRADES, draft.trade);
       const photosWrap = el('div', { class: 'photos' });
       const renderPhotos = () => {
-        photosWrap.replaceChildren(
+        photosWrap.replaceChildren(...[
           ...draft.photos.map((src, i) => el('div', { class: 'photo' },
             el('img', { src, alt: `Photo ${i + 1}` }),
             el('button', { type: 'button', 'aria-label': `Remove photo ${i + 1}`, onclick: () => { draft.photos.splice(i, 1); saveDraft(); renderPhotos(); } }, '✕'))),
@@ -120,7 +120,7 @@
               for (const f of files) { try { draft.photos.push(await shrinkImage(f)); } catch (err) { showError(err.message); } }
               saveDraft(); renderPhotos();
             } })) : null,
-        );
+        ].filter(Boolean));
       };
       renderPhotos();
 
@@ -227,6 +227,27 @@
     if (!me) return go('login?next=jobs');
     const jobs = await api.jobs.mine();
     const docs = Object.fromEntries(await Promise.all(jobs.map(async (j) => [j.id, j.sharedFiles ? await api.files.forCustomer(j.id) : []])));
+    const [paper, company] = await Promise.all([api.docs.mine(), api.settings.get()]);
+    const D = TH.docs;
+    const openPaper = (j, dc) => {
+      const acts = [];
+      if (dc.type === 'estimate' && dc.status === 'sent') {
+        acts.push((close) => el('button', { class: 'gold block', onclick: async (e) => {
+          if (!confirm(`Approve estimate ${dc.number} for ${D.usd(D.totals(dc).total)}?`)) return;
+          e.currentTarget.disabled = true;
+          try { await api.docs.respond(dc.id, true); close(); route(); } catch (err) { alert(err.message); e.currentTarget.disabled = false; }
+        } }, `✓ Approve estimate (${D.usd(D.totals(dc).total)})`));
+        acts.push((close) => el('button', { class: 'ghost block', onclick: async (e) => {
+          if (!confirm('Decline this estimate? You can still call us with questions.')) return;
+          e.currentTarget.disabled = true;
+          try { await api.docs.respond(dc.id, false); close(); route(); } catch (err) { alert(err.message); e.currentTarget.disabled = false; }
+        } }, 'Decline'));
+      }
+      if (dc.type === 'invoice' && D.owed(dc) > 0 && dc.payLink) {
+        acts.push(el('a', { class: 'btn gold block', href: dc.payLink, target: '_blank', rel: 'noopener' }, `💳 Pay ${D.usd(D.owed(dc))} by card`));
+      }
+      D.view(dc, { job: j, customer: me, company }, acts);
+    };
     view.append(el('div', { class: 'stack', style: 'margin-top:24px' },
       el('div', { class: 'row' }, el('h1', {}, 'My jobs'), el('span', { class: 'spacer' }), el('a', { class: 'btn gold small', href: '#/request' }, '+ New request')),
       jobs.length ? null : el('div', { class: 'card muted' }, "You haven't requested any jobs yet."),
@@ -245,6 +266,12 @@
           j.scheduledFor && ['scheduled', 'in_progress'].includes(j.status)
             ? el('div', { class: 'callout' }, '📅 ', el('b', {}, fmtWhen(j.scheduledFor)), j.contractorName ? ` · ${j.contractorName} from Top Hat is coming out.` : '')
             : null,
+          (paper[j.id] || []).length ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Estimates & invoices'),
+            el('div', { class: 'doc-list' }, ...paper[j.id].map((dc) => el('button', { type: 'button', class: 'doc-row', onclick: () => openPaper(j, dc) },
+              el('span', { class: 'ic' }, dc.type === 'invoice' ? '🧾' : '📝'),
+              el('span', { class: 'body' }, el('b', {}, `${dc.type === 'invoice' ? 'Invoice' : 'Estimate'} ${dc.number}`),
+                el('span', { class: 'muted small' }, dc.type === 'invoice' && D.owed(dc) > 0 ? `${D.usd(D.owed(dc))} due${dc.dueDate ? ' by ' + D.fmtDate(dc.dueDate) : ''}` : D.usd(D.totals(dc).total))),
+              el('span', { class: `pill ${D.pillClass(dc)}` }, dc.type === 'estimate' && dc.status === 'sent' ? 'Needs your OK' : D.label(dc)))))) : null,
           docs[j.id].length ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Documents from Top Hat'),
             el('ul', { class: 'docs' }, ...docs[j.id].map((f) => el('li', {},
               el('a', { href: f.url, target: '_blank', rel: 'noopener' }, (find(FILE_KINDS, f.kind) || FILE_KINDS.at(-1)).icon + ' ', f.name,

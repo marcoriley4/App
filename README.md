@@ -18,6 +18,8 @@ A job-request app for Top Hat Contracting. Customers post a job and create an ac
 - **Files, one folder per job:** upload estimates, contracts, invoices, receipts, permits and photos to the job. The file type is guessed from the file name and can be changed. A checklist shows whether the estimate, contract and invoice are in. The customer's own request photos are included.
 - **Text job details to the crew:** opens a text message to the assigned crew lead with the job number, address, time, customer contact and job description filled in.
 - **Crew photo upload link:** each assigned job gets a private link, included at the end of the crew text (there's also a **Copy link** button). The contractor taps it, with no app or password, sees the job basics, picks **Before / During / After**, adds an optional note and uploads photos. They land in that job's Files, labeled with who sent them. Reassigning the job to another crew makes a new link and turns the old one off.
+- **Estimates & invoices:** create them from any job, prefilled with the customer, job number, address and description. Add line items and tax, then **Send to customer**. The customer sees it in My jobs and can **approve an estimate with one tap**, which also sets the job's customer price. You can **turn an approved estimate into an invoice** in one tap, and **record payments** by cash, check, Zelle, card, Venmo, Cash App or other, including partial payments. The invoice shows Partly paid, Paid or Overdue on its own. You can add an optional Square or Stripe **"Pay by card" link**, text or email the customer a link, void an invoice, and **print or save a PDF**. Approved estimates and paid invoices are locked. **Crew pay never appears** on any estimate or invoice.
+- **Business tab:** company name, phone, email, address, license #, default tax rate, invoice due days, "how customers can pay" (Zelle, Venmo and so on), and default terms. All of these print on every estimate and invoice.
 - **Crew:** add, edit or deactivate your contractors and the trades they cover.
 
 ### Who sees what
@@ -28,6 +30,7 @@ A job-request app for Top Hat Contracting. Customers post a job and create an ac
 | Customer price | ✓ | only in documents you share | **never** |
 | Crew pay and profit | ✓ | **never** | **never** |
 | Internal notes and activity | ✓ | never | never |
+| Estimates & invoices | ✓ (incl. drafts) | the ones you send (never drafts) | **never** |
 | Files | ✓ | only files marked "Customer can see" | only the photos they uploaded |
 
 Crew don't log in. They receive the job text and use the photo upload link. Neither includes prices, the customer's budget, staff notes or other files. On the upload page they see only the job basics and the photos they sent themselves. Crew photos start out hidden from the customer.
@@ -61,7 +64,7 @@ Who-sees-what is enforced by the database (row-level security and storage polici
 - Prices, crew pay and notes live in the staff-only `job_private` table.
 - Crew reach a job only through its private upload code.
 
-`supabase/` also holds the security test that runs the schema against Postgres and checks each rule.
+`supabase/` also holds the security test that runs the schema against Postgres and checks each rule (76 checks).
 
 ## Run it locally
 
@@ -81,4 +84,5 @@ python3 -m http.server 8000
 - `config.js`: Supabase project URL and publishable key (empty = preview mode)
 - `supabase/schema.sql`: database setup and security rules
 - `vendor/supabase-2.118.0.js`: Supabase JavaScript client (MIT license)
-- `styles.css`: shared styling
+- `docs.js`: estimate and invoice totals, statuses, and the printable document
+- `styles.css`: shared styling, including print styles for PDFs

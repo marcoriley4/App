@@ -16,7 +16,7 @@
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
   });
   const BUCKET = 'job-files';
-  const { guessKind, normEmail, validateSignUp, MAX_FILE_MB } = TH._util;
+  const { guessKind, normEmail, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS } = TH._util;
 
   /* ---------- helpers ---------- */
   function friendly(err) {
@@ -60,6 +60,18 @@
     id: r.id, name: r.name, mime: r.mime, size: Number(r.size) || 0, kind: r.kind, stage: r.stage || '', note: r.note || '',
     shared: !!r.shared, uploaded: ms(r.uploaded_at), by: r.by_name, source: r.source, url: url || null,
   });
+
+  const mapDoc = (r) => ({
+    id: r.id, type: r.type, number: r.number, status: r.status, items: r.items || [], taxRate: Number(r.tax_rate) || 0,
+    notes: r.notes || '', dueDate: r.due_date || null, payLink: r.pay_link || '', payments: r.payments || [],
+    created: ms(r.created_at), sentAt: ms(r.sent_at), respondedAt: ms(r.responded_at), respondedBy: r.responded_by || '',
+    fromEstimateId: r.from_estimate || null,
+  });
+  async function getDoc(docId) {
+    const r = must(await sb.from('documents').select('*').eq('id', docId).maybeSingle());
+    if (!r) throw new Error('Not found.');
+    return r;
+  }
 
   /* ---------- auth ---------- */
   let profile = null;
@@ -131,19 +143,22 @@
         mine = new Map(list.map((j) => [j.id, j]));
         return list.map((j) => ({
           id: j.id, number: j.number, trade: j.trade, status: j.status, created: ms(j.created_at),
-          description: j.description, address: j.address, timeframe: j.timeframe, budget: j.budget, photos: [],
+          description: j.description, address: j.address, zip: j.zip || '', timeframe: j.timeframe, budget: j.budget, photos: [],
           scheduledFor: local16(j.scheduled_for), contractorName: j.contractor_name || null,
           sharedFiles: (j.shared_files || []).length,
         }));
       },
       async all() {
         await requireStaff();
-        const [jobs, priv, files, people] = await Promise.all([
+        const [jobs, priv, files, people, papers] = await Promise.all([
           fetchAll(() => sb.from('jobs').select('*').order('created_at', { ascending: false })),
           fetchAll(() => sb.from('job_private').select('*')),
           fetchAll(() => sb.from('job_files').select('id, job_id, kind')),
           fetchAll(() => sb.from('profiles').select('id, name, email, phone')),
+          fetchAll(() => sb.from('documents').select('id, job_id, type, number, status, items, tax_rate, due_date, payments')),
         ]);
+        const docsBy = {};
+        papers.forEach((r) => { (docsBy[r.job_id] ||= []).push(mapDoc(r)); });
         const privBy = Object.fromEntries(priv.map((p) => [p.job_id, p]));
         const peopleBy = Object.fromEntries(people.map((p) => [p.id, p]));
         const filesBy = {};
@@ -155,7 +170,7 @@
             description: j.description, address: j.address, zip: j.zip, timeframe: j.timeframe, budget: j.budget, photos: [],
             contractorId: j.contractor_id, scheduledFor: local16(j.scheduled_for),
             price: num(p.price), crewPay: num(p.crew_pay), notes: p.notes || '', crewToken: p.crew_token || null,
-            files: filesBy[j.id] || [],
+            files: filesBy[j.id] || [], docs: docsBy[j.id] || [],
             buyer: peopleBy[j.buyer_id] || { name: 'Unknown', email: '', phone: '' },
           };
         });
@@ -217,6 +232,72 @@
         const list = j.shared_files || [];
         const urls = await signedUrls(list.map((f) => f.path));
         return list.map((f) => ({ id: f.id, name: f.name, kind: f.kind, size: Number(f.size) || 0, uploaded: ms(f.uploaded_at), url: urls[f.path] || null }));
+      },
+    },
+
+    settings: {
+      async get() {
+        const { data } = await sb.from('settings').select('data').eq('id', 1).maybeSingle();
+        return { ...DEFAULT_SETTINGS, ...((data && data.data) || {}) };
+      },
+      async save(patch) {
+        await requireStaff();
+        const current = await api.settings.get();
+        const next = { ...current, ...patch };
+        must(await sb.from('settings').update({ data: next, updated_at: new Date().toISOString() }).eq('id', 1));
+        return next;
+      },
+    },
+
+    docs: {
+      async list(jobId) {
+        await requireStaff();
+        return must(await sb.from('documents').select('*').eq('job_id', jobId).order('created_at')).map(mapDoc);
+      },
+      async save(jobId, doc) {
+        await requireStaff();
+        const row = {
+          items: (doc.items || []).map((i) => ({ desc: String(i.desc || '').trim(), qty: Number(i.qty) || 0, price: Number(i.price) || 0 })),
+          tax_rate: Number(doc.taxRate) || 0, notes: doc.notes || '', due_date: doc.dueDate || null, pay_link: (doc.payLink || '').trim(),
+        };
+        if (row.pay_link && !/^https:\/\//i.test(row.pay_link)) throw new Error('The card payment link must start with https://');
+        if (doc.id) return mapDoc(must(await sb.from('documents').update(row).eq('id', doc.id).select().single()));
+        return mapDoc(must(await sb.from('documents').insert({ ...row, job_id: jobId, type: doc.type, from_estimate: doc.fromEstimateId || null, number: 'pending' }).select().single()));
+      },
+      async send(jobId, docId) {
+        await requireStaff();
+        const r = await getDoc(docId);
+        if (!(r.items || []).some((i) => i.desc && i.qty && i.price)) throw new Error('Add at least one line with a description, quantity and price.');
+        must(await sb.from('documents').update({ status: 'sent' }).eq('id', docId));
+      },
+      async setStatus(jobId, docId, status) {
+        const u = await requireStaff();
+        must(await sb.from('documents').update({ status, responded_at: new Date().toISOString(), responded_by: `${u.name} (office)` }).eq('id', docId));
+      },
+      async remove(jobId, docId) {
+        await requireStaff();
+        must(await sb.from('documents').delete().eq('id', docId));
+      },
+      async addPayment(jobId, docId, p) {
+        await requireStaff();
+        const amount = Math.round(Number(p.amount) * 100) / 100;
+        if (!(amount > 0)) throw new Error('Enter the amount received.');
+        const r = await getDoc(docId);
+        const payments = [...(r.payments || []), { id: rid(), amount, method: p.method || 'Other', date: p.date || new Date().toISOString().slice(0, 10), note: (p.note || '').trim() }];
+        must(await sb.from('documents').update({ payments }).eq('id', docId));
+      },
+      async removePayment(jobId, docId, paymentId) {
+        await requireStaff();
+        const r = await getDoc(docId);
+        must(await sb.from('documents').update({ payments: (r.payments || []).filter((x) => x.id !== paymentId) }).eq('id', docId));
+      },
+      async mine() {
+        if (!(await me())) return {};
+        const byJob = must(await sb.rpc('my_documents')) || {};
+        return Object.fromEntries(Object.entries(byJob).map(([k, list]) => [k, list.map(mapDoc)]));
+      },
+      async respond(docId, approve) {
+        must(await sb.rpc('respond_estimate', { p_doc: docId, p_approve: !!approve }));
       },
     },
 
