@@ -215,3 +215,30 @@ label.field .hint { font-weight: 400; color: var(--muted); font-size: .82rem; }
   .trust { grid-template-columns: 1fr 1fr 1fr; }
   .trust div { padding: 10px 4px; }
 }
+
+/* Money (staff only) */
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pill.lock { background: var(--surface-2); color: var(--text); }
+.profit { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; background: var(--good-soft); color: var(--good); border-radius: 10px; padding: 10px 12px; }
+.profit b { font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+.profit span:first-child { color: var(--text); font-weight: 600; font-size: .9rem; }
+.profit.neg { background: var(--bad-soft); color: var(--bad); }
+.profit:has(.muted) { background: var(--surface-2); }
+
+/* Job files */
+.files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.files li { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.files li:last-child { border-bottom: none; }
+.files .ic { font-size: 1.3rem; width: 36px; height: 36px; border-radius: 9px; background: var(--surface-2); display: grid; place-items: center; flex-shrink: 0; }
+.files .body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.files .body > a, .files .body > span { font-weight: 600; overflow-wrap: anywhere; }
+.files .meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: .8rem; color: var(--muted); }
+.files .meta select { width: auto; min-height: 30px; padding: 3px 8px; font-size: 14px; border-radius: 8px; }
+.files .share { display: flex; align-items: center; gap: 6px; font-size: .82rem; color: var(--muted); cursor: pointer; }
+.files .share input { width: 18px; height: 18px; accent-color: var(--good); }
+.files .share:has(input:checked) { color: var(--good); font-weight: 600; }
+.files button.icon { background: none; border: none; color: var(--muted); min-height: 36px; min-width: 36px; padding: 0; font-weight: 400; }
+.docs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.docs a { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; text-decoration: none; color: var(--text); font-weight: 600; font-size: .92rem; }
+.docs a span:last-child { margin-left: auto; color: var(--muted); font-weight: 400; font-size: .8rem; }
+@media (max-width: 380px) { .two { grid-template-columns: 1fr; } }

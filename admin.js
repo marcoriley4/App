@@ -1,7 +1,7 @@
 'use strict';
 /* Top Hat staff area: qualify leads, schedule jobs, assign crews. */
 (function () {
-  const { api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, el, ago, fmtWhen, find } = TH;
+  const { api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, el, ago, fmtWhen, find } = TH;
   const view = document.getElementById('view');
   const drawerRoot = document.getElementById('drawerRoot');
   const OPEN = ['new', 'qualifying', 'scheduled', 'in_progress'];
@@ -25,12 +25,18 @@
 
   const tradeOf = (id) => find(TRADES, id) || TRADES.at(-1);
   const statusOf = (id) => find(STATUSES, id);
-  const money = (n) => '$' + Math.round(n).toLocaleString();
+  const money = (n) => (n < 0 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString();
+  const jobNo = (j) => `TH-${j.number}`;
+  const kindOf = (id) => find(FILE_KINDS, id) || FILE_KINDS.at(-1);
+  const fileSize = (n) => n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
+  const num = (v) => (v === '' || v == null ? null : Number(v));
+  let fileUrls = [];
+  const releaseUrls = () => { fileUrls.forEach((u) => URL.revokeObjectURL(u)); fileUrls = []; };
   const initials = (name) => name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
   const telHref = (p) => 'tel:' + String(p).replace(/[^\d+]/g, '');
   const smsHref = (p, body) => 'sms:' + String(p).replace(/[^\d+]/g, '') + (body ? '?&body=' + encodeURIComponent(body) : '');
 
-  function closeDrawer() { drawerRoot.replaceChildren(); document.body.style.overflow = ''; render(); }
+  function closeDrawer() { releaseUrls(); drawerRoot.replaceChildren(); document.body.style.overflow = ''; render(); }
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drawerRoot.firstChild) closeDrawer(); });
 
   /* ---------- boot ---------- */
@@ -83,7 +89,7 @@
   /* ---------- leads ---------- */
   function leadsView() {
     const count = (s) => jobs.filter((j) => j.status === s).length;
-    const pipeline = jobs.filter((j) => OPEN.includes(j.status) && j.value).reduce((s, j) => s + Number(j.value), 0);
+    const pipeline = jobs.filter((j) => OPEN.includes(j.status) && j.price).reduce((s, j) => s + Number(j.price), 0);
     const kpis = el('div', { class: 'kpis' },
       ...[[count('new'), 'New leads'], [count('qualifying'), 'Qualifying'], [count('scheduled') + count('in_progress'), 'Scheduled / active'], [money(pipeline), 'Open job value']]
         .map(([v, k]) => el('div', { class: 'kpi' }, el('b', {}, String(v)), el('span', {}, k))));
@@ -92,7 +98,7 @@
     const filterBar = el('div', { class: 'tabs-bar' }, ...filters.map(([id, label, n]) =>
       el('button', { 'aria-current': String(filter === id), onclick: () => { filter = id; render(); } }, label, el('span', { class: 'count' }, String(n)))));
 
-    const matches = (j, q) => !q || [j.buyer.name, j.buyer.phone, j.buyer.email, j.address, j.zip, j.description, tradeOf(j.trade).label].join(' ').toLowerCase().includes(q);
+    const matches = (j, q) => !q || [jobNo(j), String(j.number), j.buyer.name, j.buyer.phone, j.buyer.email, j.address, j.zip, j.description, tradeOf(j.trade).label].join(' ').toLowerCase().includes(q);
     const inFilter = (j) => filter === 'all' || (filter === 'open' ? OPEN.includes(j.status) : j.status === filter);
     const renderList = () => {
       const q = search.trim().toLowerCase();
@@ -101,7 +107,7 @@
         list.length ? list.map(leadCard) : [el('div', { class: 'card muted' }, q ? 'No leads match your search.' : 'No leads here right now.')]);
     };
     let listWrap = renderList();
-    const searchBox = el('input', { type: 'search', placeholder: 'Search name, phone, address…', value: search, 'aria-label': 'Search leads',
+    const searchBox = el('input', { type: 'search', placeholder: 'Search job #, name, phone, address…', value: search, 'aria-label': 'Search leads',
       oninput: (e) => { search = e.target.value; const list = renderList(); listWrap.replaceWith(list); listWrap = list; } });
     return [kpis, filterBar, searchBox, listWrap];
   }
@@ -116,18 +122,23 @@
           el('span', { class: `pill s-${j.status}` }, statusOf(j.status).label)),
         el('span', { class: 'desc' }, j.description),
         el('span', { class: 'meta' },
+          el('span', { style: 'font-weight:600' }, jobNo(j)),
           el('span', {}, '📍 ' + (j.zip || j.address)),
           el('span', {}, '⏱ ' + (find(TIMEFRAMES, j.timeframe)?.label || '—')),
           j.scheduledFor ? el('span', {}, '📅 ' + fmtWhen(j.scheduledFor)) : null,
           c ? el('span', {}, '👷 ' + c.name) : null,
+          j.files.length ? el('span', {}, `📁 ${j.files.length}`) : null,
           el('span', {}, ago(j.created)))),
     );
   }
 
   /* ---------- lead detail ---------- */
-  function openLead(id) {
+  async function openLead(id) {
     const j = jobs.find((x) => x.id === id);
     if (!j) return;
+    releaseUrls();
+    const files = await api.files.list(j.id);
+    fileUrls = files.map((f) => f.url).filter(Boolean);
     const t = tradeOf(j.trade);
     const close = closeDrawer;
 
@@ -165,7 +176,6 @@
         el('dt', {}, 'When'), el('dd', {}, find(TIMEFRAMES, j.timeframe)?.label || '—'),
         el('dt', {}, 'Budget'), el('dd', {}, find(BUDGETS, j.budget)?.label || 'Not sure yet'),
         el('dt', {}, 'Requested'), el('dd', {}, `${new Date(j.created).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })} (${ago(j.created)})`)),
-      j.photos?.length ? el('div', { class: 'photo-row' }, ...j.photos.map((src, i) => el('a', { href: src, target: '_blank' }, el('img', { src, alt: `Photo ${i + 1}` })))) : null,
     );
 
     // Status
@@ -183,10 +193,10 @@
       el('option', { value: '' }, '— Not assigned —'),
       ...sortedCrew.map((c) => el('option', { value: c.id, selected: c.id === j.contractorId }, `${c.trades.includes(j.trade) ? '★ ' : ''}${c.name}`)));
     const whenInput = el('input', { type: 'datetime-local', name: 'scheduledFor', value: j.scheduledFor || '' });
-    const valueInput = el('input', { type: 'number', name: 'value', inputmode: 'decimal', min: '0', step: '1', placeholder: 'e.g. 2500', value: j.value ?? '' });
     const assigned = find(crew, j.contractorId);
+    // Sent to the crew lead. Never include prices, budget or notes here.
     const dispatchText = assigned && [
-      `Top Hat job: ${t.label}`,
+      `Top Hat job ${jobNo(j)}: ${t.label}`,
       j.scheduledFor ? `When: ${fmtWhen(j.scheduledFor)}` : null,
       `Customer: ${b.name} ${b.phone}`,
       `Address: ${j.address} ${j.zip}`,
@@ -195,18 +205,88 @@
 
     const setup = el('form', { class: 'card stack', onsubmit: (e) => {
       e.preventDefault();
-      const patch = { contractorId: crewSel.value || null, scheduledFor: whenInput.value || null, value: valueInput.value === '' ? null : Number(valueInput.value) };
+      const patch = { contractorId: crewSel.value || null, scheduledFor: whenInput.value || null };
       if (patch.contractorId && patch.scheduledFor && ['new', 'qualifying'].includes(j.status)) patch.status = 'scheduled';
       update(patch);
     } },
       el('h3', {}, 'Set up the job'),
       el('label', { class: 'field' }, 'Crew', el('span', { class: 'hint' }, '★ = does this kind of work'), crewSel),
       el('label', { class: 'field' }, 'Date & time', whenInput),
-      el('label', { class: 'field' }, 'Estimated job value ($)', valueInput),
       el('p', { class: 'muted small' }, 'Picking a crew and a date moves a new lead to “Scheduled”.'),
       el('button', { type: 'submit' }, 'Save'),
       assigned?.phone ? el('a', { class: 'btn ghost', href: smsHref(assigned.phone, dispatchText) }, `💬 Text job details to ${assigned.name.split(' ')[0]}`) : null,
+      assigned?.phone ? el('p', { class: 'muted small' }, 'The text includes the date, address, customer contact and job description. Never prices.') : null,
     );
+
+    // Money (staff only)
+    const priceInput = el('input', { type: 'number', name: 'price', inputmode: 'decimal', min: '0', step: '1', placeholder: 'e.g. 2500', value: j.price ?? '' });
+    const payInput = el('input', { type: 'number', name: 'crewPay', inputmode: 'decimal', min: '0', step: '1', placeholder: 'e.g. 1600', value: j.crewPay ?? '' });
+    const profitOut = el('div', { class: 'profit' });
+    const showProfit = () => {
+      const pr = num(priceInput.value), pay = num(payInput.value);
+      if (pr == null || pay == null) { profitOut.replaceChildren(el('span', { class: 'muted small' }, 'Enter both prices to see your profit.')); return; }
+      const profit = pr - pay;
+      profitOut.className = 'profit' + (profit < 0 ? ' neg' : '');
+      profitOut.replaceChildren(el('span', {}, 'Top Hat profit'), el('b', {}, money(profit)), el('span', { class: 'small' }, pr ? `${Math.round((profit / pr) * 100)}% margin` : ''));
+    };
+    showProfit();
+    const moneyCard = el('form', { class: 'card stack money', oninput: showProfit, onsubmit: (e) => {
+      e.preventDefault();
+      const price = num(priceInput.value), crewPay = num(payInput.value);
+      if ((price != null && price < 0) || (crewPay != null && crewPay < 0)) { errorBox.textContent = 'Prices can’t be negative.'; errorBox.hidden = false; return; }
+      update({ price, crewPay });
+    } },
+      el('div', { class: 'row' }, el('h3', {}, 'Money'), el('span', { class: 'spacer' }), el('span', { class: 'pill lock' }, '🔒 Staff only')),
+      el('div', { class: 'two' },
+        el('label', { class: 'field' }, 'Customer price', el('span', { class: 'hint' }, 'What the customer pays'), priceInput),
+        el('label', { class: 'field' }, 'Crew pay', el('span', { class: 'hint' }, 'What you pay the crew'), payInput)),
+      profitOut,
+      el('p', { class: 'muted small' }, 'The crew never sees the customer price or your profit. The customer never sees crew pay.'),
+      el('button', { type: 'submit' }, 'Save prices'),
+    );
+
+    // Files: this job's folder
+    const uploadNote = el('span', { class: 'muted small', hidden: true }, 'Uploading…');
+    const has = (k) => files.some((f) => f.kind === k);
+    const filesCard = el('section', { class: 'card stack' },
+      el('div', { class: 'row' }, el('h3', {}, `Files · ${jobNo(j)}`), el('span', { class: 'spacer' }), uploadNote),
+      el('div', { class: 'checks' }, ...['estimate', 'contract', 'invoice'].map((k) =>
+        el('span', { class: 'pill' + (has(k) ? ' s-completed' : '') }, `${has(k) ? '✓' : '○'} ${kindOf(k).label}`))),
+      files.length ? el('ul', { class: 'files' }, ...files.map((f) => {
+        const k = kindOf(f.kind);
+        return el('li', {},
+          el('span', { class: 'ic' }, k.icon),
+          el('div', { class: 'body' },
+            f.url ? el('a', { href: f.url, target: '_blank', rel: 'noopener', download: /^(image\/|application\/pdf)/.test(f.mime) ? null : f.name }, f.name) : el('span', {}, f.name + ' (missing)'),
+            el('div', { class: 'meta' },
+              el('select', { 'aria-label': `Type of ${f.name}`, onchange: (e) => fileUpdate(f.id, { kind: e.target.value }) },
+                ...FILE_KINDS.map((x) => el('option', { value: x.id, selected: x.id === f.kind }, x.label))),
+              el('span', {}, `${fileSize(f.size)} · ${new Date(f.uploaded).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`)),
+            el('label', { class: 'share' },
+              el('input', { type: 'checkbox', checked: f.shared, onchange: (e) => fileUpdate(f.id, { shared: e.target.checked }) }),
+              f.shared ? 'Customer can see this' : 'Customer can’t see this')),
+          el('button', { type: 'button', class: 'icon', 'aria-label': `Delete ${f.name}`, onclick: async () => {
+            if (!confirm(`Delete "${f.name}" from ${jobNo(j)}? This can't be undone.`)) return;
+            await api.files.remove(j.id, f.id); await load(); openLead(j.id);
+          } }, '✕'));
+      })) : el('p', { class: 'muted small' }, 'No files yet. Add estimates, contracts, invoices, receipts, permits and job photos here.'),
+      el('label', { class: 'btn ghost' }, '+ Add files',
+        el('input', { type: 'file', multiple: true, hidden: true, onchange: async (e) => {
+          const picked = [...e.target.files];
+          if (!picked.length) return;
+          uploadNote.hidden = false;
+          try { for (const f of picked) await api.files.upload(j.id, f); }
+          catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
+          await load(); openLead(j.id);
+        } })),
+      el('p', { class: 'muted small' }, '🔒 Files are staff-only unless you tick “Customer can see”. Crew never see files.'),
+      j.photos?.length ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Photos from the customer’s request'),
+        el('div', { class: 'photo-row' }, ...j.photos.map((src, i) => el('a', { href: src, target: '_blank' }, el('img', { src, alt: `Customer photo ${i + 1}` }))))) : null,
+    );
+    async function fileUpdate(fileId, patch) {
+      try { await api.files.update(j.id, fileId, patch); await load(); flashSaved(); openLead(j.id); }
+      catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
+    }
 
     // Notes
     const notes = el('textarea', { placeholder: 'Internal notes. The customer never sees these.', value: j.notes || '', rows: 4 });
@@ -223,12 +303,12 @@
         el('span', {}, new Date(l.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })), el('span', {}, l.text)))),
     );
 
-    const panel = el('div', { class: 'panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Lead: ${b.name}` },
+    const panel = el('div', { class: 'panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Job ${jobNo(j)}: ${b.name}` },
       el('div', { class: 'panel-head' },
         el('button', { class: 'ghost small', onclick: close, 'aria-label': 'Close' }, '← Back'),
-        el('b', { style: 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, `${t.icon} ${t.label}`),
+        el('b', { style: 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, `${jobNo(j)} · ${t.icon} ${t.label}`),
         el('span', { class: `pill s-${j.status}` }, statusOf(j.status).label)),
-      el('div', { class: 'panel-body' }, errorBox, contact, status, setup, details, notesCard, log),
+      el('div', { class: 'panel-body' }, errorBox, contact, status, setup, moneyCard, filesCard, details, notesCard, log),
     );
     const scroll = drawerRoot.querySelector('.panel')?.scrollTop || 0;
     drawerRoot.replaceChildren(el('div', { class: 'drawer', onclick: (e) => { if (e.target === e.currentTarget) close(); } }, panel));

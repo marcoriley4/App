@@ -1,7 +1,7 @@
 'use strict';
 /* Buyer side: post a job → create an account → track it. */
 (function () {
-  const { api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, el, ago, fmtWhen, find, shrinkImage } = TH;
+  const { api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, el, ago, fmtWhen, find, shrinkImage } = TH;
   const view = document.getElementById('view');
   const DRAFT_KEY = 'tophat.draft.v1';
   const MAX_PHOTOS = 5;
@@ -226,6 +226,7 @@
     const me = await api.auth.me();
     if (!me) return go('login?next=jobs');
     const jobs = await api.jobs.mine();
+    const docs = Object.fromEntries(await Promise.all(jobs.map(async (j) => [j.id, j.sharedFiles ? await api.files.forCustomer(j.id) : []])));
     view.append(el('div', { class: 'stack', style: 'margin-top:24px' },
       el('div', { class: 'row' }, el('h1', {}, 'My jobs'), el('span', { class: 'spacer' }), el('a', { class: 'btn gold small', href: '#/request' }, '+ New request')),
       jobs.length ? null : el('div', { class: 'card muted' }, "You haven't requested any jobs yet."),
@@ -236,7 +237,7 @@
         return el('article', { class: 'card job-card' },
           el('div', { class: 'head' },
             el('span', { style: 'font-size:1.6rem' }, trade.icon),
-            el('div', { class: 't' }, el('h3', {}, trade.label), el('p', { class: 'muted small' }, `${j.address} · requested ${ago(j.created)}`)),
+            el('div', { class: 't' }, el('h3', {}, trade.label), el('p', { class: 'muted small' }, `Job TH-${j.number} · ${j.address} · requested ${ago(j.created)}`)),
             el('span', { class: `pill s-${j.status}` }, st.buyer)),
           el('p', { class: 'small' }, j.description),
           j.status === 'lost' ? el('p', { class: 'muted small' }, 'This request was closed. Questions? Just request a new job and mention it.')
@@ -244,6 +245,10 @@
           j.scheduledFor && ['scheduled', 'in_progress'].includes(j.status)
             ? el('div', { class: 'callout' }, '📅 ', el('b', {}, fmtWhen(j.scheduledFor)), j.contractorName ? ` · ${j.contractorName} from Top Hat is coming out.` : '')
             : null,
+          docs[j.id].length ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Documents from Top Hat'),
+            el('ul', { class: 'docs' }, ...docs[j.id].map((f) => el('li', {},
+              el('a', { href: f.url, target: '_blank', rel: 'noopener' }, (find(FILE_KINDS, f.kind) || FILE_KINDS.at(-1)).icon + ' ', f.name,
+                el('span', {}, (find(FILE_KINDS, f.kind) || FILE_KINDS.at(-1)).label)))))) : null,
         );
       }),
     ));

@@ -39,6 +39,17 @@
     { id: '15k+', label: '$15,000+' },
   ];
 
+  const FILE_KINDS = [
+    { id: 'estimate', label: 'Estimate', icon: '📝' },
+    { id: 'invoice', label: 'Invoice', icon: '🧾' },
+    { id: 'contract', label: 'Contract', icon: '✍️' },
+    { id: 'receipt', label: 'Receipt', icon: '🧮' },
+    { id: 'permit', label: 'Permit', icon: '📜' },
+    { id: 'photo', label: 'Photo', icon: '📷' },
+    { id: 'other', label: 'Other', icon: '📎' },
+  ];
+  const MAX_FILE_MB = 15;
+
   // Internal pipeline status → what staff see, and what the buyer sees.
   const STATUSES = [
     { id: 'new', label: 'New lead', buyer: 'Received' },
@@ -64,6 +75,45 @@
   }
   function getSession() { try { return localStorage.getItem(SESSION_KEY); } catch (e) { return null; } }
   function setSession(id) { try { id ? localStorage.setItem(SESSION_KEY, id) : localStorage.removeItem(SESSION_KEY); } catch (e) { /* ignore */ } }
+
+  // File contents live in IndexedDB (much more room than localStorage).
+  const blobs = (() => {
+    let opening;
+    const open = () => opening || (opening = new Promise((res, rej) => {
+      const r = indexedDB.open('tophat-files', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('blobs');
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    }));
+    const run = async (mode, fn) => {
+      const conn = await open();
+      return new Promise((res, rej) => {
+        const t = conn.transaction('blobs', mode);
+        const req = fn(t.objectStore('blobs'));
+        const fail = () => rej(t.error || new Error('Could not save the file. Storage may be full.'));
+        t.oncomplete = () => res(req && req.result);
+        t.onerror = fail;
+        t.onabort = fail;
+      });
+    };
+    return {
+      put: (k, v) => run('readwrite', (s) => s.put(v, k)),
+      get: (k) => run('readonly', (s) => s.get(k)),
+      del: (k) => run('readwrite', (s) => s.delete(k)),
+      clear: () => run('readwrite', (s) => s.clear()),
+    };
+  })();
+
+  function guessKind(name, mime) {
+    const n = name.toLowerCase();
+    if (/invoice|bill/.test(n)) return 'invoice';
+    if (/estimate|quote|bid|proposal/.test(n)) return 'estimate';
+    if (/contract|agreement|signed/.test(n)) return 'contract';
+    if (/receipt/.test(n)) return 'receipt';
+    if (/permit/.test(n)) return 'permit';
+    if (/^image\//.test(mime)) return 'photo';
+    return 'other';
+  }
 
   async function hash(s) {
     if (window.crypto && crypto.subtle) {
@@ -97,30 +147,43 @@
           id: uid(), buyerId: b1, trade: 'plumbing', status: 'new', created: now - 2 * H,
           description: 'Kitchen sink is leaking under the cabinet. Water damage starting on the cabinet floor.',
           address: '42 Maple Ave, Springfield', zip: '62704', timeframe: 'asap', budget: 'u1k', photos: [],
-          contractorId: null, scheduledFor: null, value: null, notes: '',
+          number: 1001, files: [], contractorId: null, scheduledFor: null, price: null, crewPay: null, notes: '',
           log: [{ at: now - 2 * H, text: 'Lead received' }],
         },
         {
           id: uid(), buyerId: b2, trade: 'painting', status: 'qualifying', created: now - 26 * H,
           description: 'Interior painting for 3 bedrooms and a hallway. Walls only, ceilings are fine.',
           address: '18 Oak Ridge Dr, Springfield', zip: '62711', timeframe: '2weeks', budget: '1-5k', photos: [],
-          contractorId: null, scheduledFor: null, value: 3200, notes: 'Called, wants a quote by Friday. Rooms are roughly 12x12.',
+          number: 1002, files: [], contractorId: null, scheduledFor: null, price: 3200, crewPay: null, notes: 'Called, wants a quote by Friday. Rooms are roughly 12x12.',
           log: [{ at: now - 26 * H, text: 'Lead received' }, { at: now - 20 * H, text: 'Status → Qualifying' }],
         },
         {
           id: uid(), buyerId: b1, trade: 'roofing', status: 'scheduled', created: now - 70 * H,
           description: 'A few shingles blew off in last week\'s storm. Need them replaced and the roof checked.',
           address: '42 Maple Ave, Springfield', zip: '62704', timeframe: '2weeks', budget: '1-5k', photos: [],
-          contractorId: c3, scheduledFor: new Date(now + 48 * H).toISOString().slice(0, 16), value: 1800, notes: 'Insurance claim filed.',
+          number: 1003, files: [], contractorId: c3, scheduledFor: (() => { const t = new Date(now + 48 * H); t.setHours(9, 0, 0, 0); return new Date(t - t.getTimezoneOffset() * 60e3).toISOString().slice(0, 16); })(), price: 1800, crewPay: 1150, notes: 'Insurance claim filed.',
           log: [{ at: now - 70 * H, text: 'Lead received' }, { at: now - 60 * H, text: 'Status → Qualifying' }, { at: now - 40 * H, text: 'Status → Scheduled · Ray Johnson' }],
         },
       ],
+      nextNumber: 1004,
     };
+  }
+
+  // Bring older preview data up to date.
+  function migrate(d) {
+    d.nextNumber = d.nextNumber || Math.max(1000, ...d.jobs.map((j) => j.number || 0)) + 1;
+    d.jobs.slice().sort((a, b) => a.created - b.created).forEach((j) => {
+      if (!j.number) j.number = d.nextNumber++;
+      if (!j.files) j.files = [];
+      if ('value' in j) { if (j.price == null) j.price = j.value; delete j.value; }
+      if (!('crewPay' in j)) j.crewPay = null;
+    });
+    return d;
   }
 
   let dbPromise = null;
   function db() {
-    if (!dbPromise) dbPromise = (async () => { let d = readDb(); if (!d) { d = await seed(); writeDb(d); } return d; })();
+    if (!dbPromise) dbPromise = (async () => { let d = readDb(); if (!d) { d = await seed(); } migrate(d); writeDb(d); return d; })();
     return dbPromise;
   }
   const clean = (u) => u && { id: u.id, role: u.role, name: u.name, email: u.email, phone: u.phone };
@@ -136,6 +199,11 @@
     const u = await me();
     if (!u || u.role !== 'staff') throw new Error('Please log in as Top Hat staff.');
     return u;
+  }
+
+  async function withUrl(f) {
+    const blob = await blobs.get(f.id).catch(() => null);
+    return { ...f, url: blob ? URL.createObjectURL(blob) : null };
   }
 
   const api = {
@@ -172,10 +240,10 @@
         const d = await db();
         const now = Date.now();
         const rec = {
-          id: uid(), buyerId: u.id, status: 'new', created: now,
+          id: uid(), number: d.nextNumber++, buyerId: u.id, status: 'new', created: now, files: [],
           trade: job.trade, description: job.description.trim(), address: job.address.trim(), zip: (job.zip || '').trim(),
           timeframe: job.timeframe, budget: job.budget || '', photos: job.photos || [],
-          contractorId: null, scheduledFor: null, value: null, notes: '',
+          contractorId: null, scheduledFor: null, price: null, crewPay: null, notes: '',
           log: [{ at: now, text: 'Lead received' }],
         };
         d.jobs.push(rec); writeDb(d);
@@ -189,9 +257,10 @@
         return d.jobs.filter((j) => j.buyerId === u.id).sort((a, b) => b.created - a.created).map((j) => {
           const c = d.contractors.find((x) => x.id === j.contractorId);
           return {
-            id: j.id, trade: j.trade, status: j.status, created: j.created, description: j.description, address: j.address,
+            id: j.id, number: j.number, trade: j.trade, status: j.status, created: j.created, description: j.description, address: j.address,
             timeframe: j.timeframe, budget: j.budget, photos: j.photos, scheduledFor: j.scheduledFor,
             contractorName: c && ['scheduled', 'in_progress', 'completed'].includes(j.status) ? c.name : null,
+            sharedFiles: j.files.filter((f) => f.shared).length,
           };
         });
       },
@@ -214,9 +283,67 @@
         if ('status' in patch && patch.status !== j.status) j.log.push({ at: Date.now(), text: `Status → ${label(patch.status)}` });
         if ('contractorId' in patch && patch.contractorId !== j.contractorId) j.log.push({ at: Date.now(), text: `Assigned to ${cname(patch.contractorId)}` });
         if ('scheduledFor' in patch && patch.scheduledFor !== j.scheduledFor && patch.scheduledFor) j.log.push({ at: Date.now(), text: `Scheduled for ${new Date(patch.scheduledFor).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}` });
-        for (const k of ['status', 'contractorId', 'scheduledFor', 'value', 'notes']) if (k in patch) j[k] = patch[k];
+        const usd = (n) => n == null ? 'cleared' : '$' + Number(n).toLocaleString();
+        if ('price' in patch && patch.price !== j.price) j.log.push({ at: Date.now(), text: `Customer price → ${usd(patch.price)}` });
+        if ('crewPay' in patch && patch.crewPay !== j.crewPay) j.log.push({ at: Date.now(), text: `Crew pay → ${usd(patch.crewPay)}` });
+        for (const k of ['status', 'contractorId', 'scheduledFor', 'price', 'crewPay', 'notes']) if (k in patch) j[k] = patch[k];
         writeDb(d);
         return j;
+      },
+    },
+
+    files: {
+      // Staff: every file in the job's folder, each with a temporary URL to open it.
+      async list(jobId) {
+        await requireStaff();
+        const j = (await db()).jobs.find((x) => x.id === jobId);
+        if (!j) return [];
+        return Promise.all(j.files.map(withUrl));
+      },
+      async upload(jobId, file, kind) {
+        const u = await requireStaff();
+        if (file.size > MAX_FILE_MB * 1024 * 1024) throw new Error(`"${file.name}" is over ${MAX_FILE_MB} MB.`);
+        const d = await db();
+        const j = d.jobs.find((x) => x.id === jobId);
+        if (!j) throw new Error('Job not found.');
+        const meta = { id: uid(), name: file.name, mime: file.type || 'application/octet-stream', size: file.size,
+          kind: kind || guessKind(file.name, file.type || ''), shared: false, uploaded: Date.now(), by: u.name };
+        await blobs.put(meta.id, file);
+        j.files.push(meta);
+        j.log.push({ at: Date.now(), text: `File added: ${meta.name}` });
+        writeDb(d);
+        return meta;
+      },
+      async update(jobId, fileId, patch) {
+        await requireStaff();
+        const d = await db();
+        const j = d.jobs.find((x) => x.id === jobId);
+        const f = j && j.files.find((x) => x.id === fileId);
+        if (!f) throw new Error('File not found.');
+        if ('shared' in patch && patch.shared !== f.shared) j.log.push({ at: Date.now(), text: `${f.name}: ${patch.shared ? 'shared with customer' : 'hidden from customer'}` });
+        for (const k of ['kind', 'shared']) if (k in patch) f[k] = patch[k];
+        writeDb(d);
+      },
+      async remove(jobId, fileId) {
+        await requireStaff();
+        const d = await db();
+        const j = d.jobs.find((x) => x.id === jobId);
+        const f = j && j.files.find((x) => x.id === fileId);
+        if (!f) return;
+        j.files = j.files.filter((x) => x !== f);
+        j.log.push({ at: Date.now(), text: `File removed: ${f.name}` });
+        writeDb(d);
+        await blobs.del(fileId);
+      },
+      // Customer: only files staff chose to share, and only on their own job.
+      async forCustomer(jobId) {
+        const u = await me();
+        const j = (await db()).jobs.find((x) => x.id === jobId);
+        if (!u || !j || j.buyerId !== u.id) return [];
+        return Promise.all(j.files.filter((f) => f.shared).map(async (f) => {
+          const { id, name, kind, size, uploaded, url } = await withUrl(f);
+          return { id, name, kind, size, uploaded, url };
+        }));
       },
     },
 
@@ -243,6 +370,7 @@
     async resetPreview() {
       try { localStorage.removeItem(DB_KEY); localStorage.removeItem(SESSION_KEY); } catch (e) { /* ignore */ }
       dbPromise = null;
+      await blobs.clear().catch(() => {});
     },
   };
 
@@ -289,5 +417,5 @@
     });
   }
 
-  window.TH = { api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, el, ago, fmtWhen, find, shrinkImage };
+  window.TH = { api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, el, ago, fmtWhen, find, shrinkImage };
 })();
