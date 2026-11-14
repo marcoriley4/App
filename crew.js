@@ -140,28 +140,7 @@
 
   /* ---------- crew sign in ---------- */
   function renderLogin(note) {
-    const errorBox = el('div', { class: 'error', hidden: !note, role: 'alert' }, note || '');
-    const form = el('form', { class: 'card stack login-box', onsubmit: async (e) => {
-      e.preventDefault();
-      const f = new FormData(form);
-      try {
-        const u = await api.auth.signIn(f.get('email'), f.get('password'));
-        if (u.role !== 'crew') {
-          await api.auth.signOut();
-          throw new Error(u.role === 'staff' ? 'That’s an office account. Use the staff area instead.' : 'That’s a customer account. This sign-in is for Top Hat crew.');
-        }
-        route();
-      } catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
-    } },
-      el('h1', {}, 'Crew sign in'),
-      el('p', { class: 'muted small' }, 'For Top Hat contractors. New? Ask the office to text you an invite.'),
-      errorBox,
-      el('label', { class: 'field' }, 'Email', el('input', { name: 'email', type: 'email', autocomplete: 'username', inputmode: 'email', required: true })),
-      el('label', { class: 'field' }, 'Password', el('input', { name: 'password', type: 'password', autocomplete: 'current-password', required: true })),
-      el('button', { class: 'block', type: 'submit' }, 'Sign in'),
-      api.mode === 'preview' ? el('p', { class: 'summary small' }, 'Preview login: ', el('b', {}, 'ray@tophat.demo'), ' / ', el('b', {}, 'crew1234')) : null,
-    );
-    view.replaceChildren(form);
+    view.replaceChildren(TH.loginForm({ note }));
   }
 
   /* ---------- my jobs ---------- */

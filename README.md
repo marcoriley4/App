@@ -43,9 +43,12 @@ Status names: staff see *New lead, Qualifying, Scheduled, In progress, Completed
 
 Right now all data is saved in the browser (`localStorage`, with files in IndexedDB), so you can try the full flow on one device:
 
-1. Open `index.html` and request a job.
-2. Open `admin.html` and log in with **office@tophat.demo** / **tophat**.
-3. Open `crew.html` and log in as a crew member with **ray@tophat.demo** / **crew1234**.
+Everyone uses **one login** (the **Log in** button on the customer site, or `admin.html` / `crew.html` directly). After signing in, each account goes to its own area: **staff → staff area, customers → My jobs, crew → their crew jobs**.
+
+In preview mode the login page has **"Try it as…"** buttons for three sample accounts:
+- **Top Hat office** (staff): **office@tophat.demo** / **tophat**
+- **Customer**: **dana@example.com** / **demo1234**
+- **Contractor**: **ray@tophat.demo** / **crew1234**
 
 Sample leads and crew are included. Use **Reset preview data** at the bottom of the staff area to start over.
 

@@ -328,3 +328,11 @@ body.doc-open { overflow: hidden; }
 button.icon { background: none; border: none; color: var(--muted); padding: 0; min-width: 40px; min-height: 40px; font-weight: 400; }
 button.icon:hover { color: var(--bad); }
 .doc-viewer { background: #2b303b; }
+
+/* Preview: one-tap sample accounts on the login page */
+.demo-acct { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; background: var(--surface); color: var(--text); border: 1.5px solid var(--border); border-radius: 12px; padding: 12px; font-weight: 400; white-space: normal; min-height: 0; }
+.demo-acct:hover { border-color: var(--gold); }
+.demo-acct .ic { font-size: 1.5rem; width: 40px; height: 40px; border-radius: 10px; background: var(--surface-2); display: grid; place-items: center; flex-shrink: 0; }
+.demo-acct .body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.login-box + .login-box { margin-top: 14px; }
+.login-box:has(+ .login-box) { margin-bottom: 0; }

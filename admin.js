@@ -62,25 +62,7 @@
   async function load() { [jobs, crew, settings] = await Promise.all([api.jobs.all(), api.contractors.list(), api.settings.get()]); }
 
   function loginView(me) {
-    const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
-    const form = el('form', { class: 'card stack login-box', onsubmit: async (e) => {
-      e.preventDefault();
-      const f = new FormData(form);
-      try {
-        const u = await api.auth.signIn(f.get('email'), f.get('password'));
-        if (u.role !== 'staff') { await api.auth.signOut(); throw new Error(u.role === 'crew' ? 'That’s a crew login. Crew sign in on the crew page (crew.html).' : 'That account is a customer account, not Top Hat staff.'); }
-        location.reload();
-      } catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
-    } },
-      el('h1', {}, 'Staff log in'),
-      me ? el('p', { class: 'muted small' }, `You're logged in as a customer (${me.email}). Log in with a staff account to continue.`) : null,
-      errorBox,
-      el('label', { class: 'field' }, 'Email', el('input', { name: 'email', type: 'email', autocomplete: 'username', required: true })),
-      el('label', { class: 'field' }, 'Password', el('input', { name: 'password', type: 'password', autocomplete: 'current-password', required: true })),
-      el('button', { class: 'block', type: 'submit' }, 'Log in'),
-      api.mode === 'preview' ? el('p', { class: 'summary small' }, 'Preview login: ', el('b', {}, 'office@tophat.demo'), ' / ', el('b', {}, 'tophat')) : null,
-    );
-    view.replaceChildren(form);
+    view.replaceChildren(TH.loginForm({ note: me ? `You're signed in as ${me.email}, which isn't a staff account. Log in with a staff account, or open your own area.` : '' }));
   }
 
   /* ---------- main ---------- */

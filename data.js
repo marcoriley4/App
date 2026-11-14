@@ -728,5 +728,52 @@
     });
   }
 
-  window.TH = { _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+  /* ---------- one login for everyone ---------- */
+  // Where each kind of account goes after logging in.
+  const HOME = { staff: 'admin.html', crew: 'crew.html', buyer: 'index.html#/jobs' };
+  const here = () => location.pathname.split('/').pop() || 'index.html';
+  function goHome(u, onCustomer) {
+    const dest = HOME[u.role] || HOME.buyer;
+    if (u.role === 'buyer' && onCustomer) return onCustomer(u);
+    if (dest.split('#')[0] === here()) { location.hash = dest.split('#')[1] || ''; location.reload(); return; }
+    location.href = dest;
+  }
+  // Sample accounts for trying each side of the app (preview mode only).
+  const DEMO_ACCOUNTS = [
+    { icon: '🎩', label: 'Top Hat office', sub: 'Staff: leads, crew, estimates & invoices', email: 'office@tophat.demo', password: 'tophat' },
+    { icon: '🏠', label: 'Customer', sub: 'Dana: her jobs, estimates & invoices', email: 'dana@example.com', password: 'demo1234' },
+    { icon: '👷', label: 'Contractor', sub: 'Ray: his assigned jobs & pay', email: 'ray@tophat.demo', password: 'crew1234' },
+  ];
+  function loginForm({ title = 'Log in', note = '', onCustomer } = {}) {
+    const errorBox = el('div', { class: 'error', hidden: !note, role: 'alert' }, note);
+    const signIn = async (email, password, btn) => {
+      if (btn) btn.disabled = true;
+      try { goHome(await window.TH.api.auth.signIn(email, password), onCustomer); }
+      catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; if (btn) btn.disabled = false; }
+    };
+    const form = el('form', { class: 'card stack login-box', onsubmit: (e) => {
+      e.preventDefault();
+      const f = new FormData(form);
+      signIn(f.get('email'), f.get('password'), form.querySelector('button[type=submit]'));
+    } },
+      el('h1', {}, title),
+      el('p', { class: 'muted small' }, 'One login for everyone: customers, Top Hat staff and crew. We’ll take you to the right place.'),
+      errorBox,
+      el('label', { class: 'field' }, 'Email', el('input', { name: 'email', type: 'email', autocomplete: 'username', inputmode: 'email', required: true })),
+      el('label', { class: 'field' }, 'Password', el('input', { name: 'password', type: 'password', autocomplete: 'current-password', required: true })),
+      el('button', { class: 'gold block', type: 'submit' }, 'Log in'),
+      el('p', { class: 'muted small', style: 'text-align:center' }, 'New customer? ', el('a', { href: 'index.html#/request' }, 'Request a job'), ' and create your account at the end. New crew? Ask the office for an invite.'),
+    );
+    if (window.TH.api.mode !== 'preview') return form;
+    return el('div', { class: 'stack', style: 'gap:0' }, form,
+      el('section', { class: 'card stack login-box' },
+        el('h3', {}, 'Preview: try it as…'),
+        el('p', { class: 'muted small' }, 'Sample accounts so you can see every side of the app.'),
+        ...DEMO_ACCOUNTS.map((a) => el('button', { type: 'button', class: 'demo-acct', onclick: (e) => signIn(a.email, a.password, e.currentTarget) },
+          el('span', { class: 'ic' }, a.icon),
+          el('span', { class: 'body' }, el('b', {}, a.label), el('span', { class: 'muted small' }, a.sub)),
+          el('span', { class: 'muted' }, '→')))));
+  }
+
+  window.TH = { loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();

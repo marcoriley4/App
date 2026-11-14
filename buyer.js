@@ -286,26 +286,10 @@
   /* ---------- log in ---------- */
   async function login() {
     const next = new URLSearchParams(location.hash.split('?')[1] || '').get('next') || 'jobs';
-    const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
-    const form = el('form', { class: 'card stack login-box', onsubmit: async (e) => {
-      e.preventDefault();
-      const f = new FormData(form);
-      try {
-        const u = await api.auth.signIn(f.get('email'), f.get('password'));
-        if (u.role === 'staff') { location.href = 'admin.html'; return; }
-        if (u.role === 'crew') { location.href = 'crew.html'; return; }
-        if (next === 'request') { draft.step = 2; saveDraft(); }
-        go(next);
-      } catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
-    } },
-      el('h1', {}, 'Log in'),
-      errorBox,
-      el('label', { class: 'field' }, 'Email', el('input', { name: 'email', type: 'email', autocomplete: 'email', required: true })),
-      el('label', { class: 'field' }, 'Password', el('input', { name: 'password', type: 'password', autocomplete: 'current-password', required: true })),
-      el('button', { class: 'gold block', type: 'submit' }, 'Log in'),
-      el('p', { class: 'muted small', style: 'text-align:center' }, 'New here? ', el('a', { href: '#/request' }, 'Request a job'), ' and create your account at the end.'),
-    );
-    view.append(form);
+    view.append(TH.loginForm({ onCustomer: () => {
+      if (next === 'request') { draft.step = 2; saveDraft(); }
+      go(next);
+    } }));
   }
 
   route();
