@@ -4,7 +4,7 @@
   const { api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find } = TH;
   const view = document.getElementById('view');
   const drawerRoot = document.getElementById('drawerRoot');
-  const OPEN = ['new', 'qualifying', 'scheduled', 'in_progress'];
+  const OPEN = ['new', 'qualifying', 'hot', 'scheduled', 'in_progress'];
 
   let tab = 'today';
   let filter = 'open';
@@ -88,7 +88,10 @@
   const estWith = (j, st) => (j.docs || []).find((d) => d.type === 'estimate' && d.status === st);
   const liveInvoices = (j) => (j.docs || []).filter((d) => d.type === 'invoice' && d.status !== 'void');
   const needsInvoice = (j) => j.status === 'completed' && !liveInvoices(j).some((d) => d.status !== 'draft');
-  const needsScheduling = (j) => ['new', 'qualifying'].includes(j.status) && !!estWith(j, 'approved');
+  const visitPassed = (j) => !!j.visitAt && new Date(j.visitAt).getTime() < Date.now();
+  // Sold: the rep has been out (or the customer approved in writing). Time to pick a crew.
+  const needsScheduling = (j) => (j.status === 'hot' && visitPassed(j)) || (['new', 'qualifying'].includes(j.status) && !!estWith(j, 'approved'));
+  const needsVisit = (j) => j.status === 'hot' && !j.visitAt;
   const dayKey = (ms) => { const x = new Date(ms); return new Date(x - x.getTimezoneOffset() * 60e3).toISOString().slice(0, 10); };
   const timeOf = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const crewName = (j) => find(crew, j.contractorId)?.name;
@@ -100,9 +103,11 @@
     const open = jobs.filter((j) => j.status !== 'lost');
     const today = dayKey(Date.now()), tomorrow = dayKey(Date.now() + 86400e3);
     return [
-      { id: 'new', icon: '🔔', title: 'New leads to call', why: 'Call them to talk through the job.', call: true,
+      { id: 'new', icon: '🔔', title: 'New leads: call with a phone estimate', why: 'Go over their photos and measurements and give them a price.', call: true,
         list: open.filter((j) => j.status === 'new').sort((a, b) => a.created - b.created),
         line: (j) => `${tradeOf(j.trade).label} · came in ${ago(j.created)}` },
+      { id: 'hotbook', icon: '🔥', title: 'Hot leads: book the rep visit', why: 'They agreed to the price. Send a rep out for the walkthrough.',
+        list: open.filter(needsVisit), line: (j) => `${tradeOf(j.trade).label}${j.price != null ? ' · agreed ' + money(j.price) : ''}${salesName(j.salesId) ? ' · ' + salesName(j.salesId) : ''}` },
       { id: 'declined', icon: '🙅', title: 'Crew can’t make it', why: 'Pick another crew or a new date.',
         list: open.filter((j) => j.status === 'scheduled' && j.crewResponse === 'declined'),
         line: (j) => `${crewName(j) || 'Crew'}: “${j.crewResponseNote || 'no reason given'}”` },
@@ -112,7 +117,13 @@
       { id: 'notes', icon: '👷', title: 'New updates from your crew', why: 'Progress updates and notes from the job.',
         list: jobs.filter(hasCrewNews).sort((a, b) => Math.max(crewUpdatedAt(b), 0) - Math.max(crewUpdatedAt(a), 0)),
         line: (j) => [crewUpdatedAt(j) ? `${j.progressBy}: ${progressText(j)}` : null, hasNewNote(j) ? 'new note' : null].filter(Boolean).join(' · ') },
-      { id: 'schedule', icon: '✅', title: 'Approved: needs a crew & date', why: 'The customer said yes. Pick who’s doing it and when.',
+      { id: 'visits', icon: '🤝', title: 'Rep visits today & tomorrow', why: 'Walkthroughs with customers who agreed to the price.', info: true,
+        list: open.filter((j) => j.status === 'hot' && j.visitAt && !visitPassed(j) && [today, tomorrow].includes(j.visitAt.slice(0, 10))).sort((a, b) => a.visitAt.localeCompare(b.visitAt)),
+        line: (j) => `${j.visitAt.slice(0, 10) === today ? 'Today' : 'Tomorrow'} ${timeOf(j.visitAt)} · ${salesName(j.salesId) || 'No rep picked'}` },
+      { id: 'followup', icon: '🤔', title: 'Thinking it over', why: 'Got a phone estimate but haven’t agreed yet. Follow up.', info: true,
+        list: open.filter((j) => j.status === 'qualifying' && !estWith(j, 'sent') && !estWith(j, 'approved')),
+        line: (j) => `${tradeOf(j.trade).label}${j.price != null ? ' · quoted ' + money(j.price) : ''}` },
+      { id: 'schedule', icon: '✅', title: 'Rep visit done: schedule the crew', why: 'Sold? Pick who’s doing the work and when. Didn’t close? Mark it on the job.',
         list: open.filter(needsScheduling), line: (j) => `${tradeOf(j.trade).label}${j.price != null ? ' · ' + money(j.price) : ''}` },
       { id: 'invoice', icon: '🏁', title: 'Finished: send the invoice', why: 'The work is done but no invoice has gone out.',
         list: jobs.filter(needsInvoice), line: (j) => `${tradeOf(j.trade).label}${j.price != null ? ' · ' + money(j.price) : ''}` },
@@ -128,7 +139,7 @@
     ];
   }
   // Salespeople only see what's theirs to act on: calls to make and estimates waiting.
-  const SALES_BUCKETS = ['new', 'declined', 'schedule', 'waiting', 'soon'];
+  const SALES_BUCKETS = ['new', 'hotbook', 'visits', 'followup', 'declined', 'schedule', 'waiting', 'soon'];
   const myBuckets = () => buckets().filter((b) => isStaff || SALES_BUCKETS.includes(b.id));
   const attentionCount = () => myBuckets().filter((b) => !b.info).reduce((t, b) => t + b.list.length, 0);
 
@@ -180,6 +191,7 @@
   const FILTERS = [
     ['open', 'Open', (j) => OPEN.includes(j.status) || needsInvoice(j) || owedOn(j) > 0], // not finished until invoiced and paid
     ['new', 'New', (j) => j.status === 'new'],
+    ['hot', '🔥 Hot', (j) => j.status === 'hot'],
     ['active', 'Scheduled', (j) => ['scheduled', 'in_progress'].includes(j.status)],
     ['completed', 'Done', (j) => j.status === 'completed'],
     ['lost', 'Closed', (j) => j.status === 'lost'],
@@ -215,7 +227,9 @@
       j.status === 'scheduled' && j.contractorId && !j.crewResponse ? ['⏳ Crew hasn’t confirmed', ''] : null,
       hasCrewNews(j) ? ['👷 New crew update', 'hot'] : null,
       j.stage ? [`${stageOf(j.stage).icon} ${stageOf(j.stage).label}`, ''] : null,
-      needsScheduling(j) ? ['✅ Approved, needs scheduling', 'hot'] : null,
+      needsVisit(j) ? ['🔥 Book the rep visit', 'hot'] : null,
+      j.status === 'hot' && j.visitAt && !visitPassed(j) ? [`🤝 Visit ${fmtWhen(j.visitAt)}`, ''] : null,
+      needsScheduling(j) ? ['✅ Sold? Schedule the crew', 'hot'] : null,
       needsInvoice(j) ? ['🏁 Needs invoice', 'hot'] : null,
       owedOn(j) > 0 ? [`💵 ${docs.usd(owedOn(j))} due`, 'hot'] : null,
       estWith(j, 'sent') ? ['⏳ Estimate sent', ''] : null,
@@ -292,7 +306,8 @@
           : el('span', { class: 'muted' }, 'No sales team yet')) : null,
         lastCall ? el('li', {}, el('span', { class: 'fi' }, '📞'), el('span', { class: 'muted' }, `${lastCall.text.replace(/^📞 Call /, 'Last call ')} · ${ago(lastCall.at)}`)) : null,
         el('li', {}, el('span', { class: 'fi' }, '📍'), el('a', { href: 'https://maps.google.com/?q=' + encodeURIComponent(`${j.address} ${j.zip}`), target: '_blank', rel: 'noopener' }, `${j.address} ${j.zip}`)),
-        el('li', {}, el('span', { class: 'fi' }, '📅'), j.scheduledFor ? el('span', {}, fmtWhen(j.scheduledFor)) : el('span', { class: 'muted' }, 'Not scheduled yet')),
+        j.visitAt ? el('li', {}, el('span', { class: 'fi' }, '🤝'), el('span', {}, `Rep visit ${fmtWhen(j.visitAt)}${salesName(j.salesId) ? ' · ' + salesName(j.salesId) : ''}`)) : null,
+        el('li', {}, el('span', { class: 'fi' }, '📅'), j.scheduledFor ? el('span', {}, fmtWhen(j.scheduledFor)) : el('span', { class: 'muted' }, 'Crew not scheduled yet')),
         el('li', {}, el('span', { class: 'fi' }, '👷'), assigned ? el('span', {}, assigned.name,
           j.status === 'scheduled' ? el('span', { class: j.crewResponse === 'declined' ? 'bad-text' : 'muted' },
             j.crewResponse === 'confirmed' ? ' · ✓ confirmed' : j.crewResponse === 'declined' ? ` · can’t make it: “${j.crewResponseNote}”` : ' · not confirmed yet') : null)
@@ -301,7 +316,7 @@
           `Started ${new Date(j.startedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
           j.finishedAt ? ` · finished after ${(() => { const m = Math.round((j.finishedAt - j.startedAt) / 60000); return m < 60 ? m + ' min' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm'; })()}` : '')) : null,
         el('li', {}, el('span', { class: 'fi' }, '💲'), j.price != null
-          ? el('span', {}, `${money(j.price)} customer price`, j.crewPay != null ? el('span', { class: 'muted' }, ` · ${money(j.price - j.crewPay)} profit`) : null)
+          ? el('span', {}, `${money(j.price)} ${['new', 'qualifying'].includes(j.status) ? 'phone estimate' : j.status === 'hot' ? 'agreed price' : 'customer price'}`, j.crewPay != null ? el('span', { class: 'muted' }, ` · ${money(j.price - j.crewPay)} profit`) : null)
           : el('span', { class: 'muted' }, 'No price yet'))),
     );
 
@@ -316,7 +331,7 @@
     );
 
     // Progress: tap a step to change it.
-    const FLOW = [['new', 'New'], ['qualifying', 'Qualifying'], ['scheduled', 'Scheduled'], ['in_progress', 'Working'], ['completed', 'Done']];
+    const FLOW = [['new', 'New'], ['qualifying', 'Estimate'], ['hot', 'Hot'], ['scheduled', 'Booked'], ['in_progress', 'Working'], ['completed', 'Done']];
     const at = FLOW.findIndex(([s]) => s === j.status);
     const progress = el('section', { class: 'card stack' },
       el('div', { class: 'row' }, el('h3', {}, 'Progress'), el('span', { class: 'spacer' }), savedNote),
@@ -353,7 +368,7 @@
     const setup = el('form', { class: 'card stack', onsubmit: (e) => {
       e.preventDefault();
       const patch = { contractorId: crewSel.value || null, scheduledFor: whenInput.value || null };
-      if (patch.contractorId && patch.scheduledFor && ['new', 'qualifying'].includes(j.status)) patch.status = 'scheduled';
+      if (patch.contractorId && patch.scheduledFor && ['new', 'qualifying', 'hot'].includes(j.status)) patch.status = 'scheduled';
       update(patch);
     } },
       el('h3', {}, '👷 Crew & schedule'),
@@ -494,22 +509,59 @@
     let step;
     if (j.status === 'lost') {
       step = { icon: '🚫', title: 'This job is closed (Not a fit).', act: ['Reopen as a new lead', () => update({ status: 'new' })], ghost: true };
-    } else if (j.status === 'new') {
-      step = { icon: '📞', title: `Call ${first} about the job`, why: 'Talk through the work and answer questions. Then mark it Qualifying.',
+    } else if (['new', 'qualifying'].includes(j.status) && !approvedEst && !sentEst && !draftEst) {
+      // The heart of the business: price it on the phone first. Only a "yes" earns a rep visit.
+      const quoteIn = el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '1', placeholder: 'e.g. 3200', value: j.price ?? '', 'aria-label': 'Price you quoted' });
+      const quoted = () => { const v = num(quoteIn.value); return v != null && v > 0 ? v : null; };
+      const need = () => { errorBox.textContent = 'Enter the price you quoted first.'; errorBox.hidden = false; quoteIn.focus(); };
+      const outcome = async (label, patch) => {
+        try { await api.jobs.logCall(j.id, label, quoted() != null ? `Phone estimate ${money(quoted())}` : ''); await update(patch); }
+        catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
+      };
+      step = { icon: '📞', title: j.status === 'new' ? `Call ${first} with a phone estimate` : `Follow up with ${first}`,
+        why: 'Go over the job, their photos and measurements, and give them a price. Only customers who agree to the numbers get a rep visit.',
         href: b.phone ? telHref(b.phone) : b.email ? `mailto:${b.email}` : null, label: b.phone ? `📞 Call ${first}` : `✉️ Email ${first}`,
-        second: ['Done: mark as Qualifying', () => update({ status: 'qualifying' })] };
-    } else if (j.status === 'qualifying' && !approvedEst) {
+        extra: el('div', { class: 'quote-box stack' },
+          el('label', { class: 'field' }, 'Price you quoted on the phone', quoteIn),
+          el('b', { class: 'small' }, 'What did they say?'),
+          el('button', { type: 'button', class: 'gold block', onclick: () => { if (quoted() == null) return need(); outcome('Agreed to the price', { price: quoted(), status: 'hot' }); } }, '🔥 They agreed: make it a hot lead'),
+          el('div', { class: 'row' },
+            el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: () => outcome('Thinking it over', { price: quoted(), status: 'qualifying' }) }, '🤔 Thinking it over'),
+            el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: () => { if (confirm(`Close ${jobNo(j)}? ${first} isn’t interested.`)) outcome('Not interested', { price: quoted(), status: 'lost' }); } }, '👎 Not interested'))),
+        second: ['Prefer it in writing? Send an estimate they can approve in the app', () => openDoc(j.id, null, 'estimate')] };
+    } else if (['new', 'qualifying'].includes(j.status) && !approvedEst) {
       if (sentEst) step = { icon: '⏳', title: `Waiting for ${first} to approve ${sentEst.number}`,
-        why: j.hasAccount ? 'They can approve it on their My jobs page. Nudge them with a text.' : `${first} doesn’t use the app. When they say yes, open the estimate and tap “Mark approved”.`,
+        why: j.hasAccount ? 'Once they approve it, the job becomes a hot lead. Nudge them with a text.' : `${first} doesn’t use the app. When they say yes, open the estimate and tap “Mark approved”.`,
         href: b.phone ? smsHref(b.phone, j.hasAccount
           ? `Hi ${first}, just checking in on estimate ${sentEst.number} from ${settings.name || 'Top Hat Contracting'}. You can view and approve it here: ${siteUrl()}#/jobs`
           : `Hi ${first}, just checking in on estimate ${sentEst.number} from ${settings.name || 'Top Hat Contracting'} (${docs.usd(docs.totals(sentEst).total)}). Reply YES to approve, or call us with any questions.`) : null,
         label: `💬 Remind ${first}`, second: ['Open the estimate', () => openDoc(j.id, sentEst.id)] };
-      else if (draftEst) step = { icon: '📝', title: `Finish and send estimate ${draftEst.number}`, why: 'It’s saved as a draft. The customer can’t see it yet.', act: ['Open the estimate', () => openDoc(j.id, draftEst.id)] };
-      else step = { icon: '📝', title: 'Send an estimate', why: `Put together the price for ${first}. They can approve it with one tap.`,
-        act: ['+ Create estimate', () => openDoc(j.id, null, 'estimate')], second: ['Skip the estimate: schedule now', focusSetup] };
+      else step = { icon: '📝', title: `Finish and send estimate ${draftEst.number}`, why: 'It’s saved as a draft. The customer can’t see it yet.', act: ['Open the estimate', () => openDoc(j.id, draftEst.id)] };
     } else if (['new', 'qualifying'].includes(j.status) && approvedEst) {
-      step = { icon: '✅', title: `${first} approved ${approvedEst.number}: schedule a crew`, why: 'Pick who’s doing the work and when.', act: ['Pick crew & date', focusSetup] };
+      step = { icon: '✅', title: `${first} approved ${approvedEst.number}`, why: 'They agreed to the price. Make it a hot lead and book the rep visit.', act: ['🔥 Make it a hot lead', () => update({ status: 'hot' })] };
+    } else if (j.status === 'hot') {
+      // Book (or change) the rep visit.
+      const repSel = isStaff ? el('select', { 'aria-label': 'Rep' }, el('option', { value: '' }, team.length ? '— Pick a rep —' : 'No sales reps yet'),
+        ...team.filter((x) => x.active !== false || x.id === j.salesId).map((x) => el('option', { value: x.id, selected: x.id === j.salesId }, x.name))) : null;
+      const visitIn = el('input', { type: 'datetime-local', value: j.visitAt || '', 'aria-label': 'Visit date and time' });
+      const visitForm = el('div', { class: 'quote-box stack', hidden: !!j.visitAt },
+        repSel ? el('label', { class: 'field' }, 'Rep', repSel) : null,
+        el('label', { class: 'field' }, 'Visit date & time', visitIn),
+        el('button', { type: 'button', class: 'gold block', onclick: () => {
+          if (!visitIn.value) { errorBox.textContent = 'Pick the date and time for the visit.'; errorBox.hidden = false; return; }
+          update({ visitAt: visitIn.value, ...(repSel ? { salesId: repSel.value || null } : {}) });
+        } }, j.visitAt ? 'Save visit' : 'Book the visit'));
+      const repFirst = (salesName(j.salesId) || 'Your rep').split(' ')[0];
+      const visitText = j.visitAt && `Hi ${first}, this is ${settings.name || 'Top Hat Contracting'}. ${repFirst} will come out ${fmtWhen(j.visitAt)} to walk through your ${t.label.toLowerCase()} project at ${j.address}. Reply if that time doesn’t work.`;
+      if (!j.visitAt) step = { icon: '🔥', title: 'Hot lead: book the rep visit', why: `${first} agreed to ${j.price != null ? money(j.price) : 'the price'}. Pick a rep and a time for the walkthrough.`, extra: visitForm };
+      else if (!visitPassed(j)) step = { icon: '🤝', title: `Rep visit ${fmtWhen(j.visitAt)}`, why: `${salesName(j.salesId) || 'No rep picked yet'} walks through the project with ${first}. Let them know the time.`,
+        href: b.phone ? smsHref(b.phone, visitText) : null, label: `💬 Text ${first} the visit time`,
+        extra: visitForm, second: ['Change the visit', () => { visitForm.hidden = !visitForm.hidden; }],
+        third: ['Visit done: sold, pick crew & date', focusSetup] };
+      else step = { icon: '✅', title: 'How did the visit go?', why: `If ${first} is ready to go, pick the crew and date. The crew never sees your prices.`,
+        act: ['✅ Sold: pick crew & date', focusSetup], extra: visitForm,
+        second: ['Didn’t close: mark it closed', async () => { if (!confirm(`Close ${jobNo(j)} as not sold?`)) return; try { await api.jobs.logCall(j.id, 'Didn’t close at the visit', ''); } catch {} update({ status: 'lost' }); }],
+        third: ['Book another visit', () => { visitForm.hidden = !visitForm.hidden; }] };
     } else if (j.status === 'scheduled') {
       if (!assigned || !j.scheduledFor) step = { icon: '👷', title: 'Pick a crew and a date', act: ['Pick crew & date', focusSetup] };
       else if (j.crewResponse === 'declined') step = { icon: '🙅', title: `${crewFirst} can’t make it`, why: j.crewResponseNote ? `“${j.crewResponseNote}”` : 'Pick another crew or a new date.', act: ['Pick another crew or date', focusSetup] };
@@ -534,7 +586,9 @@
         el('div', { style: 'flex:1;min-width:0' }, el('h3', {}, step.title), step.why ? el('p', { class: 'muted small' }, step.why) : null)),
       step.href ? el('a', { class: 'btn gold block', href: step.href }, step.label)
         : step.act ? el('button', { type: 'button', class: (step.ghost ? 'ghost' : 'gold') + ' block', onclick: step.act[1] }, step.act[0]) : null,
+      step.extra || null,
       step.second ? el('button', { type: 'button', class: 'link', onclick: step.second[1] }, step.second[0]) : null,
+      step.third ? el('button', { type: 'button', class: 'link', onclick: step.third[1] }, step.third[0]) : null,
     ) : null;
 
     // Tabs keep the job short and easy to scan.
@@ -608,6 +662,7 @@
           salesId: f.get('salesId') || null,
           trade: f.get('trade'), description: f.get('description'), address: f.get('address'), zip: f.get('zip'),
           timeframe: f.get('timeframe'), contractorId: f.get('contractorId') || null, scheduledFor: f.get('scheduledFor') || null,
+          price: num(f.get('price')), agreed: f.get('agreed') === 'on',
         });
         await load();
         openLead(id, 'overview');
@@ -627,12 +682,17 @@
           el('label', { class: 'field', style: 'grid-column:1/-1' }, 'Address', el('input', { name: 'address', autocomplete: 'off', placeholder: 'Street, city' })),
           el('label', { class: 'field' }, 'ZIP', el('input', { name: 'zip', inputmode: 'numeric', maxlength: '5', autocomplete: 'off' })),
           el('label', { class: 'field' }, 'Needed', el('select', { name: 'timeframe' }, ...TIMEFRAMES.map((t) => el('option', { value: t.id }, t.label)))))),
+      el('section', { class: 'card stack' },
+        el('h3', {}, '3. Phone estimate ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(if you gave one)')),
+        el('label', { class: 'field' }, 'Price you quoted', el('input', { name: 'price', type: 'number', inputmode: 'decimal', min: '0', step: '1', placeholder: 'e.g. 3200' })),
+        el('label', { class: 'match-box' }, el('input', { type: 'checkbox', name: 'agreed' }),
+          el('span', {}, el('b', {}, '🔥 They agreed to this price'), el('span', { class: 'muted small', style: 'display:block' }, 'Makes it a hot lead, ready for a rep visit.')))),
       isStaff && team.length ? el('section', { class: 'card stack' },
-        el('h3', {}, 'Salesperson ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(optional)')),
+        el('h3', {}, 'Sales rep ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(optional)')),
         el('select', { name: 'salesId' }, el('option', { value: '' }, '— None —'), ...team.filter((x) => x.active !== false).map((x) => el('option', { value: x.id }, x.name)))) : null,
       el('section', { class: 'card stack' },
-        el('h3', {}, '3. Crew & date ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(optional)')),
-        el('p', { class: 'muted small' }, 'Pick both and the job is scheduled right away. It shows up in that contractor’s crew login, and you can text them the details.'),
+        el('h3', {}, '4. Crew & date ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(only if it’s already sold)')),
+        el('p', { class: 'muted small' }, 'Usually you’ll do this after the rep visit. Pick both and the job is scheduled right away.'),
         el('label', { class: 'field' }, 'Crew', el('span', { class: 'hint' }, '★ = does this kind of work'), crewSel),
         el('label', { class: 'field' }, 'Date & time', el('input', { name: 'scheduledFor', type: 'datetime-local' }))),
       el('button', { type: 'submit', class: 'gold block' }, 'Create job'),

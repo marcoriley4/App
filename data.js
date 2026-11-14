@@ -53,7 +53,9 @@
   // Internal pipeline status → what staff see, and what the buyer sees.
   const STATUSES = [
     { id: 'new', label: 'New lead', buyer: 'Received' },
-    { id: 'qualifying', label: 'Qualifying', buyer: 'Reviewing' },
+    { id: 'qualifying', label: 'Phone estimate', buyer: 'Estimate call' },
+    // The customer agreed to the price on the phone (or approved the written estimate): worth sending a rep.
+    { id: 'hot', label: 'Hot lead', buyer: 'Price agreed' },
     { id: 'scheduled', label: 'Scheduled', buyer: 'Scheduled' },
     { id: 'in_progress', label: 'In progress', buyer: 'In progress' },
     { id: 'completed', label: 'Completed', buyer: 'Completed' },
@@ -211,12 +213,14 @@
           log: [{ at: now - 2 * H, text: 'Lead received' }],
         },
         {
-          id: uid(), buyerId: b2, trade: 'painting', status: 'qualifying', created: now - 26 * H,
+          id: uid(), buyerId: b2, trade: 'painting', status: 'hot', created: now - 26 * H,
+          visitAt: (() => { const t = new Date(now + 24 * H); t.setHours(16, 0, 0, 0); return new Date(t - t.getTimezoneOffset() * 60e3).toISOString().slice(0, 16); })(),
           description: 'Interior painting for 3 bedrooms and a hallway. Walls only, ceilings are fine.',
           address: '18 Oak Ridge Dr, Springfield', zip: '62711', timeframe: '2weeks', budget: '1-5k', photos: [],
-          number: 1002, files: [], salesId: s1, contractorId: null, scheduledFor: null, price: 3200, crewPay: null, notes: 'Called, wants a quote by Friday. Rooms are roughly 12x12.',
+          number: 1002, files: [], salesId: s1, contractorId: null, scheduledFor: null, price: 3200, crewPay: null, notes: 'Agreed to $3,200 on the phone. Rooms are roughly 12x12.',
           log: [{ at: now - 26 * H, text: 'Lead received' }, { at: now - 22 * H, text: 'Salesperson → Maria Lopez' },
-            { at: now - 21 * H, text: '📞 Call (Maria Lopez): Talked. Wants a quote by Friday.' }, { at: now - 20 * H, text: 'Status → Qualifying' }],
+            { at: now - 21 * H, text: '📞 Call (Maria Lopez): Talked. Gave a phone estimate of $3,200.' }, { at: now - 20 * H, text: 'Status → Phone estimate' },
+            { at: now - 19 * H, text: '📞 Phone estimate $3,200: customer agreed' }, { at: now - 19 * H, text: 'Status → Hot lead' }, { at: now - 18 * H, text: '🤝 Rep visit booked' }],
         },
         {
           id: uid(), buyerId: b1, trade: 'roofing', status: 'scheduled', created: now - 70 * H,
@@ -414,13 +418,15 @@
         const rec = {
           id: uid(), number: d.nextNumber++, buyerId: existing ? existing.id : null, salesId: owner,
           contact: existing ? null : { name, phone: String(input.phone || '').trim(), email: normEmail(input.email) },
-          status: crewOk && input.scheduledFor ? 'scheduled' : 'qualifying', created: now, files: [], docs: [],
+          status: crewOk && input.scheduledFor ? 'scheduled' : input.agreed ? 'hot' : 'qualifying', created: now, files: [], docs: [],
           trade: input.trade || 'other', description: input.description.trim(), address: input.address.trim(), zip: String(input.zip || '').trim(),
           timeframe: input.timeframe || '', budget: '', photos: [],
           contractorId: crewOk ? input.contractorId : null, crewToken: crewOk ? newToken() : null, scheduledFor: input.scheduledFor || null,
-          price: null, crewPay: null, notes: '',
+          price: input.price != null && input.price !== '' ? Number(input.price) : null, crewPay: null, notes: '', visitAt: null,
           log: [{ at: now, text: `Job entered by ${staff.name} (${isStaff ? 'office' : 'sales'})` }],
         };
+        if (rec.price != null) rec.log.push({ at: now, text: `📞 Phone estimate ${'$' + rec.price.toLocaleString()}${input.agreed ? ': customer agreed' : ''}` });
+        if (input.agreed && rec.status === 'hot') rec.log.push({ at: now, text: 'Status → Hot lead' });
         if (crewOk) rec.log.push({ at: now, text: `Assigned to ${d.contractors.find((c) => c.id === input.contractorId).name}` });
         d.jobs.push(rec); writeDb(d);
         return rec.id;
@@ -435,6 +441,8 @@
           return {
             id: j.id, number: j.number, trade: j.trade, status: j.status, created: j.created, description: j.description, address: j.address, zip: j.zip,
             timeframe: j.timeframe, budget: j.budget, photos: j.photos, scheduledFor: j.scheduledFor,
+            visitAt: j.status === 'hot' ? j.visitAt || null : null,
+            repName: j.status === 'hot' && j.visitAt ? ((d.team || []).find((x) => x.id === j.salesId)?.name || '').split(' ')[0] || null : null,
             contractorName: c && ['scheduled', 'in_progress', 'completed'].includes(j.status) ? c.name : null,
             stage: j.stage || null,
             sharedFiles: j.files.filter((f) => f.shared).length,
@@ -489,11 +497,13 @@
           j.crewToken = patch.contractorId ? newToken() : null;
           j.crewResponse = null; j.crewResponseNote = ''; j.crewResponseAt = null; // new crew needs to confirm
         }
+        if ('visitAt' in patch && (patch.visitAt || null) !== (j.visitAt || null)) j.log.push({ at: Date.now(), text: patch.visitAt
+          ? `🤝 Rep visit booked for ${new Date(patch.visitAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}` : '🤝 Rep visit cleared' });
         if ('scheduledFor' in patch && patch.scheduledFor !== j.scheduledFor && patch.scheduledFor) j.log.push({ at: Date.now(), text: `Scheduled for ${new Date(patch.scheduledFor).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}` });
         const usd = (n) => n == null ? 'cleared' : '$' + Number(n).toLocaleString();
         if ('price' in patch && patch.price !== j.price) j.log.push({ at: Date.now(), text: `Customer price → ${usd(patch.price)}` });
         if ('crewPay' in patch && patch.crewPay !== j.crewPay) j.log.push({ at: Date.now(), text: `Crew pay → ${usd(patch.crewPay)}` });
-        for (const k of ['contractorId', 'scheduledFor', 'price', 'crewPay', 'notes']) if (k in patch) j[k] = patch[k];
+        for (const k of ['contractorId', 'scheduledFor', 'visitAt', 'price', 'crewPay', 'notes']) if (k in patch) j[k] = patch[k] || (k === 'notes' ? '' : patch[k] === 0 ? 0 : null);
         writeDb(d);
         return j;
       },
@@ -622,6 +632,7 @@
         rec.status = status; rec.respondedAt = Date.now(); rec.respondedBy = `${u.name} (${isStaff ? 'office' : 'sales'})`;
         if (status === 'approved') { j.price = docTotal(rec); j.log.push({ at: Date.now(), text: `Customer price → ${usd(j.price)} (from ${rec.number})` }); }
         j.log.push({ at: Date.now(), text: `${rec.number} marked ${status} by ${u.name}` });
+        if (status === 'approved' && ['new', 'qualifying'].includes(j.status)) applyProgress(j, { status: 'hot' }, u.name, false);
         writeDb(d);
       },
       async remove(jobId, docId) {
@@ -683,6 +694,7 @@
         rec.status = approve ? 'approved' : 'declined'; rec.respondedAt = Date.now(); rec.respondedBy = u.name;
         if (approve) { j.price = docTotal(rec); j.log.push({ at: Date.now(), text: `Customer price → ${usd(j.price)} (from ${rec.number})` }); }
         j.log.push({ at: Date.now(), text: `Customer ${approve ? 'approved' : 'declined'} ${rec.number}` });
+        if (approve && ['new', 'qualifying'].includes(j.status)) applyProgress(j, { status: 'hot' }, u.name, false);
         writeDb(d);
       },
     },

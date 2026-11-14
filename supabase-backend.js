@@ -152,6 +152,7 @@
           id: j.id, number: j.number, trade: j.trade, status: j.status, created: ms(j.created_at),
           description: j.description, address: j.address, zip: j.zip || '', timeframe: j.timeframe, budget: j.budget, photos: [],
           scheduledFor: local16(j.scheduled_for), contractorName: j.contractor_name || null, stage: j.stage || null,
+          visitAt: local16(j.visit_at), repName: j.rep_name || null,
           sharedFiles: (j.shared_files || []).length,
         }));
       },
@@ -180,7 +181,7 @@
           return {
             id: j.id, number: j.number, buyerId: j.buyer_id, trade: j.trade, status: j.status, created: ms(j.created_at),
             description: j.description, address: j.address, zip: j.zip, timeframe: j.timeframe, budget: j.budget, photos: [],
-            contractorId: j.contractor_id, scheduledFor: local16(j.scheduled_for),
+            contractorId: j.contractor_id, scheduledFor: local16(j.scheduled_for), visitAt: local16(j.visit_at),
             salesId: j.sales_id || null,
             price: num(p.price), crewPay: num(costBy[j.id]), notes: p.notes || '', crewToken: p.crew_token || null,
             files: filesBy[j.id] || [], docs: docsBy[j.id] || [],
@@ -216,10 +217,15 @@
           contact_name: input.customerId ? '' : name, contact_phone: input.customerId ? '' : phone, contact_email: input.customerId ? '' : email,
           entered_by: staff.name || 'Office',
           trade: input.trade || 'other', description: input.description.trim(), address: input.address.trim(), zip: String(input.zip || '').trim(),
-          timeframe: input.timeframe || '', status: scheduled ? 'scheduled' : 'qualifying',
+          timeframe: input.timeframe || '', status: scheduled ? 'scheduled' : input.agreed ? 'hot' : 'qualifying',
           contractor_id: isSales ? null : input.contractorId || null, scheduled_for: isSales ? null : input.scheduledFor || null,
           sales_id: isSales ? staff.salesId : input.salesId || null,
         }).select('id').single());
+        if (input.price != null && input.price !== '') {
+          const quote = '$' + Number(input.price).toLocaleString();
+          must(await sb.from('job_private').update({ price: Number(input.price) }).eq('job_id', row.id));
+          await sb.rpc('log_call', { p_job: row.id, p_outcome: input.agreed ? 'Agreed to the price' : 'Phone estimate', p_note: 'Phone estimate ' + quote });
+        }
         return row.id;
       },
       async logCall(id, outcome, note = '') {
@@ -244,6 +250,7 @@
         }
         if ('contractorId' in patch) jobPatch.contractor_id = patch.contractorId;
         if ('scheduledFor' in patch) jobPatch.scheduled_for = patch.scheduledFor;
+        if ('visitAt' in patch) jobPatch.visit_at = patch.visitAt || null;
         if ('price' in patch) privPatch.price = patch.price;
         if ('crewPay' in patch) must(await sb.from('job_costs').update({ crew_pay: patch.crewPay }).eq('job_id', id));
         if ('notes' in patch) privPatch.notes = patch.notes;

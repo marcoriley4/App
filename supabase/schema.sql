@@ -56,7 +56,7 @@ $$;
 
 create function public.status_label(s text) returns text
 language sql immutable set search_path = '' as $$
-  select case s when 'new' then 'New lead' when 'qualifying' then 'Qualifying' when 'scheduled' then 'Scheduled'
+  select case s when 'new' then 'New lead' when 'qualifying' then 'Phone estimate' when 'hot' then 'Hot lead' when 'scheduled' then 'Scheduled'
     when 'in_progress' then 'In progress' when 'completed' then 'Completed' when 'lost' then 'Not a fit' else s end;
 $$;
 
@@ -135,10 +135,12 @@ create table public.jobs (
   zip text not null default '',
   timeframe text not null default '',
   budget text not null default '',
-  status text not null default 'new' check (status in ('new', 'qualifying', 'scheduled', 'in_progress', 'completed', 'lost')),
+  -- 'hot' = the customer agreed to the phone estimate (or approved it in writing): worth a rep visit.
+  status text not null default 'new' check (status in ('new', 'qualifying', 'hot', 'scheduled', 'in_progress', 'completed', 'lost')),
   contractor_id uuid references public.contractors(id) on delete set null,
   sales_id uuid references public.salespeople(id) on delete set null,   -- the salesperson who owns this client
   scheduled_for timestamp,
+  visit_at timestamp,   -- the sales rep's walkthrough with a hot lead
   -- Extra progress detail shared by office and crew, and who last changed progress.
   stage text check (stage in ('on_the_way', 'waiting_parts', 'return_visit')),
   progress_at timestamptz,
@@ -329,6 +331,10 @@ begin
   if new.scheduled_for is distinct from old.scheduled_for and new.scheduled_for is not null then
     perform public.log_event(new.id, 'Scheduled for ' || to_char(new.scheduled_for, 'Mon FMDD, YYYY FMHH12:MI AM'));
   end if;
+  if new.visit_at is distinct from old.visit_at then
+    perform public.log_event(new.id, case when new.visit_at is null then '🤝 Rep visit cleared'
+      else '🤝 Rep visit booked for ' || to_char(new.visit_at, 'Mon FMDD, YYYY FMHH12:MI AM') end);
+  end if;
   return new;
 end $$;
 create trigger jobs_after_update after update on public.jobs
@@ -451,12 +457,15 @@ language sql stable security definer set search_path = '' as $$
     'id', j.id, 'number', j.number, 'trade', j.trade, 'status', j.status, 'created_at', j.created_at,
     'description', j.description, 'address', j.address, 'zip', j.zip, 'timeframe', j.timeframe, 'budget', j.budget,
     'scheduled_for', j.scheduled_for, 'stage', j.stage,
+    'visit_at', case when j.status = 'hot' then j.visit_at end,
+    'rep_name', case when j.status = 'hot' and j.visit_at is not null then split_part(sp.name, ' ', 1) end,
     'contractor_name', case when j.status in ('scheduled', 'in_progress', 'completed') then c.name end,
     'shared_files', (select coalesce(jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'kind', f.kind, 'size', f.size,
                        'path', f.path, 'uploaded_at', f.uploaded_at) order by f.uploaded_at), '[]'::jsonb)
                      from public.job_files f where f.job_id = j.id and f.shared)
   ) order by j.created_at desc), '[]'::jsonb)
   from public.jobs j left join public.contractors c on c.id = j.contractor_id
+    left join public.salespeople sp on sp.id = j.sales_id
   where j.buyer_id = auth.uid();
 $$;
 
@@ -621,6 +630,8 @@ begin
     end if;
     if new.status = 'approved' then
       update public.job_private set price = total where job_id = new.job_id;
+      -- Agreed to the price in writing: it's a hot lead, ready for a rep visit.
+      update public.jobs set status = 'hot' where id = new.job_id and status in ('new', 'qualifying');
     end if;
   end if;
   if jsonb_array_length(new.payments) > jsonb_array_length(old.payments) then

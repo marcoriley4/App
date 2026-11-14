@@ -2,19 +2,30 @@
 
 A job-request app for Top Hat Contracting. Customers post a job and create an account. Top Hat staff qualify each lead, schedule the work and send one of their own crews.
 
+### The business model: only hot leads get a visit
+
+Reps and crews only go out to customers who have already agreed to the price, so nobody's time is wasted:
+
+1. **Request:** the customer sends their project with measurements and photos (or the office enters a phone-in job).
+2. **Phone estimate:** the office or a salesperson calls, goes over the job and quotes a price. On the job's **Next step** card they enter the price and tap what the customer said: **🔥 They agreed** (the job becomes a **Hot lead**), **🤔 Thinking it over** (stays in follow-up), or **👎 Not interested** (closed). A written estimate approved in the app also makes it a hot lead.
+3. **Rep visit:** for a hot lead, pick a sales rep and a date and time for the walkthrough, then text the customer the visit time in one tap.
+4. **Sold:** after the visit, tap **✅ Sold: pick crew & date** (or **Didn't close**). The crew takes it from there.
+
+Today shows each stage: new leads to call, **🔥 hot leads that need a rep visit**, **🤝 rep visits today and tomorrow**, **🤔 customers thinking it over**, and **visits done that need a crew**.
+
 ## How it works
 
 **Customers** (`index.html`)
 1. Pick the type of work (plumbing, roofing, painting…).
-2. Describe the job: address, ZIP, timeframe, optional budget and up to 5 photos.
+2. Describe the job with optional measurements and up to 5 photos, then the address, ZIP, a date on the calendar and an optional budget.
 3. Create an account with name, mobile phone, email and password. The request is sent as soon as the account is created.
-4. Check **My jobs** anytime to see the status (Received → Reviewing → Scheduled → Done), plus the date and the crew lead's name once it's scheduled.
+4. Check **My jobs** anytime to see the status (Received → Estimate call → Rep visit → Scheduled → Done), the rep visit time once it's booked, and the date and crew lead's name once the work is scheduled.
 
 **Top Hat staff** (`admin.html`)
 - **Today** (the home screen) shows only what needs attention: new leads to call (with a Call button), new crew notes, approved estimates that need a crew and date, finished jobs that need an invoice, unpaid invoices, estimates waiting on the customer, and jobs on the schedule today and tomorrow. When nothing is waiting, it says "All caught up."
-- **Each job opens with a summary** (customer, address, date, crew, price and profit) and a **Next step** card with one clear button: Call the customer → Send an estimate → Schedule a crew → Text the job to the crew → Mark finished → Send the invoice → Record payment. A **progress bar** (New → Qualifying → Scheduled → Working → Done) shows where the job is, and you can tap it to change the status. The rest of the job is split into tabs: **Overview, Money, Files, Notes & history**.
+- **Each job opens with a summary** (customer, address, date, crew, price and profit) and a **Next step** card with one clear button: Call the customer → Send an estimate → Schedule a crew → Text the job to the crew → Mark finished → Send the invoice → Record payment. A **progress bar** (New → Estimate → Hot lead → Scheduled → Working → Done) shows where the job is, and you can tap it to change the status. The rest of the job is split into tabs: **Overview, Money, Files, Notes & history**.
 - **+ New job** (on Today and Jobs): enter a job for a customer who called or walked in. Fill in the customer's name, phone and optional email, the job, and optionally a crew and date. With a crew and date, the job is scheduled right away and shows up in that contractor's crew login. If the phone or email matches an existing customer account, the job is added to that account so they see it in My jobs. Customers entered this way don't have an app login, so estimates and invoices go to them as a PDF by text or email, and you tap **Mark approved** when they say yes.
-- **Jobs** lists every job with filters (Open, New, Scheduled, Done, Closed, All) and search. "Open" includes finished jobs that still need an invoice or payment. Cards show flags only when something needs attention.
+- **Jobs** lists every job with filters (Open, New, 🔥 Hot, Scheduled, Done, Closed, All) and search. "Open" includes finished jobs that still need an invoice or payment. Cards show flags only when something needs attention.
 - **Leads:** every request, with counts by status, an open-job value total, filters and search.
 - **Lead details:** call, text or email the customer in one tap. Set the status, pick a crew (★ marks crews who do that kind of work), set the date, and keep internal notes the customer never sees. Each lead also keeps an activity history.
 - **Job numbers:** every job gets a number like **TH-1042**. Search by number, name, phone or address.

@@ -187,6 +187,7 @@ set role authenticated;
 select t.ok((select price from public.job_private) = 422.28, 'approval sets the customer price');
 select t.ok((select crew_pay from public.job_costs) = 1150.50, 'approval leaves crew pay alone');
 select t.ok(exists (select 1 from public.job_events where text like 'E-1001 approved by Ann B. (customer)'), 'approval logged with who');
+select t.ok((select status from public.jobs where id = current_setting('t.job')::uuid) = 'scheduled', 'approval never moves a scheduled job backwards');
 do $$ begin
   begin update public.documents set items = '[]' where id = current_setting('t.est')::uuid; perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'approved estimate is locked'); end;
@@ -566,6 +567,33 @@ reset role;
 select set_config('request.jwt.claim.sub', :'E', false);
 set role authenticated;
 select t.ok((select count(*) from public.jobs) = 0, 'turned-off sales login sees nothing');
+reset role;
+
+-- ========== Hot lead: phone estimate agreed, rep visit booked ==========
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+insert into public.jobs (buyer_id, trade, description, address, status) values (:'A', 'painting', 'Paint three bedrooms', '5 Elm St', 'qualifying');
+select set_config('t.hot', (select id::text from public.jobs where description = 'Paint three bedrooms'), false);
+insert into public.documents (job_id, type, items) values (current_setting('t.hot')::uuid, 'estimate', '[{"desc":"Paint 3 rooms","qty":1,"price":3200}]');
+update public.documents set status = 'sent' where job_id = current_setting('t.hot')::uuid;
+select set_config('t.hotest', (select id::text from public.documents where job_id = current_setting('t.hot')::uuid), false);
+reset role;
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+select public.respond_estimate(current_setting('t.hotest')::uuid, true);
+select t.ok((select x->>'status' from jsonb_array_elements(public.my_jobs()) x where x->>'id' = current_setting('t.hot')) = 'hot', 'approving the estimate makes it a hot lead');
+select t.ok((select x->>'visit_at' from jsonb_array_elements(public.my_jobs()) x where x->>'id' = current_setting('t.hot')) is null, 'no visit time before one is booked');
+reset role;
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+update public.jobs set visit_at = '2030-05-01 16:00' where id = current_setting('t.hot')::uuid;
+select t.ok(exists (select 1 from public.job_events where job_id = current_setting('t.hot')::uuid and text like '🤝 Rep visit booked for May 1, 2030%'), 'rep visit logged');
+select t.ok(exists (select 1 from public.job_events where job_id = current_setting('t.hot')::uuid and text = 'Status → Hot lead'), 'hot lead logged');
+reset role;
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+select t.ok((select x->>'visit_at' from jsonb_array_elements(public.my_jobs()) x where x->>'id' = current_setting('t.hot')) like '2030-05-01%', 'customer sees the rep visit time');
+select t.ok((select x::text from jsonb_array_elements(public.my_jobs()) x where x->>'id' = current_setting('t.hot')) !~ '3200|price', 'customer job data still has no price');
 reset role;
 
 -- ========== Closed job: crew link off ==========

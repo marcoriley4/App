@@ -107,15 +107,15 @@
         el('p', { class: 'cta-note' }, 'Tap to start'),
         el('p', { class: 'hero-pitch' },
           el('span', { class: 'hl' }, 'Get a free estimate for your project.'),
-          'Answer a few quick questions and add your measurements and photos.',
-          el('span', { class: 'pitch-close' }, 'Book your spot today.',
-            el('small', {}, 'A ', el('span', { class: 'brand-hl' }, 'Top Hat'), ' rep comes out, walks through your project with you, and goes over your free estimate.'))),
+          'Tell us about it, add your measurements and photos, and we’ll call you with an estimate over the phone.',
+          el('span', { class: 'pitch-close' }, 'Like the price? Book your spot.',
+            el('small', {}, 'A ', el('span', { class: 'brand-hl' }, 'Top Hat'), ' rep comes out, walks through your project with you, and gets you on the schedule.'))),
       ),
       el('h2', { class: 'how-title' }, 'How it works'),
       el('ol', { class: 'how-steps' },
-        el('li', {}, el('span', { class: 'n' }, '1'), el('div', {}, el('b', {}, 'Pick your project'), el('span', {}, 'Roofing, plumbing, flooring, remodel and more.'))),
-        el('li', {}, el('span', { class: 'n' }, '2'), el('div', {}, el('b', {}, 'Add measurements & photos'), el('span', {}, 'Rough sizes and a few phone pictures are perfect.'))),
-        el('li', {}, el('span', { class: 'n' }, '3'), el('div', {}, el('b', {}, 'Meet your Top Hat rep'), el('span', {}, 'We call to book your visit, then a rep comes out for a walkthrough and your free estimate.'))),
+        el('li', {}, el('span', { class: 'n' }, '1'), el('div', {}, el('b', {}, 'Tell us about your project'), el('span', {}, 'Add rough measurements and a few phone pictures.'))),
+        el('li', {}, el('span', { class: 'n' }, '2'), el('div', {}, el('b', {}, 'Get your estimate by phone'), el('span', {}, 'We call you, go over the job, and give you a price.'))),
+        el('li', {}, el('span', { class: 'n' }, '3'), el('div', {}, el('b', {}, 'Book your rep visit'), el('span', {}, 'Agree to the price and a Top Hat rep comes out for the walkthrough.'))),
       ),
     ));
   }
@@ -254,8 +254,8 @@
       } catch (err) { showError(err.message); }
       finally { btn.disabled = false; }
     } },
-      el('h1', {}, 'Last step: where should we send your estimate?'),
-      el('p', { class: 'muted' }, "Create a free account so we can reach you about your estimate, and so you can check on your project anytime."),
+      el('h1', {}, 'Last step: how do we reach you?'),
+      el('p', { class: 'muted' }, "We'll call you with your estimate. Create a free account so you can check on your project anytime."),
       errorBox,
       el('label', { class: 'field' }, 'Full name', el('input', { name: 'name', autocomplete: 'name', required: true })),
       el('label', { class: 'field' }, 'Mobile phone', el('span', { class: 'hint' }, "We'll call or text you to confirm the details."),
@@ -286,15 +286,15 @@
     view.append(el('div', { class: 'card stack', style: 'margin-top:28px;text-align:center' },
       el('div', { class: 'done-mark' }, '✓'),
       el('h1', {}, "You're all set!"),
-      el('p', { class: 'muted' }, `Thanks${me ? ', ' + me.name.split(' ')[0] : ''}. The Top Hat team will look over your measurements and photos and call you ${me?.phone ? 'at ' + me.phone : 'soon'} to book your visit. A rep will come out, walk through the project with you, and go over your free estimate. You'll see everything under My jobs.`),
+      el('p', { class: 'muted' }, `Thanks${me ? ', ' + me.name.split(' ')[0] : ''}. The Top Hat team will look over your measurements and photos and call you ${me?.phone ? 'at ' + me.phone : 'soon'} with an estimate over the phone. If the price works for you, we'll book a time for your Top Hat rep to come out. You'll see every step under My jobs.`),
       el('a', { class: 'btn block', href: '#/jobs' }, 'See my jobs'),
       el('a', { class: 'btn ghost block', href: '#/request' }, 'Start another project'),
     ));
   }
 
   /* ---------- my jobs ---------- */
-  const TRACK = ['new', 'qualifying', 'scheduled', 'completed'];
-  const TRACK_LABELS = ['Received', 'Reviewing', 'Scheduled', 'Done'];
+  const TRACK = ['new', 'qualifying', 'hot', 'scheduled', 'completed'];
+  const TRACK_LABELS = ['Received', 'Estimate call', 'Rep visit', 'Scheduled', 'Done'];
   async function myJobs() {
     const me = await api.auth.me();
     if (!me) return go('login?next=jobs');
@@ -327,7 +327,7 @@
       ...jobs.map((j) => {
         const trade = find(TRADES, j.trade) || TRADES.at(-1);
         const st = find(STATUSES, j.status);
-        const reached = j.status === 'in_progress' ? 2 : TRACK.indexOf(j.status);
+        const reached = j.status === 'in_progress' ? 3 : TRACK.indexOf(j.status);
         return el('article', { class: 'card job-card' },
           el('div', { class: 'head' },
             el('span', { style: 'font-size:1.6rem' }, trade.icon),
@@ -336,6 +336,9 @@
           el('p', { class: 'small' }, j.description),
           j.status === 'lost' ? el('p', { class: 'muted small' }, 'This request was closed. Questions? Just request a new job and mention it.')
             : el('div', { class: 'track', 'aria-label': `Progress: ${st.buyer}` }, ...TRACK_LABELS.map((l, i) => el('div', { class: i <= reached ? 'on' : '' }, l))),
+          j.status === 'hot' ? el('div', { class: 'callout' }, '🤝 ', j.visitAt
+            ? [el('b', {}, fmtWhen(j.visitAt)), ` · ${j.repName || 'Your Top Hat rep'} is coming out to walk through the project with you.`]
+            : 'Thanks for agreeing to the estimate! We’ll call you to set up a time for your rep visit.') : null,
           j.scheduledFor && ['scheduled', 'in_progress'].includes(j.status)
             ? el('div', { class: 'callout' }, '📅 ', el('b', {}, fmtWhen(j.scheduledFor)), j.contractorName ? ` · ${j.contractorName} from Top Hat is coming out.` : '')
             : null,
