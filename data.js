@@ -969,7 +969,13 @@
     return days === 1 ? 'yesterday' : `${days} days ago`;
   }
   const fmtWhen = (iso) => new Date(iso).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  const find = (list, id) => list.find((x) => x.id === id);
+  // A customer can pick a date on the calendar instead of a timeframe; it is saved as YYYY-MM-DD.
+  const dateLabel = (id) => {
+    const d = new Date(id + 'T12:00:00');
+    return 'By ' + d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
+  };
+  const find = (list, id) => list.find((x) => x.id === id)
+    || (list === TIMEFRAMES && /^\d{4}-\d{2}-\d{2}$/.test(id || '') ? { id, label: dateLabel(id) } : undefined);
 
   // Shrink photos before saving so they fit in storage and upload fast.
   function shrinkImage(file, max = 1024, quality = 0.75) {

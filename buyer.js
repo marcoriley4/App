@@ -10,6 +10,46 @@
   if (api.mode === 'preview') document.getElementById('previewBanner').hidden = false;
 
   /* ---------- draft (survives a refresh while filling the form) ---------- */
+  // Month calendar for "When do you need it done?" Saves YYYY-MM-DD (or 'flexible').
+  function calendarPicker(value, onChange) {
+    const pad = (n) => String(n).padStart(2, '0');
+    const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    let selected = /^\d{4}-\d{2}-\d{2}$/.test(value || '') ? value : '';
+    let flexible = value === 'flexible';
+    const start = selected ? new Date(selected + 'T12:00:00') : today;
+    let shown = new Date(start.getFullYear(), start.getMonth(), 1);
+    const minMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const wrap = el('div', { class: 'cal-wrap' });
+    const render = () => {
+      const y = shown.getFullYear(), m = shown.getMonth();
+      const first = new Date(y, m, 1).getDay();
+      const days = new Date(y, m + 1, 0).getDate();
+      const cells = [];
+      for (let i = 0; i < first; i++) cells.push(el('span', {}));
+      for (let d = 1; d <= days; d++) {
+        const date = new Date(y, m, d); const id = iso(date);
+        cells.push(el('button', { type: 'button', class: 'cal-day' + (id === selected ? ' on' : '') + (date.getTime() === today.getTime() ? ' today' : ''),
+          disabled: date < today, 'aria-label': date.toDateString(), 'aria-pressed': String(id === selected),
+          onclick: () => { selected = id; flexible = false; onChange(id); render(); } }, String(d)));
+      }
+      wrap.replaceChildren(
+        el('div', { class: 'cal' + (flexible ? ' dim' : '') },
+          el('div', { class: 'cal-head' },
+            el('button', { type: 'button', class: 'cal-nav', 'aria-label': 'Previous month', disabled: shown <= minMonth, onclick: () => { shown = new Date(y, m - 1, 1); render(); } }, '‹'),
+            el('b', {}, shown.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })),
+            el('button', { type: 'button', class: 'cal-nav', 'aria-label': 'Next month', onclick: () => { shown = new Date(y, m + 1, 1); render(); } }, '›')),
+          el('div', { class: 'cal-grid cal-dow' }, ...['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((x) => el('span', {}, x))),
+          el('div', { class: 'cal-grid' }, ...cells)),
+        el('div', { class: 'cal-foot' },
+          el('span', { class: 'cal-picked' }, flexible ? "You're flexible on the date" : selected ? 'Picked: ' + find(TIMEFRAMES, selected).label.replace(/^By /, '') : 'No date picked yet'),
+          el('button', { type: 'button', class: 'chip' + (flexible ? ' on' : ''), 'aria-pressed': String(flexible),
+            onclick: () => { flexible = !flexible; if (flexible) selected = ''; onChange(flexible ? 'flexible' : ''); render(); } }, "I'm flexible")));
+    };
+    render();
+    return wrap;
+  }
+
   const emptyDraft = () => ({ step: 1, trade: '', description: '', address: '', zip: '', timeframe: '', budget: '', photos: [] });
   let draft = emptyDraft();
   try { draft = { ...draft, ...JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}') }; } catch (e) { /* ignore */ }
@@ -120,12 +160,14 @@
       };
       renderPhotos();
 
+      const dateField = calendarPicker(draft.timeframe, (v) => { draft.timeframe = v; saveDraft(); });
+
       // Keep what's typed so Back / change / refresh never loses it.
       const capture = () => {
         const f = new FormData(form);
         Object.assign(draft, {
           description: f.get('description').trim(), address: f.get('address').trim(), zip: f.get('zip').trim(),
-          timeframe: f.get('timeframe') || '', budget: f.get('budget') || '',
+          budget: f.get('budget') || '',
         });
         saveDraft();
       };
@@ -136,7 +178,7 @@
         if (draft.description.length < 10) return showError('Please describe the job in a sentence or two.');
         if (!draft.address) return showError('Please enter the address where the work is.');
         if (!/^\d{5}$/.test(draft.zip)) return showError('Please enter a 5-digit ZIP code.');
-        if (!draft.timeframe) return showError('When do you need it done?');
+        if (!draft.timeframe) return showError('Please pick a date on the calendar for when you need it done.');
         if (me) return submitJob(showError);
         draft.step = 3; saveDraft(); route();
       } },
@@ -151,9 +193,8 @@
         el('label', { class: 'field' }, 'ZIP code',
           el('input', { name: 'zip', inputmode: 'numeric', maxlength: '5', autocomplete: 'postal-code', placeholder: '12345', value: draft.zip, style: 'max-width:160px' })),
         el('div', { class: 'field' }, el('b', { class: 'small', style: 'font-size:.92rem' }, 'When do you need it done?'),
-          el('div', { class: 'choices', style: 'margin-top:6px' }, ...TIMEFRAMES.map((t) =>
-            el('label', { class: 'choice' }, el('input', { type: 'radio', name: 'timeframe', value: t.id, checked: draft.timeframe === t.id }), el('span', {}, t.label))))),
-        el('div', { class: 'field' }, el('b', { style: 'font-size:.92rem' }, 'Rough budget ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(optional)')),
+          el('p', { class: 'muted small' }, 'Pick a date on the calendar.'), dateField),
+        el('div', { class: 'field' }, el('b', { style: 'font-size:.92rem' }, 'Have you thought about a budget? ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(optional)')),
           el('div', { class: 'choices', style: 'margin-top:6px' }, ...BUDGETS.map((b) =>
             el('label', { class: 'choice' }, el('input', { type: 'radio', name: 'budget', value: b.id, checked: draft.budget === b.id }), el('span', {}, b.label))))),
         el('div', { class: 'field' }, el('b', { style: 'font-size:.92rem' }, 'Photos ', el('span', { class: 'muted small', style: 'font-weight:400' }, `(optional, up to ${MAX_PHOTOS})`)),
