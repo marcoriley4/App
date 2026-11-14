@@ -103,7 +103,7 @@
         el('img', { class: 'hero-logo', src: 'img/logo.jpg', alt: 'Top Hat Contracting Services' }),
         el('span', { class: 'hero-tag' }, 'Premier residential contracting'),
         el('a', { class: 'btn gold block hero-cta', href: '#/request', onclick: () => { if (draft.step > 4) clearDraft(); } },
-          el('h1', {}, 'Start your project the right way, right now.'), el('span', { class: 'arrow', 'aria-hidden': 'true' }, '→')),
+          el('h1', {}, 'Start your project the right way, right now.')),
         el('p', { class: 'cta-note' }, 'Tap to start · Takes about 2 minutes · Free'),
         el('p', { class: 'hero-pitch' },
           el('span', { class: 'hl' }, 'Get a free estimate for your project.'),

@@ -560,7 +560,7 @@ button.ghost, .btn.ghost { border-width: 1.5px; }
 .how-steps li div span { color: var(--muted); font-size: .9rem; }
 
 /* Headline doubles as the main button */
-.hero .hero-cta { white-space: normal; height: auto; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 18px 18px; margin: 4px 0 8px; text-decoration: none; text-align: left; }
+.hero .hero-cta { white-space: normal; height: auto; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 18px 18px; margin: 4px 0 8px; text-decoration: none; text-align: center; }
 .hero .hero-cta h1 { flex: 1; min-width: 0; white-space: normal; margin: 0; font-size: 1.55rem; line-height: 1.2; color: var(--ink); }
 .hero .hero-cta .arrow { flex: none; width: 42px; height: 42px; border-radius: 99px; background: var(--ink); color: var(--gold); display: grid; place-items: center; font-size: 1.4rem; font-weight: 800; }
 .hero .cta-note { margin: 0 0 14px; }
