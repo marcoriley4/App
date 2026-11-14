@@ -10,6 +10,16 @@
   if (api.mode === 'preview') document.getElementById('previewBanner').hidden = false;
 
   /* ---------- draft (survives a refresh while filling the form) ---------- */
+  const MEASURE_HINTS = {
+    roofing: 'e.g. Ranch house, about 1,800 sq ft. One story, roof is fairly flat.',
+    flooring: 'e.g. Living room 14 x 18 ft, hallway 4 x 20 ft.',
+    drywall: 'e.g. Hole about 2 x 3 ft in the bedroom wall. Ceilings are 8 ft.',
+    painting: 'e.g. 3 bedrooms, each about 12 x 12 ft, 8 ft ceilings.',
+    remodel: 'e.g. Bathroom is 5 x 8 ft. Kitchen is about 12 x 14 ft.',
+    landscaping: 'e.g. Back yard about 40 x 60 ft.',
+    other: 'e.g. Room is about 12 x 14 ft, ceilings 8 ft.',
+  };
+
   // Month calendar for "When do you need it done?" Saves YYYY-MM-DD (or 'flexible').
   function calendarPicker(value, onChange) {
     const pad = (n) => String(n).padStart(2, '0');
@@ -50,7 +60,7 @@
     return wrap;
   }
 
-  const emptyDraft = () => ({ step: 1, trade: '', description: '', address: '', zip: '', timeframe: '', budget: '', photos: [] });
+  const emptyDraft = () => ({ step: 1, trade: '', description: '', measurements: '', address: '', zip: '', timeframe: '', budget: '', photos: [] });
   let draft = emptyDraft();
   try { draft = { ...draft, ...JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}') }; } catch (e) { /* ignore */ }
   function saveDraft() { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch (e) { /* photos may not fit; fine */ } }
@@ -94,14 +104,17 @@
         el('span', { class: 'hero-tag' }, 'Premier residential contracting'),
         el('h1', {}, 'Start your project the right way, right now.'),
         el('p', { class: 'hero-pitch' },
-          el('span', { class: 'hl' }, 'Tell us what you need.'),
-          el('span', { class: 'brand-hl' }, 'Top Hat Contracting'), ' reviews every request, schedules the work, and sends a trusted crew to your door.'),
+          el('span', { class: 'hl' }, 'Get a free estimate for your project.'),
+          'Answer a few quick questions, add your measurements and photos, and ',
+          el('span', { class: 'brand-hl' }, 'Top Hat Contracting'), ' will send you an estimate.'),
       ),
-      el('a', { class: 'btn gold block', href: '#/request', onclick: () => { if (draft.step > 3) clearDraft(); } }, 'Request a job →'),
-      el('div', { class: 'trust' },
-        el('div', {}, TH.icon('dollar'), 'Free to request'),
-        el('div', {}, TH.icon('phone'), 'We call you to confirm'),
-        el('div', {}, TH.icon('toolbox'), 'Crews we know and trust'),
+      el('a', { class: 'btn gold block big-cta', href: '#/request', onclick: () => { if (draft.step > 4) clearDraft(); } }, 'Start your project now →'),
+      el('p', { class: 'cta-note' }, 'Takes about 2 minutes · Free · No obligation'),
+      el('h2', { class: 'how-title' }, 'How it works'),
+      el('ol', { class: 'how-steps' },
+        el('li', {}, el('span', { class: 'n' }, '1'), el('div', {}, el('b', {}, 'Pick your project'), el('span', {}, 'Roofing, plumbing, flooring, remodel and more.'))),
+        el('li', {}, el('span', { class: 'n' }, '2'), el('div', {}, el('b', {}, 'Add measurements & photos'), el('span', {}, 'Rough sizes and a few phone pictures are perfect.'))),
+        el('li', {}, el('span', { class: 'n' }, '3'), el('div', {}, el('b', {}, 'Get your free estimate'), el('span', {}, 'We review it, call you to confirm, and send your estimate.'))),
       ),
     ));
   }
@@ -110,15 +123,16 @@
   async function request() {
     const me = await api.auth.me();
     if (me && me.role === 'staff') { view.append(el('div', { class: 'card', style: 'margin-top:24px' }, 'You are logged in as staff. ', el('a', { href: 'admin.html' }, 'Go to the staff area'), '.')); return; }
-    if (draft.step < 1 || draft.step > 3 || !find(TRADES, draft.trade)) draft.step = 1;
-    const totalSteps = me ? 2 : 3;
-    const step = Math.min(draft.step, me ? 2 : 3);
+    if (draft.step < 1 || draft.step > 4 || !find(TRADES, draft.trade)) draft.step = 1;
+    const totalSteps = me ? 3 : 4;
+    const step = Math.min(draft.step, totalSteps);
+    const STEP_NAMES = ['Your project', 'Measurements & photos', 'Where & when', 'Your contact info'];
     const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
     const showError = (msg) => { errorBox.textContent = msg; errorBox.hidden = false; errorBox.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
 
     const header = el('div', { class: 'stack', style: 'margin-top:20px' },
       el('div', { class: 'steps' }, ...Array.from({ length: totalSteps }, (_, i) => el('span', { class: i < step ? 'on' : '' }))),
-      el('p', { class: 'muted small' }, `Step ${step} of ${totalSteps}`),
+      el('p', { class: 'muted small' }, `Step ${step} of ${totalSteps} · ${STEP_NAMES[step - 1]}`),
     );
     view.append(header);
 
@@ -129,7 +143,8 @@
         if (!t) return showError('Pick the type of work so we know who to send.');
         draft.trade = t; draft.step = 2; saveDraft(); route();
       } },
-        el('h1', {}, 'What do you need done?'),
+        el('h1', {}, "What's your project?"),
+        el('p', { class: 'muted' }, 'Tap the one that fits best.'),
         errorBox,
         el('div', { class: 'tiles', role: 'radiogroup', 'aria-label': 'Type of work' }, ...TRADES.map((t) =>
           el('label', { class: 'tile' },
@@ -141,8 +156,11 @@
       return;
     }
 
+    const trade = find(TRADES, draft.trade);
+    const tradeLine = (backTo) => el('div', { class: 'summary' }, trade.icon + ' ', el('b', {}, trade.label), ' · ',
+      el('button', { type: 'button', class: 'link', onclick: backTo }, 'change'));
+
     if (step === 2) {
-      const trade = find(TRADES, draft.trade);
       const photosWrap = el('div', { class: 'photos' });
       const renderPhotos = () => {
         photosWrap.replaceChildren(...[
@@ -159,35 +177,53 @@
         ].filter(Boolean));
       };
       renderPhotos();
-
-      const dateField = calendarPicker(draft.timeframe, (v) => { draft.timeframe = v; saveDraft(); });
-
-      // Keep what's typed so Back / change / refresh never loses it.
       const capture = () => {
         const f = new FormData(form);
-        Object.assign(draft, {
-          description: f.get('description').trim(), address: f.get('address').trim(), zip: f.get('zip').trim(),
-          budget: f.get('budget') || '',
-        });
+        draft.description = f.get('description').trim(); draft.measurements = f.get('measurements').trim(); saveDraft();
+      };
+      const toProject = () => { capture(); draft.step = 1; saveDraft(); route(); };
+      const form = el('form', { class: 'stack', novalidate: true, oninput: () => capture(), onsubmit: (e) => {
+        e.preventDefault(); capture();
+        if (draft.description.length < 10) return showError('Please describe the job in a sentence or two.');
+        draft.step = 3; saveDraft(); route();
+      } },
+        el('h1', {}, 'Tell us about the job'),
+        tradeLine(toProject),
+        errorBox,
+        el('label', { class: 'field' }, 'What needs to be done?',
+          el('textarea', { name: 'description', placeholder: 'e.g. Water leaking under the kitchen sink. It started last week and the cabinet floor is getting soft.', value: draft.description })),
+        el('label', { class: 'field' }, el('span', {}, 'Measurements ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(if you have them)')),
+          el('span', { class: 'hint' }, 'Rough sizes are fine. They help us price it right.'),
+          el('textarea', { name: 'measurements', rows: '2', placeholder: MEASURE_HINTS[draft.trade] || MEASURE_HINTS.other, value: draft.measurements || '' })),
+        el('div', { class: 'field' }, el('b', { style: 'font-size:.92rem' }, 'Photos ', el('span', { class: 'muted small', style: 'font-weight:400' }, `(up to ${MAX_PHOTOS})`)),
+          el('p', { class: 'muted small' }, 'Snap the whole area plus any damage up close. Photos help us give you an accurate estimate.'), photosWrap),
+        el('div', { class: 'row' },
+          el('button', { type: 'button', class: 'ghost', onclick: toProject }, 'Back'),
+          el('button', { class: 'gold', type: 'submit', style: 'flex:1' }, 'Next')),
+      );
+      view.append(form);
+      return;
+    }
+
+    if (step === 3) {
+      const dateField = calendarPicker(draft.timeframe, (v) => { draft.timeframe = v; saveDraft(); });
+      const capture = () => {
+        const f = new FormData(form);
+        Object.assign(draft, { address: f.get('address').trim(), zip: f.get('zip').trim(), budget: f.get('budget') || '' });
         saveDraft();
       };
-      const back = () => { capture(); draft.step = 1; saveDraft(); route(); };
+      const back = () => { capture(); draft.step = 2; saveDraft(); route(); };
       const form = el('form', { class: 'stack', novalidate: true, oninput: () => capture(), onsubmit: async (e) => {
-        e.preventDefault();
-        capture();
-        if (draft.description.length < 10) return showError('Please describe the job in a sentence or two.');
+        e.preventDefault(); capture();
         if (!draft.address) return showError('Please enter the address where the work is.');
         if (!/^\d{5}$/.test(draft.zip)) return showError('Please enter a 5-digit ZIP code.');
         if (!draft.timeframe) return showError('Please pick a date on the calendar for when you need it done.');
         if (me) return submitJob(showError);
-        draft.step = 3; saveDraft(); route();
+        draft.step = 4; saveDraft(); route();
       } },
-        el('div', { class: 'row' }, el('h1', {}, 'Tell us about the job'), el('span', { class: 'spacer' })),
-        el('div', { class: 'summary' }, trade.icon + ' ', el('b', {}, trade.label), ' · ',
-          el('button', { type: 'button', class: 'link', onclick: back }, 'change')),
+        el('h1', {}, 'Where and when?'),
+        tradeLine(() => { capture(); draft.step = 1; saveDraft(); route(); }),
         errorBox,
-        el('label', { class: 'field' }, 'What needs to be done?',
-          el('textarea', { name: 'description', placeholder: 'e.g. Water leaking under the kitchen sink. It started last week and the cabinet floor is getting soft.', value: draft.description })),
         el('label', { class: 'field' }, 'Address of the job',
           el('input', { name: 'address', placeholder: 'Street address, city', autocomplete: 'street-address', value: draft.address })),
         el('label', { class: 'field' }, 'ZIP code',
@@ -197,17 +233,15 @@
         el('div', { class: 'field' }, el('b', { style: 'font-size:.92rem' }, 'Have you thought about a budget? ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(optional)')),
           el('div', { class: 'choices', style: 'margin-top:6px' }, ...BUDGETS.map((b) =>
             el('label', { class: 'choice' }, el('input', { type: 'radio', name: 'budget', value: b.id, checked: draft.budget === b.id }), el('span', {}, b.label))))),
-        el('div', { class: 'field' }, el('b', { style: 'font-size:.92rem' }, 'Photos ', el('span', { class: 'muted small', style: 'font-weight:400' }, `(optional, up to ${MAX_PHOTOS})`)),
-          el('p', { class: 'muted small' }, 'Photos help us quote faster.'), photosWrap),
         el('div', { class: 'row' },
           el('button', { type: 'button', class: 'ghost', onclick: back }, 'Back'),
-          el('button', { class: 'gold', type: 'submit', style: 'flex:1' }, me ? 'Send request' : 'Next')),
+          el('button', { class: 'gold', type: 'submit', style: 'flex:1' }, me ? 'Get my free estimate' : 'Next')),
       );
       view.append(form);
       return;
     }
 
-    // Step 3: create an account to send the request.
+    // Step 4: create an account to send the request.
     const form = el('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
       e.preventDefault();
       const f = new FormData(form);
@@ -219,8 +253,8 @@
       } catch (err) { showError(err.message); }
       finally { btn.disabled = false; }
     } },
-      el('h1', {}, 'Last step: your contact info'),
-      el('p', { class: 'muted' }, "Create a free account so we can reach you about this job, and so you can check its progress anytime."),
+      el('h1', {}, 'Last step: where should we send your estimate?'),
+      el('p', { class: 'muted' }, "Create a free account so we can reach you about your estimate, and so you can check on your project anytime."),
       errorBox,
       el('label', { class: 'field' }, 'Full name', el('input', { name: 'name', autocomplete: 'name', required: true })),
       el('label', { class: 'field' }, 'Mobile phone', el('span', { class: 'hint' }, "We'll call or text you to confirm the details."),
@@ -229,8 +263,8 @@
       el('label', { class: 'field' }, 'Create a password', el('span', { class: 'hint' }, 'At least 8 characters.'),
         el('input', { name: 'password', type: 'password', autocomplete: 'new-password', minlength: '8', required: true })),
       el('div', { class: 'row' },
-        el('button', { type: 'button', class: 'ghost', onclick: () => { draft.step = 2; saveDraft(); route(); } }, 'Back'),
-        el('button', { class: 'gold', type: 'submit', style: 'flex:1' }, 'Create account & send request')),
+        el('button', { type: 'button', class: 'ghost', onclick: () => { draft.step = 3; saveDraft(); route(); } }, 'Back'),
+        el('button', { class: 'gold', type: 'submit', style: 'flex:1' }, 'Get my free estimate')),
       el('p', { class: 'muted small', style: 'text-align:center' }, 'Already have an account? ', el('a', { href: '#/login?next=request' }, 'Log in'), ' and your request will be waiting.'),
     );
     view.append(form);
@@ -238,7 +272,8 @@
 
   async function submitJob(showError) {
     try {
-      await api.jobs.create(draft);
+      const m = (draft.measurements || '').trim();
+      await api.jobs.create({ ...draft, description: m ? `${draft.description}\n\nMeasurements: ${m}` : draft.description });
       clearDraft();
       go('done');
     } catch (err) { showError(err.message); }
@@ -249,10 +284,10 @@
     const me = await api.auth.me();
     view.append(el('div', { class: 'card stack', style: 'margin-top:28px;text-align:center' },
       el('div', { class: 'done-mark' }, '✓'),
-      el('h1', {}, 'Request received!'),
-      el('p', { class: 'muted' }, `Thanks${me ? ', ' + me.name.split(' ')[0] : ''}. The Top Hat team will review your job and reach out ${me?.phone ? 'at ' + me.phone : 'soon'} to confirm the details.`),
+      el('h1', {}, "You're all set!"),
+      el('p', { class: 'muted' }, `Thanks${me ? ', ' + me.name.split(' ')[0] : ''}. The Top Hat team will look over your measurements and photos, call you ${me?.phone ? 'at ' + me.phone : 'soon'} to confirm the details, and send your free estimate. You'll see it under My jobs.`),
       el('a', { class: 'btn block', href: '#/jobs' }, 'See my jobs'),
-      el('a', { class: 'btn ghost block', href: '#/request' }, 'Request another job'),
+      el('a', { class: 'btn ghost block', href: '#/request' }, 'Start another project'),
     ));
   }
 
@@ -325,7 +360,7 @@
   async function login() {
     const next = new URLSearchParams(location.hash.split('?')[1] || '').get('next') || 'jobs';
     view.append(TH.loginForm({ onCustomer: () => {
-      if (next === 'request') { draft.step = 2; saveDraft(); }
+      if (next === 'request') { draft.step = 3; saveDraft(); }
       go(next);
     } }));
   }
