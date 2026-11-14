@@ -388,3 +388,8 @@ button.icon:hover { color: var(--bad); }
 .stepper .on .dot { background: var(--gold); border-color: var(--gold); color: #1b1404; transform: scale(1.12); }
 .stepper .on { color: var(--text); }
 .stepper .lbl { line-height: 1.15; text-align: center; }
+.match-box { display: flex; gap: 10px; align-items: flex-start; background: var(--gold-soft); border-radius: 10px; padding: 10px 12px; cursor: pointer; }
+.match-box input { width: 20px; height: 20px; min-height: 0; flex-shrink: 0; margin-top: 2px; }
+/* Crew job card: actions two per row so they're easy to tap */
+.job-card .wrap-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.job-card .wrap-row > * { flex: none !important; white-space: normal; min-width: 0; }

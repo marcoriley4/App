@@ -101,7 +101,11 @@ alter table public.profiles add column contractor_id uuid references public.cont
 create table public.jobs (
   id uuid primary key default gen_random_uuid(),
   number bigint generated always as identity (start with 1001) unique,
-  buyer_id uuid not null references public.profiles(id) on delete cascade,
+  buyer_id uuid references public.profiles(id) on delete cascade,  -- null when the office entered it for a customer without the app
+  contact_name text not null default '',
+  contact_phone text not null default '',
+  contact_email text not null default '',
+  entered_by text not null default '',
   trade text not null,
   description text not null,
   address text not null,
@@ -111,7 +115,8 @@ create table public.jobs (
   status text not null default 'new' check (status in ('new', 'qualifying', 'scheduled', 'in_progress', 'completed', 'lost')),
   contractor_id uuid references public.contractors(id) on delete set null,
   scheduled_for timestamp,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  check (buyer_id is not null or length(trim(contact_name)) > 0)
 );
 create index on public.jobs (buyer_id);
 create index on public.jobs (status);
@@ -174,7 +179,10 @@ language plpgsql security definer set search_path = '' as $$
 begin
   insert into public.job_private (job_id, crew_token)
   values (new.id, case when new.contractor_id is null then null else public.new_crew_token() end);
-  perform public.log_event(new.id, 'Lead received');
+  perform public.log_event(new.id, case when new.entered_by <> '' then 'Job entered by ' || new.entered_by || ' (office)' else 'Lead received' end);
+  if new.contractor_id is not null then
+    perform public.log_event(new.id, 'Assigned to ' || coalesce((select name from public.contractors where id = new.contractor_id), 'crew'));
+  end if;
   return new;
 end $$;
 create trigger jobs_after_insert after insert on public.jobs
@@ -329,7 +337,7 @@ language sql stable security definer set search_path = '' as $$
   select jsonb_build_object(
     'number', j.number, 'trade', j.trade, 'status', j.status, 'address', j.address, 'zip', j.zip,
     'description', j.description, 'scheduled_for', j.scheduled_for,
-    'customer_name', b.name, 'customer_phone', b.phone, 'crew_name', c.name,
+    'customer_name', coalesce(b.name, j.contact_name), 'customer_phone', coalesce(b.phone, j.contact_phone), 'crew_name', c.name,
     'uploads', (select coalesce(jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'mime', f.mime, 'stage', f.stage,
                   'note', f.note, 'path', f.path, 'uploaded_at', f.uploaded_at) order by f.uploaded_at), '[]'::jsonb)
                 from public.job_files f where f.job_id = j.id and f.source = 'crew' and f.contractor_id is not distinct from j.contractor_id),
@@ -337,7 +345,7 @@ language sql stable security definer set search_path = '' as $$
                 from public.crew_notes n where n.job_id = j.id and n.contractor_id is not distinct from j.contractor_id))
   from public.job_private p
   join public.jobs j on j.id = p.job_id
-  join public.profiles b on b.id = j.buyer_id
+  left join public.profiles b on b.id = j.buyer_id
   left join public.contractors c on c.id = j.contractor_id
   where public.crew_token_active(p_token) and p.crew_token = p_token;
 $$;
@@ -586,7 +594,7 @@ begin
   return (select coalesce(jsonb_agg(jsonb_build_object(
       'id', j.id, 'number', j.number, 'trade', j.trade, 'status', j.status, 'scheduled_for', j.scheduled_for,
       'address', j.address, 'zip', j.zip, 'description', j.description,
-      'customer_name', b.name, 'customer_phone', b.phone, 'crew_token', p.crew_token,
+      'customer_name', coalesce(b.name, j.contact_name), 'customer_phone', coalesce(b.phone, j.contact_phone), 'crew_token', p.crew_token,
       'crew_pay', case when coalesce(show_pay, true) then p.crew_pay end,
       'photos', (select count(*) from public.job_files f where f.job_id = j.id and f.source = 'crew' and f.contractor_id = cid),
       'notes', (select coalesce(jsonb_agg(jsonb_build_object('id', n.id, 'text', n.text, 'created_at', n.created_at) order by n.created_at), '[]'::jsonb)
@@ -594,7 +602,7 @@ begin
     ) order by j.scheduled_for nulls last), '[]'::jsonb)
     from public.jobs j
     join public.job_private p on p.job_id = j.id
-    join public.profiles b on b.id = j.buyer_id
+    left join public.profiles b on b.id = j.buyer_id
     where j.contractor_id = cid and j.status in ('scheduled', 'in_progress', 'completed'));
 end $$;
 

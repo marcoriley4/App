@@ -344,6 +344,32 @@ update public.job_private set crew_notes_seen_at = now();
 select t.ok((select crew_notes_seen_at is not null from public.job_private), 'office can mark notes seen');
 reset role;
 
+-- ---- office-entered job for a customer without the app ----
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+insert into public.jobs (contact_name, contact_phone, contact_email, entered_by, trade, description, address, zip, status, contractor_id, scheduled_for)
+  values ('Pat Phone', '(555) 777-8888', 'pat@example.com', 'Office', 'hvac', 'Furnace not starting', '9 Elm St', '62701', 'scheduled',
+          (select id from public.contractors where name = 'Ray Johnson'), '2026-11-20T10:00');
+select set_config('t.pjob', (select id::text from public.jobs where contact_name = 'Pat Phone'), false);
+select t.ok((select crew_token from public.job_private where job_id = current_setting('t.pjob')::uuid) is not null, 'office job with a crew gets an upload link');
+select t.ok(exists (select 1 from public.job_events where job_id = current_setting('t.pjob')::uuid and text = 'Job entered by Office (office)'), 'office-entered job logged');
+do $$ begin
+  begin insert into public.jobs (trade, description, address) values ('x', 'no customer at all', 'y'); perform t.ok(false, 'x');
+  exception when check_violation then perform t.ok(true, 'job needs a customer account or a contact name'); end;
+end $$;
+reset role;
+
+select set_config('request.jwt.claim.sub', :'C', false);
+set role authenticated;
+select t.ok(public.crew_my_jobs()::text ~ 'Pat Phone' and public.crew_my_jobs()::text ~ '777-8888', 'crew sees phone-in customer name and phone');
+select t.ok(public.crew_my_jobs()::text !~ 'pat@example', 'crew does not see phone-in customer email');
+reset role;
+
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+select t.ok(public.my_jobs()::text !~ 'Pat Phone|Furnace', 'other customers never see office-entered jobs');
+reset role;
+
 update public.settings set data = data || '{"showCrewPay": false}';
 select set_config('request.jwt.claim.sub', :'C', false);
 set role authenticated;

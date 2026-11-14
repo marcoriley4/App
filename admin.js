@@ -136,8 +136,10 @@
           : el('button', { type: 'button', class: 'ghost small', onclick: () => openLead(j.id, 'overview') }, 'Open')))),
       b.list.length > 8 ? el('p', { class: 'muted small', style: 'margin-top:8px' }, `+ ${b.list.length - 8} more in Jobs`) : null));
     return [
-      el('div', {}, el('h1', {}, h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'),
-        el('p', { class: 'muted' }, new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }))),
+      el('div', { class: 'row', style: 'align-items:flex-end' },
+        el('div', { style: 'flex:1;min-width:0' }, el('h1', {}, h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'),
+          el('p', { class: 'muted' }, new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }))),
+        el('button', { class: 'gold', onclick: () => newJobForm() }, '+ New job')),
       el('div', { class: 'kpis three' }, kpi(bs[0].list.length, 'New leads'), kpi(thisWeek, 'Jobs this week'), kpi(docs.usd(jobs.reduce((t, j) => t + owedOn(j), 0)), 'Owed to you')),
       ...(sections.length ? sections : [el('div', { class: 'card caught-up' },
         el('div', { style: 'font-size:2.4rem' }, '🎉'), el('h2', {}, 'All caught up'), el('p', { class: 'muted' }, 'Nothing needs your attention right now.'))]),
@@ -169,7 +171,7 @@
     let listWrap = renderList();
     const searchBox = el('input', { type: 'search', placeholder: 'Search name, phone, address, job #…', value: search, 'aria-label': 'Search jobs',
       oninput: (e) => { search = e.target.value; const list = renderList(); listWrap.replaceWith(list); listWrap = list; } });
-    return [el('h2', {}, 'Jobs'), filterBar, searchBox, listWrap];
+    return [el('div', { class: 'row' }, el('h2', { style: 'flex:1' }, 'Jobs'), el('button', { class: 'gold', onclick: () => newJobForm() }, '+ New job')), filterBar, searchBox, listWrap];
   }
 
   function leadCard(j) {
@@ -428,8 +430,11 @@
         href: b.phone ? telHref(b.phone) : b.email ? `mailto:${b.email}` : null, label: b.phone ? `📞 Call ${first}` : `✉️ Email ${first}`,
         second: ['Done: mark as Qualifying', () => update({ status: 'qualifying' })] };
     } else if (j.status === 'qualifying' && !approvedEst) {
-      if (sentEst) step = { icon: '⏳', title: `Waiting for ${first} to approve ${sentEst.number}`, why: 'They can approve it on their My jobs page. Nudge them with a text.',
-        href: b.phone ? smsHref(b.phone, `Hi ${first}, just checking in on estimate ${sentEst.number} from ${settings.name || 'Top Hat Contracting'}. You can view and approve it here: ${siteUrl()}#/jobs`) : null,
+      if (sentEst) step = { icon: '⏳', title: `Waiting for ${first} to approve ${sentEst.number}`,
+        why: j.hasAccount ? 'They can approve it on their My jobs page. Nudge them with a text.' : `${first} doesn’t use the app. When they say yes, open the estimate and tap “Mark approved”.`,
+        href: b.phone ? smsHref(b.phone, j.hasAccount
+          ? `Hi ${first}, just checking in on estimate ${sentEst.number} from ${settings.name || 'Top Hat Contracting'}. You can view and approve it here: ${siteUrl()}#/jobs`
+          : `Hi ${first}, just checking in on estimate ${sentEst.number} from ${settings.name || 'Top Hat Contracting'} (${docs.usd(docs.totals(sentEst).total)}). Reply YES to approve, or call us with any questions.`) : null,
         label: `💬 Remind ${first}`, second: ['Open the estimate', () => openDoc(j.id, sentEst.id)] };
       else if (draftEst) step = { icon: '📝', title: `Finish and send estimate ${draftEst.number}`, why: 'It’s saved as a draft. The customer can’t see it yet.', act: ['Open the estimate', () => openDoc(j.id, draftEst.id)] };
       else step = { icon: '📝', title: 'Send an estimate', why: `Put together the price for ${first}. They can approve it with one tap.`,
@@ -484,6 +489,81 @@
     drawerRoot.replaceChildren(el('div', { class: 'drawer', onclick: (e) => { if (e.target === e.currentTarget) close(); } }, panel));
     panel.scrollTop = scroll;
     document.body.style.overflow = 'hidden';
+  }
+
+  /* ---------- office enters a new job (phone call, walk-in…) ---------- */
+  function newJobForm() {
+    // Customers who already have an app account (so the job shows on their My jobs page).
+    const accounts = [...new Map(jobs.filter((j) => j.hasAccount && j.buyerId).map((j) => [j.buyerId, { id: j.buyerId, ...j.buyer }])).values()];
+    const digitsOf = (v) => String(v || '').replace(/\D/g, '');
+    const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const nameIn = el('input', { name: 'name', autocomplete: 'off', required: true });
+    const phoneIn = el('input', { name: 'phone', type: 'tel', inputmode: 'tel', autocomplete: 'off', placeholder: '(555) 123-4567' });
+    const emailIn = el('input', { name: 'email', type: 'email', inputmode: 'email', autocomplete: 'off', placeholder: 'Optional' });
+    const matchBox = el('div');
+    let match = null;
+    const findMatch = () => {
+      const ph = digitsOf(phoneIn.value), em = emailIn.value.trim().toLowerCase();
+      match = accounts.find((a) => (ph.length >= 10 && digitsOf(a.phone) === ph) || (em && a.email.toLowerCase() === em)) || null;
+      matchBox.replaceChildren(...(match ? [el('label', { class: 'match-box' },
+        el('input', { type: 'checkbox', name: 'useAccount', checked: true }),
+        el('span', {}, el('b', {}, `Existing customer: ${match.name}`), el('span', { class: 'muted small', style: 'display:block' }, 'Add this job to their account so they see it in My jobs.')))] : []));
+      if (match && !nameIn.value.trim()) nameIn.value = match.name;
+    };
+    phoneIn.addEventListener('input', findMatch);
+    emailIn.addEventListener('input', findMatch);
+
+    const sortedCrew = crew.filter((c) => c.active).sort((a, b) => a.name.localeCompare(b.name));
+    const tradeSel = el('select', { name: 'trade', onchange: () => {
+      const tr = tradeSel.value;
+      [...crewSel.options].forEach((o) => { const c = crew.find((x) => x.id === o.value); if (c) o.textContent = `${c.trades.includes(tr) ? '★ ' : ''}${c.name}`; });
+    } }, ...TRADES.map((t) => el('option', { value: t.id }, `${t.icon} ${t.label}`)));
+    const crewSel = el('select', { name: 'contractorId' }, el('option', { value: '' }, '— Decide later —'),
+      ...sortedCrew.map((c) => el('option', { value: c.id }, `${c.trades.includes(TRADES[0].id) ? '★ ' : ''}${c.name}`)));
+
+    const form = el('form', { class: 'panel-body', novalidate: true, onsubmit: async (e) => {
+      e.preventDefault();
+      const f = new FormData(form);
+      const btn = form.querySelector('button[type=submit]');
+      btn.disabled = true;
+      try {
+        const id = await api.jobs.createForCustomer({
+          customerId: match && f.get('useAccount') === 'on' ? match.id : null,
+          name: f.get('name'), phone: f.get('phone'), email: f.get('email'),
+          trade: f.get('trade'), description: f.get('description'), address: f.get('address'), zip: f.get('zip'),
+          timeframe: f.get('timeframe'), contractorId: f.get('contractorId') || null, scheduledFor: f.get('scheduledFor') || null,
+        });
+        await load();
+        openLead(id, 'overview');
+      } catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; errorBox.scrollIntoView({ block: 'center' }); btn.disabled = false; }
+    } },
+      errorBox,
+      el('section', { class: 'card stack' },
+        el('h3', {}, '1. Customer'),
+        el('label', { class: 'field' }, 'Name', nameIn),
+        el('div', { class: 'two' }, el('label', { class: 'field' }, 'Phone', phoneIn), el('label', { class: 'field' }, 'Email', emailIn)),
+        matchBox),
+      el('section', { class: 'card stack' },
+        el('h3', {}, '2. The job'),
+        el('label', { class: 'field' }, 'Type of work', tradeSel),
+        el('label', { class: 'field' }, 'What needs to be done', el('textarea', { name: 'description', rows: 3, placeholder: 'e.g. Replace water heater in garage. 40 gal gas.' })),
+        el('div', { class: 'two' },
+          el('label', { class: 'field', style: 'grid-column:1/-1' }, 'Address', el('input', { name: 'address', autocomplete: 'off', placeholder: 'Street, city' })),
+          el('label', { class: 'field' }, 'ZIP', el('input', { name: 'zip', inputmode: 'numeric', maxlength: '5', autocomplete: 'off' })),
+          el('label', { class: 'field' }, 'Needed', el('select', { name: 'timeframe' }, ...TIMEFRAMES.map((t) => el('option', { value: t.id }, t.label)))))),
+      el('section', { class: 'card stack' },
+        el('h3', {}, '3. Crew & date ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(optional)')),
+        el('p', { class: 'muted small' }, 'Pick both and the job is scheduled right away. It shows up in that contractor’s crew login, and you can text them the details.'),
+        el('label', { class: 'field' }, 'Crew', el('span', { class: 'hint' }, '★ = does this kind of work'), crewSel),
+        el('label', { class: 'field' }, 'Date & time', el('input', { name: 'scheduledFor', type: 'datetime-local' }))),
+      el('button', { type: 'submit', class: 'gold block' }, 'Create job'),
+    );
+    drawerRoot.replaceChildren(el('div', { class: 'drawer', onclick: (e) => { if (e.target === e.currentTarget) closeDrawer(); } },
+      el('div', { class: 'panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'New job' },
+        el('div', { class: 'panel-head' }, el('button', { class: 'ghost small', onclick: closeDrawer }, '← Cancel'), el('b', {}, 'New job')),
+        form)));
+    document.body.style.overflow = 'hidden';
+    nameIn.focus();
   }
 
   /* ---------- estimate / invoice editor ---------- */
@@ -548,7 +628,9 @@
 
     const ctx = () => ({ job: j, customer: j.buyer, company: settings });
     const first = (j.buyer.name || '').split(' ')[0] || 'there';
-    const shareMsg = `Hi ${first}, your ${isInv ? 'invoice' : 'estimate'} ${doc.number} from ${settings.name || 'Top Hat Contracting'} is ready. View it here: ${siteUrl()}#/jobs`;
+    const shareMsg = j.hasAccount
+      ? `Hi ${first}, your ${isInv ? 'invoice' : 'estimate'} ${doc.number} from ${settings.name || 'Top Hat Contracting'} is ready. View it here: ${siteUrl()}#/jobs`
+      : `Hi ${first}, here is your ${isInv ? 'invoice' : 'estimate'} ${doc.number} from ${settings.name || 'Top Hat Contracting'}: ${docs.usd(docs.totals(doc).total)}.${isInv ? '' : ' Reply YES to approve.'} The PDF is attached.`;
 
     async function save() {
       const saved = await api.docs.save(jobId, current());
@@ -568,7 +650,8 @@
     actions.append(el('button', { type: 'button', class: 'ghost', onclick: () => docs.view(current(), ctx()) }, '👁 Preview / Print PDF'));
     if (!isNew && doc.status !== 'draft') {
       actions.append(el('div', { class: 'share-box' },
-        el('span', { class: 'small' }, 'The customer sees this in their My jobs. Let them know:'),
+        el('span', { class: 'small' }, j.hasAccount ? 'The customer sees this in their My jobs. Let them know:'
+          : `${first} doesn’t use the app. Tap “Preview / Print PDF” → Save PDF, then attach it to a text or email:`),
         el('div', { class: 'row' },
           j.buyer.phone ? el('a', { class: 'btn ghost small', style: 'flex:1', href: smsHref(j.buyer.phone, shareMsg) }, '💬 Text') : null,
           j.buyer.email ? el('a', { class: 'btn ghost small', style: 'flex:1', href: `mailto:${j.buyer.email}?subject=${encodeURIComponent(`${isInv ? 'Invoice' : 'Estimate'} ${doc.number} from ${settings.name || 'Top Hat Contracting'}`)}&body=${encodeURIComponent(shareMsg)}` }, '✉️ Email') : null)));

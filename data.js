@@ -262,6 +262,11 @@
   }
 
   const MAX_NOTE = 2000;
+  // The customer on a job: their app account if they have one, otherwise the contact the office entered.
+  const customerOf = (d, j) => {
+    const u = j.buyerId && d.users.find((x) => x.id === j.buyerId);
+    return u ? { name: u.name, email: u.email, phone: u.phone } : { name: j.contact?.name || 'Unknown', email: j.contact?.email || '', phone: j.contact?.phone || '' };
+  };
   // Crew note on a job, written by the contractor currently assigned. Office sees all; customers never do.
   function pushCrewNote(d, j, text) {
     text = String(text || '').trim();
@@ -318,6 +323,32 @@
         d.jobs.push(rec); writeDb(d);
         return rec;
       },
+      // Office: enter a job for a customer who called in. Optionally assign a crew and date right away.
+      async createForCustomer(input) {
+        const staff = await requireStaff();
+        const d = await db();
+        const name = String(input.name || '').trim();
+        if (!name) throw new Error('Enter the customer’s name.');
+        if (digits(input.phone).length < 10 && !/^\S+@\S+\.\S+$/.test(normEmail(input.email))) throw new Error('Enter a phone number (with area code) or an email so you can reach them.');
+        if (String(input.description || '').trim().length < 5) throw new Error('Describe the job in a few words.');
+        if (!String(input.address || '').trim()) throw new Error('Enter the job address.');
+        const existing = input.customerId ? d.users.find((u) => u.id === input.customerId && u.role === 'buyer') : null;
+        const now = Date.now();
+        const crewOk = input.contractorId && d.contractors.some((c) => c.id === input.contractorId);
+        const rec = {
+          id: uid(), number: d.nextNumber++, buyerId: existing ? existing.id : null,
+          contact: existing ? null : { name, phone: String(input.phone || '').trim(), email: normEmail(input.email) },
+          status: crewOk && input.scheduledFor ? 'scheduled' : 'qualifying', created: now, files: [], docs: [],
+          trade: input.trade || 'other', description: input.description.trim(), address: input.address.trim(), zip: String(input.zip || '').trim(),
+          timeframe: input.timeframe || '', budget: '', photos: [],
+          contractorId: crewOk ? input.contractorId : null, crewToken: crewOk ? newToken() : null, scheduledFor: input.scheduledFor || null,
+          price: null, crewPay: null, notes: '',
+          log: [{ at: now, text: `Job entered by ${staff.name} (office)` }],
+        };
+        if (crewOk) rec.log.push({ at: now, text: `Assigned to ${d.contractors.find((c) => c.id === input.contractorId).name}` });
+        d.jobs.push(rec); writeDb(d);
+        return rec.id;
+      },
       // Buyer view: their own jobs, without internal notes.
       async mine() {
         const u = await me();
@@ -354,8 +385,7 @@
         await requireStaff();
         const d = await db();
         return d.jobs.slice().sort((a, b) => b.created - a.created).map((j) => {
-          const b = d.users.find((u) => u.id === j.buyerId);
-          return { ...j, buyer: clean(b) || { name: 'Unknown', email: '', phone: '' } };
+          return { ...j, buyer: customerOf(d, j), hasAccount: !!j.buyerId };
         });
       },
       async update(id, patch) {
@@ -578,7 +608,7 @@
         const j = token && d.jobs.find((x) => x.crewToken && x.crewToken === token);
         if (!j || j.status === 'lost') return null;
         const c = d.contractors.find((x) => x.id === j.contractorId);
-        const b = d.users.find((u) => u.id === j.buyerId);
+        const b = customerOf(d, j);
         const mine = j.files.filter((f) => f.source === 'crew' && f.contractorId === j.contractorId);
         return {
           number: j.number, trade: j.trade, status: j.status, address: j.address, zip: j.zip,
@@ -692,7 +722,7 @@
         const { d, c } = await requireCrew();
         const showPay = d.settings.showCrewPay !== false;
         return d.jobs.filter((j) => j.contractorId === c.id && ['scheduled', 'in_progress', 'completed'].includes(j.status)).map((j) => {
-          const b = d.users.find((u) => u.id === j.buyerId) || {};
+          const b = customerOf(d, j);
           return {
             id: j.id, number: j.number, trade: j.trade, status: j.status, scheduledFor: j.scheduledFor,
             address: j.address, zip: j.zip, description: j.description,

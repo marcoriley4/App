@@ -13,6 +13,7 @@ A job-request app for Top Hat Contracting. Customers post a job and create an ac
 **Top Hat staff** (`admin.html`)
 - **Today** (the home screen) shows only what needs attention: new leads to call (with a Call button), new crew notes, approved estimates that need a crew and date, finished jobs that need an invoice, unpaid invoices, estimates waiting on the customer, and jobs on the schedule today and tomorrow. When nothing is waiting, it says "All caught up."
 - **Each job opens with a summary** (customer, address, date, crew, price and profit) and a **Next step** card with one clear button: Call the customer → Send an estimate → Schedule a crew → Text the job to the crew → Mark finished → Send the invoice → Record payment. A **progress bar** (New → Qualifying → Scheduled → Working → Done) shows where the job is, and you can tap it to change the status. The rest of the job is split into tabs: **Overview, Money, Files, Notes & history**.
+- **+ New job** (on Today and Jobs): enter a job for a customer who called or walked in. Fill in the customer's name, phone and optional email, the job, and optionally a crew and date. With a crew and date, the job is scheduled right away and shows up in that contractor's crew login. If the phone or email matches an existing customer account, the job is added to that account so they see it in My jobs. Customers entered this way don't have an app login, so estimates and invoices go to them as a PDF by text or email, and you tap **Mark approved** when they say yes.
 - **Jobs** lists every job with filters (Open, New, Scheduled, Done, Closed, All) and search. "Open" includes finished jobs that still need an invoice or payment. Cards show flags only when something needs attention.
 - **Leads:** every request, with counts by status, an open-job value total, filters and search.
 - **Lead details:** call, text or email the customer in one tap. Set the status, pick a crew (★ marks crews who do that kind of work), set the date, and keep internal notes the customer never sees. Each lead also keeps an activity history.
@@ -75,7 +76,7 @@ Who-sees-what is enforced by the database (row-level security and storage polici
 - Prices, crew pay and notes live in the staff-only `job_private` table.
 - Crew reach a job only through its private upload code.
 
-`supabase/` also holds the security test that runs the schema against Postgres and checks each rule (109 checks).
+`supabase/` also holds the security test that runs the schema against Postgres and checks each rule (115 checks).
 
 ## Run it locally
 

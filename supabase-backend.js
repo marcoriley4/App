@@ -175,7 +175,8 @@
             price: num(p.price), crewPay: num(p.crew_pay), notes: p.notes || '', crewToken: p.crew_token || null,
             files: filesBy[j.id] || [], docs: docsBy[j.id] || [],
             crewNotes: notesBy[j.id] || [], crewNotesSeenAt: ms(p.crew_notes_seen_at) || 0,
-            buyer: peopleBy[j.buyer_id] || { name: 'Unknown', email: '', phone: '' },
+            buyer: peopleBy[j.buyer_id] || { name: j.contact_name || 'Unknown', email: j.contact_email || '', phone: j.contact_phone || '' },
+            hasAccount: !!j.buyer_id,
           };
         });
       },
@@ -184,6 +185,27 @@
         const rows = must(await sb.from('crew_notes').select('id, by_name, text, created_at').eq('job_id', id).order('created_at', { ascending: false }));
         await sb.from('job_private').update({ crew_notes_seen_at: new Date().toISOString() }).eq('job_id', id);
         return rows.map((n) => ({ id: n.id, at: ms(n.created_at), by: n.by_name, text: n.text }));
+      },
+      // Office: enter a job for a customer who called in; optionally assign crew and date.
+      async createForCustomer(input) {
+        const staff = await requireStaff();
+        const name = String(input.name || '').trim();
+        const phone = String(input.phone || '').trim();
+        const email = normEmail(input.email);
+        if (!name) throw new Error('Enter the customer’s name.');
+        if (phone.replace(/\D/g, '').length < 10 && !/^\S+@\S+\.\S+$/.test(email)) throw new Error('Enter a phone number (with area code) or an email so you can reach them.');
+        if (String(input.description || '').trim().length < 5) throw new Error('Describe the job in a few words.');
+        if (!String(input.address || '').trim()) throw new Error('Enter the job address.');
+        const scheduled = input.contractorId && input.scheduledFor;
+        const row = must(await sb.from('jobs').insert({
+          buyer_id: input.customerId || null,
+          contact_name: input.customerId ? '' : name, contact_phone: input.customerId ? '' : phone, contact_email: input.customerId ? '' : email,
+          entered_by: staff.name || 'Office',
+          trade: input.trade || 'other', description: input.description.trim(), address: input.address.trim(), zip: String(input.zip || '').trim(),
+          timeframe: input.timeframe || '', status: scheduled ? 'scheduled' : 'qualifying',
+          contractor_id: input.contractorId || null, scheduled_for: input.scheduledFor || null,
+        }).select('id').single());
+        return row.id;
       },
       async log(id) {
         await requireStaff();
