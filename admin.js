@@ -824,7 +824,7 @@
       el('label', { class: 'row', style: 'font-weight:600;align-items:flex-start' },
         el('input', { type: 'checkbox', name: 'showCrewPay', checked: settings.showCrewPay !== false, style: 'width:22px;height:22px;flex-shrink:0;min-height:0' }),
         el('span', {}, 'Show crew their pay', el('span', { class: 'hint', style: 'display:block;font-weight:400' }, 'Crew see the “crew pay” you set on each of their jobs. They never see the customer price.'))),
-      f('paymentInstructions', 'How customers can pay', { rows: 4 }, 'Shown on every invoice. Include your Zelle phone or email, Venmo and Cash App names, and who checks are payable to.'),
+      f('paymentInstructions', 'Payment terms & how to pay', { rows: 8 }, 'Printed on every estimate and invoice. For example your deposit and payment schedule, Zelle, ACH details, and who checks are payable to.'),
       f('estimateTerms', 'Terms on estimates', { rows: 2 }),
       f('invoiceTerms', 'Notes on invoices', { rows: 2 }),
       el('button', { type: 'submit' }, 'Save'),
