@@ -1005,11 +1005,28 @@
     location.href = dest;
   }
   // Sample accounts for trying each side of the app (preview mode only).
+  // Black-and-white line icons that match the Top Hat logo.
+  const ICONS = {
+    phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/>',
+    house: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9.5 21v-6h5v6"/>',
+    worker: '<path d="M6.5 10.5a5.5 5.5 0 0 1 11 0"/><path d="M4.5 10.5h15"/><path d="M12 5v2.5"/><path d="M8 10.5v1.5a4 4 0 0 0 8 0v-1.5"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/>',
+    dollar: '<circle cx="12" cy="12" r="9"/><path d="M15 9.4c-.6-.9-1.7-1.4-3-1.4-1.7 0-3 .9-3 2s1.3 1.8 3 2 3 .9 3 2-1.3 2-3 2c-1.3 0-2.4-.5-3-1.4"/><path d="M12 6.5v11"/>',
+    toolbox: '<path d="M3 9h18v10H3z"/><path d="M8 9V6h8v3"/><path d="M3 13.5h18"/><path d="M10 13.5v2h4v-2"/>',
+  };
+  function icon(name) {
+    const s = document.createElement('span');
+    s.className = 'line-ic';
+    s.setAttribute('aria-hidden', 'true');
+    if (name === 'logo') { const img = document.createElement('img'); img.src = 'img/logo-mark.png'; img.alt = ''; s.append(img); s.classList.add('logo-ic'); return s; }
+    s.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ''}</svg>`;
+    return s;
+  }
+
   const DEMO_ACCOUNTS = [
-    { icon: '🎩', label: 'Top Hat office', sub: 'Staff: leads, crew, estimates & invoices', email: 'office@tophat.demo', password: 'tophat' },
-    { icon: '📞', label: 'Salesperson', sub: 'Maria: her own clients, calls & estimates', email: 'maria@tophat.demo', password: 'sales1234' },
-    { icon: '🏠', label: 'Customer', sub: 'Dana: her jobs, estimates & invoices', email: 'dana@example.com', password: 'demo1234' },
-    { icon: '👷', label: 'Contractor', sub: 'Ray: his assigned jobs & pay', email: 'ray@tophat.demo', password: 'crew1234' },
+    { icon: 'logo', label: 'Top Hat office', sub: 'Staff: leads, crew, estimates & invoices', email: 'office@tophat.demo', password: 'tophat' },
+    { icon: 'phone', label: 'Salesperson', sub: 'Maria: her own clients, calls & estimates', email: 'maria@tophat.demo', password: 'sales1234' },
+    { icon: 'house', label: 'Customer', sub: 'Dana: her jobs, estimates & invoices', email: 'dana@example.com', password: 'demo1234' },
+    { icon: 'worker', label: 'Contractor', sub: 'Ray: his assigned jobs & pay', email: 'ray@tophat.demo', password: 'crew1234' },
   ];
   function loginForm({ title = 'Log in', note = '', onCustomer } = {}) {
     const errorBox = el('div', { class: 'error', hidden: !note, role: 'alert' }, note);
@@ -1044,10 +1061,10 @@
         el('p', { class: 'muted small' }, 'Sample accounts so you can see every side of the app.'),
         demoError,
         ...DEMO_ACCOUNTS.map((a) => el('button', { type: 'button', class: 'demo-acct', onclick: (e) => signIn(a.email, a.password, e.currentTarget, true) },
-          el('span', { class: 'ic' }, a.icon),
+          icon(a.icon),
           el('span', { class: 'body' }, el('b', {}, a.label), el('span', { class: 'muted small' }, a.sub)),
           el('span', { class: 'muted' }, '→')))));
   }
 
-  window.TH = { STAGES, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+  window.TH = { STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();
