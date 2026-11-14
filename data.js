@@ -777,7 +777,12 @@
   function goHome(u, onCustomer) {
     const dest = HOME[u.role] || HOME.buyer;
     if (u.role === 'buyer' && onCustomer) return onCustomer(u);
-    if (dest.split('#')[0] === here()) { location.hash = dest.split('#')[1] || ''; location.reload(); return; }
+    if (dest.split('#')[0] === here()) {
+      const h = dest.split('#')[1];
+      if (h) location.hash = h; // otherwise keep the tab they were heading to
+      location.reload();
+      return;
+    }
     location.href = dest;
   }
   // Sample accounts for trying each side of the app (preview mode only).

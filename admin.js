@@ -6,7 +6,7 @@
   const drawerRoot = document.getElementById('drawerRoot');
   const OPEN = ['new', 'qualifying', 'scheduled', 'in_progress'];
 
-  let tab = 'leads';
+  let tab = 'today';
   let filter = 'open';
   let search = '';
   let jobs = [];
@@ -66,136 +66,209 @@
   }
 
   /* ---------- main ---------- */
+  const MAIN_TABS = [['today', 'Today'], ['jobs', 'Jobs'], ['crew', 'Crew'], ['business', 'Business']];
+  if (MAIN_TABS.some(([id]) => id === location.hash.slice(1))) tab = location.hash.slice(1);
+
+  // What needs attention, grouped in plain language. Shared by Today and the job cards.
+  const hasNewNote = (j) => (j.crewNotes || []).some((n) => n.at > (j.crewNotesSeenAt || 0));
+  const estWith = (j, st) => (j.docs || []).find((d) => d.type === 'estimate' && d.status === st);
+  const liveInvoices = (j) => (j.docs || []).filter((d) => d.type === 'invoice' && d.status !== 'void');
+  const needsInvoice = (j) => j.status === 'completed' && !liveInvoices(j).some((d) => d.status !== 'draft');
+  const needsScheduling = (j) => ['new', 'qualifying'].includes(j.status) && !!estWith(j, 'approved');
+  const dayKey = (ms) => { const x = new Date(ms); return new Date(x - x.getTimezoneOffset() * 60e3).toISOString().slice(0, 10); };
+  const timeOf = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const crewName = (j) => find(crew, j.contractorId)?.name;
+
+  function buckets() {
+    const open = jobs.filter((j) => j.status !== 'lost');
+    const today = dayKey(Date.now()), tomorrow = dayKey(Date.now() + 86400e3);
+    return [
+      { id: 'new', icon: '🔔', title: 'New leads to call', why: 'Call them to talk through the job.', call: true,
+        list: open.filter((j) => j.status === 'new').sort((a, b) => a.created - b.created),
+        line: (j) => `${tradeOf(j.trade).label} · came in ${ago(j.created)}` },
+      { id: 'notes', icon: '💬', title: 'New notes from your crew', why: 'Read what your crew wrote on the job.',
+        list: jobs.filter(hasNewNote), line: (j) => `${crewName(j) || 'Crew'} wrote a note` },
+      { id: 'schedule', icon: '✅', title: 'Approved: needs a crew & date', why: 'The customer said yes. Pick who’s doing it and when.',
+        list: open.filter(needsScheduling), line: (j) => `${tradeOf(j.trade).label}${j.price != null ? ' · ' + money(j.price) : ''}` },
+      { id: 'invoice', icon: '🏁', title: 'Finished: send the invoice', why: 'The work is done but no invoice has gone out.',
+        list: jobs.filter(needsInvoice), line: (j) => `${tradeOf(j.trade).label}${j.price != null ? ' · ' + money(j.price) : ''}` },
+      { id: 'unpaid', icon: '💵', title: 'Waiting for payment', why: 'Invoices with money still owed.',
+        list: jobs.filter((j) => owedOn(j) > 0).sort((a, b) => owedOn(b) - owedOn(a)),
+        line: (j) => `${docs.usd(owedOn(j))} due${liveInvoices(j).some((d) => docs.state(d) === 'overdue') ? ' · OVERDUE' : ''}` },
+      { id: 'waiting', icon: '⏳', title: 'Waiting on the customer', why: 'Estimates sent, not approved yet.', info: true,
+        list: open.filter((j) => estWith(j, 'sent')), line: (j) => `${estWith(j, 'sent').number} · ${docs.usd(docs.totals(estWith(j, 'sent')).total)}` },
+      { id: 'soon', icon: '📅', title: 'On the schedule today & tomorrow', why: 'Make sure the crew is set.', info: true,
+        list: open.filter((j) => ['scheduled', 'in_progress'].includes(j.status) && j.scheduledFor && [today, tomorrow].includes(j.scheduledFor.slice(0, 10)))
+          .sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor)),
+        line: (j) => `${j.scheduledFor.slice(0, 10) === today ? 'Today' : 'Tomorrow'} ${timeOf(j.scheduledFor)} · ${crewName(j) || 'No crew yet'}` },
+    ];
+  }
+  const attentionCount = () => buckets().filter((b) => !b.info).reduce((t, b) => t + b.list.length, 0);
+
   function render() {
-    const tabs = el('div', { class: 'tabs-bar', role: 'tablist', style: 'margin-top:8px' },
-      ...[['leads', 'Leads', jobs.filter((j) => j.status === 'new').length], ['crew', 'Crew', crew.filter((c) => c.active).length], ['business', 'Business', 0]].map(([id, label, n]) =>
-        el('button', { role: 'tab', 'aria-current': String(tab === id), onclick: () => { tab = id; render(); } }, label, n ? el('span', { class: 'count' }, String(n)) : null)));
-    view.replaceChildren(tabs, el('div', { class: 'stack', style: 'margin:16px 0' }, tab === 'leads' ? leadsView() : tab === 'crew' ? crewView() : businessView()));
+    const todo = attentionCount();
+    const newCount = jobs.filter((j) => j.status === 'new').length;
+    const tabs = el('div', { class: 'tabs-bar main-tabs', role: 'tablist', style: 'margin-top:8px' },
+      ...MAIN_TABS.map(([id, label]) => el('button', { role: 'tab', 'aria-current': String(tab === id), onclick: () => { tab = id; history.replaceState(null, '', '#' + id); render(); } },
+        label,
+        id === 'today' && todo ? el('span', { class: 'count hot' }, String(todo)) : null,
+        id === 'jobs' && newCount ? el('span', { class: 'count' }, String(newCount)) : null)));
+    const body = tab === 'today' ? todayView() : tab === 'jobs' ? leadsView() : tab === 'crew' ? crewView() : businessView();
+    view.replaceChildren(tabs, el('div', { class: 'stack', style: 'margin:16px 0' }, body));
   }
 
-  /* ---------- leads ---------- */
+  /* ---------- today ---------- */
+  function todayView() {
+    const bs = buckets();
+    const today = dayKey(Date.now()), weekEnd = dayKey(Date.now() + 7 * 86400e3);
+    const thisWeek = jobs.filter((j) => ['scheduled', 'in_progress'].includes(j.status) && j.scheduledFor && j.scheduledFor.slice(0, 10) >= today && j.scheduledFor.slice(0, 10) <= weekEnd).length;
+    const kpi = (v, k) => el('div', { class: 'kpi' }, el('b', {}, String(v)), el('span', {}, k));
+    const h = new Date().getHours();
+    const sections = bs.filter((b) => b.list.length).map((b) => el('section', { class: 'card todo' + (b.info ? ' info' : '') },
+      el('div', { class: 'todo-head' },
+        el('span', { class: 'todo-ic' }, b.icon),
+        el('div', { style: 'flex:1;min-width:0' }, el('h3', {}, b.title), el('p', { class: 'muted small' }, b.why)),
+        el('span', { class: 'todo-count' }, String(b.list.length))),
+      el('div', { class: 'todo-list' }, ...b.list.slice(0, 8).map((j) => el('div', { class: 'todo-row' },
+        el('button', { type: 'button', class: 'todo-open', onclick: () => openLead(j.id, 'overview') },
+          el('b', {}, j.buyer.name), el('span', { class: 'muted small' }, `${jobNo(j)} · ${b.line(j)}`)),
+        b.call && j.buyer.phone ? el('a', { class: 'btn gold small', href: telHref(j.buyer.phone) }, '📞 Call')
+          : el('button', { type: 'button', class: 'ghost small', onclick: () => openLead(j.id, 'overview') }, 'Open')))),
+      b.list.length > 8 ? el('p', { class: 'muted small', style: 'margin-top:8px' }, `+ ${b.list.length - 8} more in Jobs`) : null));
+    return [
+      el('div', {}, el('h1', {}, h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'),
+        el('p', { class: 'muted' }, new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }))),
+      el('div', { class: 'kpis three' }, kpi(bs[0].list.length, 'New leads'), kpi(thisWeek, 'Jobs this week'), kpi(docs.usd(jobs.reduce((t, j) => t + owedOn(j), 0)), 'Owed to you')),
+      ...(sections.length ? sections : [el('div', { class: 'card caught-up' },
+        el('div', { style: 'font-size:2.4rem' }, '🎉'), el('h2', {}, 'All caught up'), el('p', { class: 'muted' }, 'Nothing needs your attention right now.'))]),
+      el('button', { class: 'ghost block', onclick: () => { tab = 'jobs'; history.replaceState(null, '', '#jobs'); render(); } }, 'See all jobs →'),
+    ];
+  }
+
+  /* ---------- jobs list ---------- */
+  const FILTERS = [
+    ['open', 'Open', (j) => OPEN.includes(j.status) || needsInvoice(j) || owedOn(j) > 0], // not finished until invoiced and paid
+    ['new', 'New', (j) => j.status === 'new'],
+    ['active', 'Scheduled', (j) => ['scheduled', 'in_progress'].includes(j.status)],
+    ['completed', 'Done', (j) => j.status === 'completed'],
+    ['lost', 'Closed', (j) => j.status === 'lost'],
+    ['all', 'All', () => true],
+  ];
   function leadsView() {
-    const count = (s) => jobs.filter((j) => j.status === s).length;
-    const pipeline = jobs.filter((j) => OPEN.includes(j.status) && j.price).reduce((s, j) => s + Number(j.price), 0);
-    const kpis = el('div', { class: 'kpis' },
-      ...[[count('new'), 'New leads'], [count('scheduled') + count('in_progress'), 'Scheduled / active'], [money(pipeline), 'Open job value'], [docs.usd(jobs.reduce((t, j) => t + owedOn(j), 0)), 'Unpaid invoices']]
-        .map(([v, k]) => el('div', { class: 'kpi' }, el('b', {}, String(v)), el('span', {}, k))));
-
-    const filters = [['open', 'Open', jobs.filter((j) => OPEN.includes(j.status)).length], ...STATUSES.map((s) => [s.id, s.label, count(s.id)]), ['all', 'All', jobs.length]];
-    const filterBar = el('div', { class: 'tabs-bar' }, ...filters.map(([id, label, n]) =>
-      el('button', { 'aria-current': String(filter === id), onclick: () => { filter = id; render(); } }, label, el('span', { class: 'count' }, String(n)))));
-
+    if (!FILTERS.some(([id]) => id === filter)) filter = 'open';
+    const filterBar = el('div', { class: 'tabs-bar' }, ...FILTERS.map(([id, label, fn]) =>
+      el('button', { 'aria-current': String(filter === id), onclick: () => { filter = id; render(); } }, label, el('span', { class: 'count' }, String(jobs.filter(fn).length)))));
     const matches = (j, q) => !q || [jobNo(j), String(j.number), j.buyer.name, j.buyer.phone, j.buyer.email, j.address, j.zip, j.description, tradeOf(j.trade).label].join(' ').toLowerCase().includes(q);
-    const inFilter = (j) => filter === 'all' || (filter === 'open' ? OPEN.includes(j.status) : j.status === filter);
+    const inFilter = FILTERS.find(([id]) => id === filter)[2];
     const renderList = () => {
       const q = search.trim().toLowerCase();
       const list = jobs.filter((j) => inFilter(j) && matches(j, q));
       return el('div', { class: 'leads' },
-        list.length ? list.map(leadCard) : [el('div', { class: 'card muted' }, q ? 'No leads match your search.' : 'No leads here right now.')]);
+        list.length ? list.map(leadCard) : [el('div', { class: 'card muted' }, q ? 'No jobs match your search.' : 'No jobs here right now.')]);
     };
     let listWrap = renderList();
-    const searchBox = el('input', { type: 'search', placeholder: 'Search job #, name, phone, address…', value: search, 'aria-label': 'Search leads',
+    const searchBox = el('input', { type: 'search', placeholder: 'Search name, phone, address, job #…', value: search, 'aria-label': 'Search jobs',
       oninput: (e) => { search = e.target.value; const list = renderList(); listWrap.replaceWith(list); listWrap = list; } });
-    return [kpis, filterBar, searchBox, listWrap];
+    return [el('h2', {}, 'Jobs'), filterBar, searchBox, listWrap];
   }
 
   function leadCard(j) {
     const t = tradeOf(j.trade);
     const c = find(crew, j.contractorId);
+    const flags = [
+      hasNewNote(j) ? ['💬 New crew note', 'hot'] : null,
+      needsScheduling(j) ? ['✅ Approved, needs scheduling', 'hot'] : null,
+      needsInvoice(j) ? ['🏁 Needs invoice', 'hot'] : null,
+      owedOn(j) > 0 ? [`💵 ${docs.usd(owedOn(j))} due`, 'hot'] : null,
+      estWith(j, 'sent') ? ['⏳ Estimate sent', ''] : null,
+    ].filter(Boolean);
     return el('button', { class: 'lead' + (j.status === 'new' ? ' new-dot' : ''), onclick: () => openLead(j.id) },
       el('span', { class: 'ic' }, t.icon),
       el('span', { class: 'body' },
-        el('span', { class: 'line1' }, el('b', {}, j.buyer.name), el('span', { class: 'muted small' }, '· ' + t.label), el('span', { class: 'spacer' }),
-          el('span', { class: `pill s-${j.status}` }, statusOf(j.status).label)),
-        el('span', { class: 'desc' }, j.description),
-        el('span', { class: 'meta' },
-          el('span', { style: 'font-weight:600' }, jobNo(j)),
-          el('span', {}, '📍 ' + (j.zip || j.address)),
-          el('span', {}, '⏱ ' + (find(TIMEFRAMES, j.timeframe)?.label || '—')),
-          j.scheduledFor ? el('span', {}, '📅 ' + fmtWhen(j.scheduledFor)) : null,
-          c ? el('span', {}, '👷 ' + c.name) : null,
-          j.files.length ? el('span', {}, `📁 ${j.files.length}`) : null,
-          (j.crewNotes || []).some((n) => n.at > (j.crewNotesSeenAt || 0)) ? el('span', { style: 'color:var(--warn);font-weight:600' }, '💬 New crew note')
-            : (j.crewNotes || []).length ? el('span', {}, `💬 ${j.crewNotes.length}`) : null,
-          owedOn(j) > 0 ? el('span', { style: 'color:var(--warn);font-weight:600' }, `🧾 ${docs.usd(owedOn(j))} due`)
-            : (j.docs || []).some((d) => d.type === 'estimate' && d.status === 'sent') ? el('span', {}, '📝 Estimate sent') : null,
-          el('span', {}, ago(j.created)))),
+        el('span', { class: 'line1' }, el('b', {}, j.buyer.name), el('span', { class: 'spacer' }), el('span', { class: `pill s-${j.status}` }, statusOf(j.status).label)),
+        el('span', { class: 'muted small' }, `${t.label} · ${jobNo(j)} · ${j.zip || j.address}${j.status === 'new' ? ' · ' + ago(j.created) : ''}`),
+        j.scheduledFor || c ? el('span', { class: 'small' }, [j.scheduledFor ? '📅 ' + fmtWhen(j.scheduledFor) : null, c ? '👷 ' + c.name : null].filter(Boolean).join('   ')) : null,
+        flags.length ? el('span', { class: 'flags' }, ...flags.map(([txt, cls]) => el('span', { class: 'flag ' + cls }, txt))) : null),
     );
   }
 
-  /* ---------- lead detail ---------- */
-  async function openLead(id) {
+  /* ---------- one job ---------- */
+  let leadTab = 'overview';
+  let openId = null;
+  async function openLead(id, tabName) {
     const j = jobs.find((x) => x.id === id);
     if (!j) return;
+    if (tabName) leadTab = tabName; else if (openId !== id) leadTab = 'overview';
+    openId = id;
     releaseUrls();
     const [files, history, jobDocs, crewNotes] = await Promise.all([api.files.list(j.id), api.jobs.log(j.id), api.docs.list(j.id), api.jobs.crewNotes(j.id)]);
-    j.crewNotesSeenAt = Date.now(); // opened → no longer "new" in the list
+    j.crewNotesSeenAt = Date.now(); // opened → no longer "new"
     fileUrls = files.map((f) => f.url).filter(Boolean);
     const t = tradeOf(j.trade);
     const close = closeDrawer;
+    const b = j.buyer;
+    const first = (b.name || '').split(' ')[0] || 'the customer';
+    const assigned = find(crew, j.contractorId);
 
     const savedNote = el('span', { class: 'saved-note', hidden: true }, 'Saved ✓');
     const flashSaved = () => { savedNote.hidden = false; setTimeout(() => { savedNote.hidden = true; }, 1600); };
     const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
-
     async function update(patch) {
       try {
         await api.jobs.update(j.id, patch);
         await load();
         flashSaved();
-        openLead(j.id); // re-render with fresh data
+        openLead(j.id);
       } catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
     }
 
-    // Contact
-    const b = j.buyer;
-    const contact = el('section', { class: 'card stack' },
+    // Summary: who, where, when, crew, money, at a glance.
+    const summary = el('section', { class: 'card stack summary' },
       el('div', { class: 'row' }, el('span', { class: 'avatar' }, initials(b.name)),
-        el('div', {}, el('h3', {}, b.name), el('p', { class: 'muted small' }, [b.phone, b.email].filter(Boolean).join(' · ')))),
+        el('div', { style: 'flex:1;min-width:0' }, el('h2', {}, b.name), el('p', { class: 'muted small' }, `${t.icon} ${t.label} · ${jobNo(j)}`))),
       el('div', { class: 'contact' },
-        b.phone ? el('a', { class: 'btn gold', href: telHref(b.phone) }, '📞 Call') : null,
-        b.phone ? el('a', { class: 'btn ghost', href: smsHref(b.phone) }, '💬 Text') : null,
-        b.email ? el('a', { class: 'btn ghost', href: `mailto:${b.email}?subject=${encodeURIComponent('Your ' + t.label.toLowerCase() + ' request with Top Hat Contracting')}` }, '✉️ Email') : null),
+        b.phone ? el('a', { class: 'btn ghost small', href: telHref(b.phone) }, '📞 Call') : null,
+        b.phone ? el('a', { class: 'btn ghost small', href: smsHref(b.phone) }, '💬 Text') : null,
+        b.email ? el('a', { class: 'btn ghost small', href: `mailto:${b.email}?subject=${encodeURIComponent('Your ' + t.label.toLowerCase() + ' request with Top Hat Contracting')}` }, '✉️ Email') : null),
+      el('ul', { class: 'facts' },
+        el('li', {}, el('span', { class: 'fi' }, '📍'), el('a', { href: 'https://maps.google.com/?q=' + encodeURIComponent(`${j.address} ${j.zip}`), target: '_blank', rel: 'noopener' }, `${j.address} ${j.zip}`)),
+        el('li', {}, el('span', { class: 'fi' }, '📅'), j.scheduledFor ? el('span', {}, fmtWhen(j.scheduledFor)) : el('span', { class: 'muted' }, 'Not scheduled yet')),
+        el('li', {}, el('span', { class: 'fi' }, '👷'), assigned ? el('span', {}, assigned.name) : el('span', { class: 'muted' }, 'No crew yet')),
+        el('li', {}, el('span', { class: 'fi' }, '💲'), j.price != null
+          ? el('span', {}, `${money(j.price)} customer price`, j.crewPay != null ? el('span', { class: 'muted' }, ` · ${money(j.price - j.crewPay)} profit`) : null)
+          : el('span', { class: 'muted' }, 'No price yet'))),
     );
 
-    // Details
+    // What the customer asked for
     const details = el('section', { class: 'card stack' },
-      el('h3', {}, 'Job details'),
+      el('h3', {}, 'What the customer asked for'),
+      el('p', { style: 'white-space:pre-wrap' }, j.description),
       el('dl', { class: 'dl' },
-        el('dt', {}, 'Work'), el('dd', {}, `${t.icon} ${t.label}`),
-        el('dt', {}, 'Description'), el('dd', { style: 'white-space:pre-wrap' }, j.description),
-        el('dt', {}, 'Address'), el('dd', {}, el('a', { href: 'https://maps.google.com/?q=' + encodeURIComponent(`${j.address} ${j.zip}`), target: '_blank', rel: 'noopener' }, `${j.address} ${j.zip}`)),
-        el('dt', {}, 'When'), el('dd', {}, find(TIMEFRAMES, j.timeframe)?.label || '—'),
+        el('dt', {}, 'Needed'), el('dd', {}, find(TIMEFRAMES, j.timeframe)?.label || '—'),
         el('dt', {}, 'Budget'), el('dd', {}, find(BUDGETS, j.budget)?.label || 'Not sure yet'),
         el('dt', {}, 'Requested'), el('dd', {}, `${new Date(j.created).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })} (${ago(j.created)})`)),
     );
 
-    // Status
-    const status = el('section', { class: 'card stack' },
-      el('div', { class: 'row' }, el('h3', {}, 'Status'), el('span', { class: 'spacer' }), savedNote),
-      el('div', { class: 'status-pick' }, ...STATUSES.map((s) =>
-        el('button', { type: 'button', 'aria-pressed': String(j.status === s.id), onclick: () => j.status !== s.id && update({ status: s.id }) }, s.label))),
-      el('p', { class: 'muted small' }, `The customer sees: “${statusOf(j.status).buyer}”`),
+    // Progress: tap a step to change it.
+    const FLOW = [['new', 'New'], ['qualifying', 'Qualifying'], ['scheduled', 'Scheduled'], ['in_progress', 'Working'], ['completed', 'Done']];
+    const at = FLOW.findIndex(([s]) => s === j.status);
+    const progress = el('section', { class: 'card stack' },
+      el('div', { class: 'row' }, el('h3', {}, 'Progress'), el('span', { class: 'spacer' }), savedNote),
+      el('div', { class: 'stepper', role: 'group', 'aria-label': 'Job status' }, ...FLOW.map(([s, label], i) =>
+        el('button', { type: 'button', class: i < at ? 'done' : i === at ? 'on' : '', 'aria-pressed': String(i === at), 'aria-label': `Status: ${label}`, onclick: () => j.status !== s && update({ status: s }) },
+          el('span', { class: 'dot' }, i < at ? '✓' : String(i + 1)), el('span', { class: 'lbl' }, label)))),
+      el('div', { class: 'row' },
+        el('p', { class: 'muted small', style: 'flex:1' }, j.status === 'lost' ? 'Closed as “Not a fit”. Tap a step to reopen.' : `The customer sees: “${statusOf(j.status).buyer}”`),
+        j.status !== 'lost' ? el('button', { type: 'button', class: 'link small', style: 'color:var(--bad)', onclick: () => { if (confirm('Close this job as “Not a fit”?')) update({ status: 'lost' }); } }, 'Not a fit') : null),
     );
 
-    // Notes from the crew (customers never see these)
-    const crewNotesCard = el('section', { class: 'card stack' },
-      el('div', { class: 'row' }, el('h3', {}, '💬 Crew notes'), el('span', { class: 'spacer' }), crewNotes.length ? el('span', { class: 'pill' }, String(crewNotes.length)) : null),
-      crewNotes.length ? el('ul', { class: 'crew-notes' }, ...crewNotes.map((n) => el('li', {},
-        el('span', { class: 'muted small' }, `${n.by} · ${new Date(n.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${ago(n.at)})`),
-        el('p', {}, n.text))))
-        : el('p', { class: 'muted small' }, 'No notes from the crew yet. The contractor on this job can add notes from their crew login or the job’s photo link.'),
-      el('p', { class: 'muted small' }, 'Customers never see crew notes.'),
-    );
-
-    // Set up the job
+    // Crew & schedule
     const sortedCrew = crew.filter((c) => c.active || c.id === j.contractorId)
       .sort((a, c) => (c.trades.includes(j.trade) - a.trades.includes(j.trade)) || a.name.localeCompare(c.name));
     const crewSel = el('select', { name: 'contractorId' },
       el('option', { value: '' }, '— Not assigned —'),
       ...sortedCrew.map((c) => el('option', { value: c.id, selected: c.id === j.contractorId }, `${c.trades.includes(j.trade) ? '★ ' : ''}${c.name}`)));
     const whenInput = el('input', { type: 'datetime-local', name: 'scheduledFor', value: j.scheduledFor || '' });
-    const assigned = find(crew, j.contractorId);
     const crewLink = j.crewToken ? new URL(`crew.html?t=${j.crewToken}`, location.href).href : null;
     // Sent to the crew lead. Never include prices, budget or notes here.
     const dispatchText = assigned && [
@@ -206,26 +279,35 @@
       `Details: ${j.description}`,
       crewLink ? `Upload job photos here: ${crewLink}` : null,
     ].filter(Boolean).join('\n');
-
     const setup = el('form', { class: 'card stack', onsubmit: (e) => {
       e.preventDefault();
       const patch = { contractorId: crewSel.value || null, scheduledFor: whenInput.value || null };
       if (patch.contractorId && patch.scheduledFor && ['new', 'qualifying'].includes(j.status)) patch.status = 'scheduled';
       update(patch);
     } },
-      el('h3', {}, 'Set up the job'),
+      el('h3', {}, '👷 Crew & schedule'),
       el('label', { class: 'field' }, 'Crew', el('span', { class: 'hint' }, '★ = does this kind of work'), crewSel),
       el('label', { class: 'field' }, 'Date & time', whenInput),
-      el('p', { class: 'muted small' }, 'Picking a crew and a date moves a new lead to “Scheduled”.'),
-      el('button', { type: 'submit' }, 'Save'),
+      el('button', { type: 'submit' }, 'Save crew & date'),
+      el('p', { class: 'muted small' }, 'Picking a crew and a date moves the job to “Scheduled”.'),
       assigned?.phone ? el('a', { class: 'btn ghost', href: smsHref(assigned.phone, dispatchText) }, `💬 Text job details to ${assigned.name.split(' ')[0]}`) : null,
-      assigned?.phone ? el('p', { class: 'muted small' }, 'The text includes the date, address, customer contact, job description and the photo upload link. Never prices.') : null,
       crewLink ? el('div', { class: 'crew-link' },
-        el('span', { class: 'small' }, `📷 ${assigned ? assigned.name.split(' ')[0] + '’s' : 'Crew'} photo upload link`),
+        el('span', { class: 'small' }, `📷 ${assigned ? assigned.name.split(' ')[0] + '’s' : 'Crew'} photo link`),
         el('button', { type: 'button', class: 'ghost small', onclick: async (e) => {
           try { await navigator.clipboard.writeText(crewLink); e.target.textContent = 'Copied ✓'; }
           catch { prompt('Copy this link:', crewLink); }
         } }, 'Copy link')) : null,
+    );
+    const focusSetup = () => { leadTab = 'overview'; renderTab(); setup.scrollIntoView({ block: 'start', behavior: 'smooth' }); crewSel.focus(); };
+
+    // Notes from the crew (customers never see these)
+    const crewNotesCard = () => el('section', { class: 'card stack' },
+      el('div', { class: 'row' }, el('h3', {}, '💬 Crew notes'), el('span', { class: 'spacer' }), crewNotes.length ? el('span', { class: 'pill' }, String(crewNotes.length)) : null),
+      crewNotes.length ? el('ul', { class: 'crew-notes' }, ...crewNotes.map((n) => el('li', {},
+        el('span', { class: 'muted small' }, `${n.by} · ${new Date(n.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${ago(n.at)})`),
+        el('p', {}, n.text))))
+        : el('p', { class: 'muted small' }, 'No notes from the crew yet. The contractor on this job can add notes from their crew login or the job’s photo link.'),
+      el('p', { class: 'muted small' }, 'Customers never see crew notes.'),
     );
 
     // Money (staff only)
@@ -234,7 +316,7 @@
     const profitOut = el('div', { class: 'profit' });
     const showProfit = () => {
       const pr = num(priceInput.value), pay = num(payInput.value);
-      if (pr == null || pay == null) { profitOut.replaceChildren(el('span', { class: 'muted small' }, 'Enter both prices to see your profit.')); return; }
+      if (pr == null || pay == null) { profitOut.className = 'profit'; profitOut.replaceChildren(el('span', { class: 'muted small' }, 'Enter both prices to see your profit.')); return; }
       const profit = pr - pay;
       profitOut.className = 'profit' + (profit < 0 ? ' neg' : '');
       profitOut.replaceChildren(el('span', {}, 'Top Hat profit'), el('b', {}, money(profit)), el('span', { class: 'small' }, pr ? `${Math.round((profit / pr) * 100)}% margin` : ''));
@@ -246,19 +328,20 @@
       if ((price != null && price < 0) || (crewPay != null && crewPay < 0)) { errorBox.textContent = 'Prices can’t be negative.'; errorBox.hidden = false; return; }
       update({ price, crewPay });
     } },
-      el('div', { class: 'row' }, el('h3', {}, 'Money'), el('span', { class: 'spacer' }), el('span', { class: 'pill lock' }, '🔒 Staff only')),
+      el('div', { class: 'row' }, el('h3', {}, 'Prices'), el('span', { class: 'spacer' }), el('span', { class: 'pill lock' }, '🔒 Staff only')),
       el('div', { class: 'two' },
         el('label', { class: 'field' }, 'Customer price', el('span', { class: 'hint' }, 'What the customer pays'), priceInput),
         el('label', { class: 'field' }, 'Crew pay', el('span', { class: 'hint' }, 'What you pay the crew'), payInput)),
       profitOut,
-      el('p', { class: 'muted small' }, 'The crew never sees the customer price or your profit. The customer never sees crew pay.'),
       el('button', { type: 'submit' }, 'Save prices'),
+      el('p', { class: 'muted small' }, 'The crew never sees the customer price or your profit. The customer never sees crew pay.'),
     );
 
     // Estimates & invoices
     const approvedEst = jobDocs.find((x) => x.type === 'estimate' && x.status === 'approved');
+    const invoiceBase = approvedEst && !jobDocs.some((x) => x.type === 'invoice' && x.fromEstimateId === approvedEst.id) ? approvedEst : null;
     const docsCard = el('section', { class: 'card stack' },
-      el('div', { class: 'row' }, el('h3', {}, 'Estimates & invoices')),
+      el('h3', {}, 'Estimates & invoices'),
       jobDocs.length ? el('div', { class: 'doc-list' }, ...jobDocs.map((dc) => {
         const tt = docs.totals(dc);
         return el('button', { type: 'button', class: 'doc-row', onclick: () => openDoc(j.id, dc.id) },
@@ -266,17 +349,30 @@
           el('span', { class: 'body' }, el('b', {}, dc.number),
             el('span', { class: 'muted small' }, dc.type === 'invoice' && !['draft', 'void'].includes(dc.status) ? `${docs.usd(tt.total)} · ${docs.usd(Math.max(0, tt.balance))} due` : docs.usd(tt.total))),
           el('span', { class: `pill ${docs.pillClass(dc)}` }, docs.label(dc)));
-      })) : el('p', { class: 'muted small' }, 'No estimates or invoices yet. They’re filled in with this job’s details. Crew pay never appears on them.'),
+      })) : el('p', { class: 'muted small' }, 'None yet. They’re filled in with this job’s details. Crew pay never appears on them.'),
       el('div', { class: 'row' },
         el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: () => openDoc(j.id, null, 'estimate') }, '+ Estimate'),
-        el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: () => openDoc(j.id, null, 'invoice', approvedEst && !jobDocs.some((x) => x.type === 'invoice' && x.fromEstimateId === approvedEst.id) ? approvedEst : null) }, '+ Invoice')),
+        el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: () => openDoc(j.id, null, 'invoice', invoiceBase) }, '+ Invoice')),
     );
 
     // Files: this job's folder
     const uploadNote = el('span', { class: 'muted small', hidden: true }, 'Uploading…');
     const has = (k) => files.some((f) => f.kind === k);
+    async function fileUpdate(fileId, patch) {
+      try { await api.files.update(j.id, fileId, patch); await load(); flashSaved(); openLead(j.id); }
+      catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
+    }
     const filesCard = el('section', { class: 'card stack' },
       el('div', { class: 'row' }, el('h3', {}, `Files · ${jobNo(j)}`), el('span', { class: 'spacer' }), uploadNote),
+      el('label', { class: 'btn gold' }, '+ Add files or photos',
+        el('input', { type: 'file', multiple: true, hidden: true, onchange: async (e) => {
+          const picked = [...e.target.files];
+          if (!picked.length) return;
+          uploadNote.hidden = false;
+          try { for (const f of picked) await api.files.upload(j.id, f); }
+          catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
+          await load(); openLead(j.id);
+        } })),
       el('div', { class: 'checks' }, ...['estimate', 'contract', 'invoice'].map((k) =>
         el('span', { class: 'pill' + (has(k) ? ' s-completed' : '') }, `${has(k) ? '✓' : '○'} ${kindOf(k).label}`))),
       files.length ? el('ul', { class: 'files' }, ...files.map((f) => {
@@ -299,45 +395,90 @@
             await api.files.remove(j.id, f.id); await load(); openLead(j.id);
           } }, '✕'));
       })) : el('p', { class: 'muted small' }, 'No files yet. Add estimates, contracts, invoices, receipts, permits and job photos here.'),
-      el('label', { class: 'btn ghost' }, '+ Add files',
-        el('input', { type: 'file', multiple: true, hidden: true, onchange: async (e) => {
-          const picked = [...e.target.files];
-          if (!picked.length) return;
-          uploadNote.hidden = false;
-          try { for (const f of picked) await api.files.upload(j.id, f); }
-          catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
-          await load(); openLead(j.id);
-        } })),
       el('p', { class: 'muted small' }, '🔒 Files are staff-only unless you tick “Customer can see”. Crew never see files.'),
       j.photos?.length ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Photos from the customer’s request'),
         el('div', { class: 'photo-row' }, ...j.photos.map((src, i) => el('a', { href: src, target: '_blank' }, el('img', { src, alt: `Customer photo ${i + 1}` }))))) : null,
     );
-    async function fileUpdate(fileId, patch) {
-      try { await api.files.update(j.id, fileId, patch); await load(); flashSaved(); openLead(j.id); }
-      catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
-    }
 
-    // Notes
-    const notes = el('textarea', { placeholder: 'Internal notes. The customer never sees these.', value: j.notes || '', rows: 4 });
+    // Office notes + activity
+    const notes = el('textarea', { placeholder: 'Private office notes. Customers and crew never see these.', value: j.notes || '', rows: 4 });
     const notesCard = el('section', { class: 'card stack' },
-      el('h3', {}, 'Notes'),
+      el('h3', {}, '🔒 Office notes'),
       notes,
       el('button', { type: 'button', class: 'ghost', onclick: () => update({ notes: notes.value }) }, 'Save notes'),
     );
-
-    // Activity
     const log = el('section', { class: 'card stack' },
       el('h3', {}, 'Activity'),
       el('ul', { class: 'log' }, ...history.slice().reverse().map((l) => el('li', {},
         el('span', {}, new Date(l.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })), el('span', {}, l.text)))),
     );
 
+    // Next step: one clear action based on where the job is.
+    const sentEst = jobDocs.find((d) => d.type === 'estimate' && d.status === 'sent');
+    const draftEst = jobDocs.find((d) => d.type === 'estimate' && d.status === 'draft');
+    const invs = jobDocs.filter((d) => d.type === 'invoice' && d.status !== 'void');
+    const draftInv = invs.find((d) => d.status === 'draft');
+    const owedInv = invs.find((d) => docs.owed(d) > 0);
+    const crewFirst = assigned ? assigned.name.split(' ')[0] : '';
+    let step;
+    if (j.status === 'lost') {
+      step = { icon: '🚫', title: 'This job is closed (Not a fit).', act: ['Reopen as a new lead', () => update({ status: 'new' })], ghost: true };
+    } else if (j.status === 'new') {
+      step = { icon: '📞', title: `Call ${first} about the job`, why: 'Talk through the work and answer questions. Then mark it Qualifying.',
+        href: b.phone ? telHref(b.phone) : b.email ? `mailto:${b.email}` : null, label: b.phone ? `📞 Call ${first}` : `✉️ Email ${first}`,
+        second: ['Done: mark as Qualifying', () => update({ status: 'qualifying' })] };
+    } else if (j.status === 'qualifying' && !approvedEst) {
+      if (sentEst) step = { icon: '⏳', title: `Waiting for ${first} to approve ${sentEst.number}`, why: 'They can approve it on their My jobs page. Nudge them with a text.',
+        href: b.phone ? smsHref(b.phone, `Hi ${first}, just checking in on estimate ${sentEst.number} from ${settings.name || 'Top Hat Contracting'}. You can view and approve it here: ${siteUrl()}#/jobs`) : null,
+        label: `💬 Remind ${first}`, second: ['Open the estimate', () => openDoc(j.id, sentEst.id)] };
+      else if (draftEst) step = { icon: '📝', title: `Finish and send estimate ${draftEst.number}`, why: 'It’s saved as a draft. The customer can’t see it yet.', act: ['Open the estimate', () => openDoc(j.id, draftEst.id)] };
+      else step = { icon: '📝', title: 'Send an estimate', why: `Put together the price for ${first}. They can approve it with one tap.`,
+        act: ['+ Create estimate', () => openDoc(j.id, null, 'estimate')], second: ['Skip the estimate: schedule now', focusSetup] };
+    } else if (['new', 'qualifying'].includes(j.status) && approvedEst) {
+      step = { icon: '✅', title: `${first} approved ${approvedEst.number}: schedule a crew`, why: 'Pick who’s doing the work and when.', act: ['Pick crew & date', focusSetup] };
+    } else if (j.status === 'scheduled') {
+      if (!assigned || !j.scheduledFor) step = { icon: '👷', title: 'Pick a crew and a date', act: ['Pick crew & date', focusSetup] };
+      else step = { icon: '📲', title: `Send the job to ${crewFirst}`, why: 'Texts them the date, address, customer phone, job details and photo link. Never prices.',
+        href: assigned.phone ? smsHref(assigned.phone, dispatchText) : null, label: `💬 Text job to ${crewFirst}`, second: ['Work has started', () => update({ status: 'in_progress' })] };
+    } else if (j.status === 'in_progress') {
+      step = { icon: '🔨', title: 'Work in progress', why: `${crewFirst || 'The crew'} can mark it finished from their crew login, or you can here.`, act: ['✓ Mark job finished', () => update({ status: 'completed' })] };
+    } else if (j.status === 'completed') {
+      if (owedInv) step = { icon: '💵', title: `Collect payment: ${docs.usd(docs.owed(owedInv))} due`, why: `Record it when ${first} pays: cash, check, Zelle, card, Venmo or Cash App.`, act: ['Record a payment', () => openDoc(j.id, owedInv.id)] };
+      else if (draftInv) step = { icon: '🧾', title: `Finish and send invoice ${draftInv.number}`, act: ['Open the invoice', () => openDoc(j.id, draftInv.id)] };
+      else if (!invs.length) step = { icon: '🧾', title: 'Job finished: send the invoice', why: invoiceBase ? `It starts from approved estimate ${invoiceBase.number}.` : 'Add the work and the total.', act: ['+ Create invoice', () => openDoc(j.id, null, 'invoice', invoiceBase)] };
+      else step = { icon: '🎉', title: 'All done: paid in full', why: 'Nice work.' };
+    }
+    const nextCard = step ? el('section', { class: 'card next-step' },
+      el('span', { class: 'eyebrow' }, 'Next step'),
+      el('div', { class: 'row', style: 'align-items:flex-start' }, el('span', { class: 'next-ic' }, step.icon),
+        el('div', { style: 'flex:1;min-width:0' }, el('h3', {}, step.title), step.why ? el('p', { class: 'muted small' }, step.why) : null)),
+      step.href ? el('a', { class: 'btn gold block', href: step.href }, step.label)
+        : step.act ? el('button', { type: 'button', class: (step.ghost ? 'ghost' : 'gold') + ' block', onclick: step.act[1] }, step.act[0]) : null,
+      step.second ? el('button', { type: 'button', class: 'link', onclick: step.second[1] }, step.second[0]) : null,
+    ) : null;
+
+    // Tabs keep the job short and easy to scan.
+    const TABS = [['overview', 'Overview'], ['money', 'Money'], ['files', `Files${files.length ? ` (${files.length})` : ''}`], ['history', 'Notes & history']];
+    const tabsBar = el('div', { class: 'tabs-bar lead-tabs', role: 'tablist' });
+    const tabBody = el('div', { class: 'stack' });
+    function renderTab() {
+      tabsBar.replaceChildren(...TABS.map(([id, label]) => el('button', { role: 'tab', 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } }, label)));
+      const content = {
+        overview: [nextCard, progress, crewNotes.length ? crewNotesCard() : null, setup, details],
+        money: [moneyCard, docsCard],
+        files: [filesCard],
+        history: [notesCard, crewNotesCard(), log],
+      }[leadTab] || [];
+      tabBody.replaceChildren(...content.filter(Boolean));
+    }
+    renderTab();
+
     const panel = el('div', { class: 'panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Job ${jobNo(j)}: ${b.name}` },
       el('div', { class: 'panel-head' },
         el('button', { class: 'ghost small', onclick: close, 'aria-label': 'Close' }, '← Back'),
         el('b', { style: 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, `${jobNo(j)} · ${t.icon} ${t.label}`),
         el('span', { class: `pill s-${j.status}` }, statusOf(j.status).label)),
-      el('div', { class: 'panel-body' }, errorBox, contact, status, crewNotesCard, setup, moneyCard, docsCard, filesCard, details, notesCard, log),
+      el('div', { class: 'panel-body' }, errorBox, summary, tabsBar, tabBody),
     );
     const scroll = drawerRoot.querySelector('.panel')?.scrollTop || 0;
     drawerRoot.replaceChildren(el('div', { class: 'drawer', onclick: (e) => { if (e.target === e.currentTarget) close(); } }, panel));

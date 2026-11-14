@@ -11,6 +11,9 @@ A job-request app for Top Hat Contracting. Customers post a job and create an ac
 4. Check **My jobs** anytime to see the status (Received → Reviewing → Scheduled → Done), plus the date and the crew lead's name once it's scheduled.
 
 **Top Hat staff** (`admin.html`)
+- **Today** (the home screen) shows only what needs attention: new leads to call (with a Call button), new crew notes, approved estimates that need a crew and date, finished jobs that need an invoice, unpaid invoices, estimates waiting on the customer, and jobs on the schedule today and tomorrow. When nothing is waiting, it says "All caught up."
+- **Each job opens with a summary** (customer, address, date, crew, price and profit) and a **Next step** card with one clear button: Call the customer → Send an estimate → Schedule a crew → Text the job to the crew → Mark finished → Send the invoice → Record payment. A **progress bar** (New → Qualifying → Scheduled → Working → Done) shows where the job is, and you can tap it to change the status. The rest of the job is split into tabs: **Overview, Money, Files, Notes & history**.
+- **Jobs** lists every job with filters (Open, New, Scheduled, Done, Closed, All) and search. "Open" includes finished jobs that still need an invoice or payment. Cards show flags only when something needs attention.
 - **Leads:** every request, with counts by status, an open-job value total, filters and search.
 - **Lead details:** call, text or email the customer in one tap. Set the status, pick a crew (★ marks crews who do that kind of work), set the date, and keep internal notes the customer never sees. Each lead also keeps an activity history.
 - **Job numbers:** every job gets a number like **TH-1042**. Search by number, name, phone or address.

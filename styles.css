@@ -341,3 +341,50 @@ button.icon:hover { color: var(--bad); }
 .crew-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .crew-notes li { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
 .crew-notes p { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* ---------- Staff: easier to follow ---------- */
+.main-tabs button { font-size: 1rem; }
+.tabs-bar .count.hot { background: var(--gold); color: #1b1404; }
+.kpis.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 400px) { .kpis.three .kpi b { font-size: 1.2rem; } .kpis.three .kpi { padding: 10px; } }
+
+/* Today */
+.todo { display: flex; flex-direction: column; gap: 10px; border-left: 4px solid var(--gold); }
+.todo.info { border-left-color: var(--border); }
+.todo-head { display: flex; gap: 12px; align-items: flex-start; }
+.todo-ic { font-size: 1.5rem; line-height: 1; padding-top: 2px; }
+.todo-count { background: var(--gold); color: #1b1404; font-weight: 800; border-radius: 99px; min-width: 30px; height: 30px; display: grid; place-items: center; padding: 0 8px; }
+.todo.info .todo-count { background: var(--surface-2); color: var(--text); }
+.todo-list { display: flex; flex-direction: column; }
+.todo-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); }
+.todo-open { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; text-align: left; background: none; border: none; color: var(--text); padding: 4px 0; min-height: 44px; font-weight: 400; white-space: normal; }
+.todo-open b { font-weight: 700; }
+.caught-up { text-align: center; padding: 28px 18px; display: flex; flex-direction: column; gap: 6px; align-items: center; }
+
+/* Job cards */
+.lead .flags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.flag { font-size: .76rem; font-weight: 600; padding: 3px 8px; border-radius: 99px; background: var(--surface-2); color: var(--muted); }
+.flag.hot { background: var(--gold-soft); color: var(--warn); }
+
+/* One job */
+.summary h2 { font-size: 1.2rem; }
+.summary .contact .btn { min-width: 0; }
+.facts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: .95rem; }
+.facts li { display: flex; gap: 10px; align-items: baseline; }
+.facts .fi { width: 22px; text-align: center; flex-shrink: 0; }
+.facts a { overflow-wrap: anywhere; }
+.next-step { display: flex; flex-direction: column; gap: 10px; border: 2px solid var(--gold); background: linear-gradient(var(--gold-soft), var(--surface) 70%); }
+.next-step .eyebrow { color: var(--warn); }
+.next-step h3 { font-size: 1.1rem; }
+.next-ic { font-size: 1.8rem; line-height: 1; }
+.lead-tabs { margin: 0; padding: 0; border-bottom: 1px solid var(--border); }
+.stepper { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; position: relative; }
+.stepper button { background: none; border: none; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 4px 0; min-height: 0; font-weight: 600; font-size: .74rem; white-space: normal; position: relative; }
+.stepper button::before { content: ""; position: absolute; top: 18px; left: -50%; right: 50%; height: 3px; background: var(--border); z-index: 0; }
+.stepper button:first-child::before { display: none; }
+.stepper button.done::before, .stepper button.on::before { background: var(--good); }
+.stepper .dot { position: relative; z-index: 1; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); border: 2px solid var(--border); color: var(--muted); font-size: .8rem; }
+.stepper .done .dot { background: var(--good); border-color: var(--good); color: #fff; }
+.stepper .on .dot { background: var(--gold); border-color: var(--gold); color: #1b1404; transform: scale(1.12); }
+.stepper .on { color: var(--text); }
+.stepper .lbl { line-height: 1.15; text-align: center; }
