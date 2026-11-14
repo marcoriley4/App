@@ -268,6 +268,9 @@
           j.scheduledFor && ['scheduled', 'in_progress'].includes(j.status)
             ? el('div', { class: 'callout' }, '📅 ', el('b', {}, fmtWhen(j.scheduledFor)), j.contractorName ? ` · ${j.contractorName} from Top Hat is coming out.` : '')
             : null,
+          j.stage && (TH.STAGES || []).find((x) => x.id === j.stage)
+            ? el('div', { class: 'callout stage' }, `${TH.STAGES.find((x) => x.id === j.stage).icon} ${TH.STAGES.find((x) => x.id === j.stage).buyer}`)
+            : null,
           (paper[j.id] || []).length ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Estimates & invoices'),
             el('div', { class: 'doc-list' }, ...paper[j.id].map((dc) => el('button', { type: 'button', class: 'doc-row', onclick: () => openPaper(j, dc) },
               el('span', { class: 'ic' }, dc.type === 'invoice' ? '🧾' : '📝'),

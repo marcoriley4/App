@@ -283,16 +283,41 @@ select t.ok(public.crew_my_jobs()::text ~ '1150.5', 'crew sees their own pay');
 select t.ok(public.crew_my_jobs()::text !~ '422.28|"price"|Gate code|ann@example|E-1001|INV-1001', 'crew never sees customer price, notes, email or documents');
 select t.ok((select count(*) from public.jobs) = 0 and (select count(*) from public.job_private) = 0 and (select count(*) from public.documents) = 0 and (select count(*) from public.contractors) = 0,
   'crew cannot read any tables directly');
-select public.crew_set_status(current_setting('t.job')::uuid, 'in_progress');
+select public.crew_set_progress(current_setting('t.job')::uuid, null, 'on_the_way');
+select t.ok((public.crew_my_jobs()->0->>'stage') = 'on_the_way', 'crew can mark on the way');
+select public.crew_set_progress(current_setting('t.job')::uuid, 'in_progress', null);
+select t.ok((public.crew_my_jobs()->0->>'stage') is null, 'starting work clears on the way');
+select public.crew_set_progress(current_setting('t.job')::uuid, null, 'waiting_parts');
 do $$ begin
-  begin perform public.crew_set_status(current_setting('t.job')::uuid, 'lost'); perform t.ok(false, 'x');
+  begin perform public.crew_set_progress(current_setting('t.job')::uuid, null, 'on_the_way'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'on the way only allowed before work starts'); end;
+end $$;
+select public.crew_set_progress(current_setting('t.job')::uuid, null, null);
+select public.crew_set_progress(current_setting('t.job')::uuid, 'completed', null);
+select public.crew_set_progress(current_setting('t.job')::uuid, 'in_progress', null);
+select t.ok((public.crew_my_jobs()->0->>'progress_by') = 'Ray J', 'crew can undo finished and is named on the update');
+do $$ begin
+  begin perform public.crew_set_progress(current_setting('t.job')::uuid, 'lost', null); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'crew can only mark started or finished'); end;
-  begin perform public.crew_set_status(gen_random_uuid(), 'completed'); perform t.ok(false, 'x');
+  begin perform public.crew_set_progress(gen_random_uuid(), 'completed', null); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'crew cannot update jobs that are not theirs'); end;
 end $$;
 reset role;
 select t.ok((select status from public.jobs where id = current_setting('t.job')::uuid) = 'in_progress', 'crew marked job started');
-select t.ok(exists (select 1 from public.job_events where text = 'Updated by Ray J (crew)'), 'crew update logged with name');
+select t.ok(exists (select 1 from public.job_events where text = 'Waiting on materials (by Ray J, crew)'), 'crew progress logged with name');
+select t.ok(exists (select 1 from public.job_events where text = 'Status → Completed (by Ray J, crew)'), 'crew status change logged with name');
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+select t.ok(public.my_jobs()::text !~ 'progress_by|"Ray J"', 'customer sees no internal update details');
+reset role;
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+update public.jobs set stage = 'return_visit', progress_by = 'Office' where id = current_setting('t.job')::uuid;
+select t.ok((select stage from public.jobs where id = current_setting('t.job')::uuid) = 'return_visit', 'office can set progress detail too');
+update public.jobs set status = 'scheduled' where id = current_setting('t.job')::uuid;
+select t.ok((select stage from public.jobs where id = current_setting('t.job')::uuid) is null, 'changing status clears a detail that no longer fits');
+update public.jobs set status = 'in_progress' where id = current_setting('t.job')::uuid;
+reset role;
 
 select set_config('request.jwt.claim.sub', :'D', false);
 set role authenticated;
@@ -386,7 +411,7 @@ set role authenticated;
 do $$ begin
   begin perform public.crew_my_jobs(); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'turned-off crew login sees nothing'); end;
-  begin perform public.crew_set_status(current_setting('t.job')::uuid, 'completed'); perform t.ok(false, 'x');
+  begin perform public.crew_set_progress(current_setting('t.job')::uuid, 'completed', null); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'turned-off crew login cannot update jobs'); end;
 end $$;
 reset role;

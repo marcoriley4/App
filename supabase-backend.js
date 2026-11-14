@@ -144,7 +144,7 @@
         return list.map((j) => ({
           id: j.id, number: j.number, trade: j.trade, status: j.status, created: ms(j.created_at),
           description: j.description, address: j.address, zip: j.zip || '', timeframe: j.timeframe, budget: j.budget, photos: [],
-          scheduledFor: local16(j.scheduled_for), contractorName: j.contractor_name || null,
+          scheduledFor: local16(j.scheduled_for), contractorName: j.contractor_name || null, stage: j.stage || null,
           sharedFiles: (j.shared_files || []).length,
         }));
       },
@@ -177,6 +177,7 @@
             crewNotes: notesBy[j.id] || [], crewNotesSeenAt: ms(p.crew_notes_seen_at) || 0,
             buyer: peopleBy[j.buyer_id] || { name: j.contact_name || 'Unknown', email: j.contact_email || '', phone: j.contact_phone || '' },
             hasAccount: !!j.buyer_id,
+            stage: j.stage || null, progressAt: ms(j.progress_at), progressBy: j.progress_by || '', progressByCrew: !!j.progress_by_crew,
           };
         });
       },
@@ -216,6 +217,11 @@
         await requireStaff();
         const jobPatch = {}, privPatch = {};
         if ('status' in patch) jobPatch.status = patch.status;
+        if ('stage' in patch) jobPatch.stage = patch.stage;
+        if ('status' in patch || 'stage' in patch) {
+          const staff = await me();
+          Object.assign(jobPatch, { progress_at: new Date().toISOString(), progress_by: staff.name || 'Office', progress_by_crew: false });
+        }
         if ('contractorId' in patch) jobPatch.contractor_id = patch.contractorId;
         if ('scheduledFor' in patch) jobPatch.scheduled_for = patch.scheduledFor;
         if ('price' in patch) privPatch.price = patch.price;
@@ -421,6 +427,7 @@
           id: j.id, number: j.number, trade: j.trade, status: j.status, scheduledFor: local16(j.scheduled_for),
           address: j.address, zip: j.zip, description: j.description,
           customerName: j.customer_name || '', customerPhone: j.customer_phone || '',
+          stage: j.stage || null, progressAt: ms(j.progress_at), progressBy: j.progress_by || '',
           crewToken: j.crew_token || null, crewPay: num(j.crew_pay), photos: Number(j.photos) || 0,
           notes: (j.notes || []).map((n) => ({ id: n.id, at: ms(n.created_at), text: n.text })),
         }));
@@ -428,9 +435,10 @@
       async addNote(jobId, text) {
         must(await sb.rpc('crew_add_note', { p_token: null, p_job: jobId, p_text: text }));
       },
-      async setStatus(jobId, status) {
-        must(await sb.rpc('crew_set_status', { p_job: jobId, p_status: status }));
+      async setProgress(jobId, { status, stage } = {}) {
+        must(await sb.rpc('crew_set_progress', { p_job: jobId, p_status: status || null, p_stage: stage === undefined ? null : stage }));
       },
+      async setStatus(jobId, status) { return api.crewPortal.setProgress(jobId, { status }); },
     },
 
     async resetPreview() { /* preview only */ },

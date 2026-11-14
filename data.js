@@ -60,6 +60,31 @@
     { id: 'lost', label: 'Not a fit', buyer: 'Closed' },
   ];
 
+  // Extra detail on a job's progress, shared by the office and the crew.
+  // Each fits one status: "On the way" before work starts; the two holds while working.
+  const STAGES = [
+    { id: 'on_the_way', label: 'On the way', icon: '🚚', status: 'scheduled', buyer: 'Your crew is on the way' },
+    { id: 'waiting_parts', label: 'Waiting on materials', icon: '⏸', status: 'in_progress', buyer: 'Paused while we get materials' },
+    { id: 'return_visit', label: 'Needs another visit', icon: '🔁', status: 'in_progress', buyer: 'We’ll be back to finish' },
+  ];
+  const CREW_STATUSES = ['scheduled', 'in_progress', 'completed'];
+  // Apply a progress change (status and/or stage), log it, and remember who made it.
+  function applyProgress(j, { status, stage }, who, byCrew) {
+    const label = (st) => STATUSES.find((x) => x.id === st)?.label || st;
+    const next = status || j.status;
+    let nextStage = stage === undefined ? (status && status !== j.status ? null : j.stage || null) : stage;
+    if (nextStage && STAGES.find((x) => x.id === nextStage)?.status !== next) nextStage = null;
+    const tag = byCrew ? ` (by ${who}, crew)` : '';
+    if (next !== j.status) j.log.push({ at: Date.now(), text: `Status → ${label(next)}${tag}` });
+    if ((nextStage || null) !== (j.stage || null) && (nextStage || next === j.status)) {
+      j.log.push({ at: Date.now(), text: nextStage ? `${STAGES.find((x) => x.id === nextStage).label}${tag || ` (by ${who})`}` : `Cleared “${STAGES.find((x) => x.id === j.stage)?.label}”${tag}` });
+    }
+    if (next !== j.status || (nextStage || null) !== (j.stage || null)) {
+      j.status = next; j.stage = nextStage;
+      j.progressAt = Date.now(); j.progressBy = who; j.progressByCrew = !!byCrew;
+    }
+  }
+
   /* ---------- storage ---------- */
   function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36); }
   // Long random code for a job's private crew upload link (unguessable).
@@ -360,6 +385,7 @@
             id: j.id, number: j.number, trade: j.trade, status: j.status, created: j.created, description: j.description, address: j.address, zip: j.zip,
             timeframe: j.timeframe, budget: j.budget, photos: j.photos, scheduledFor: j.scheduledFor,
             contractorName: c && ['scheduled', 'in_progress', 'completed'].includes(j.status) ? c.name : null,
+            stage: j.stage || null,
             sharedFiles: j.files.filter((f) => f.shared).length,
           };
         });
@@ -393,9 +419,9 @@
         const d = await db();
         const j = d.jobs.find((x) => x.id === id);
         if (!j) throw new Error('Job not found.');
-        const label = (s) => STATUSES.find((x) => x.id === s)?.label || s;
         const cname = (cid) => d.contractors.find((c) => c.id === cid)?.name || 'nobody';
-        if ('status' in patch && patch.status !== j.status) j.log.push({ at: Date.now(), text: `Status → ${label(patch.status)}` });
+        const staffUser = await me();
+        if ('status' in patch || 'stage' in patch) applyProgress(j, { status: patch.status, stage: patch.stage }, staffUser.name, false);
         if ('contractorId' in patch && patch.contractorId !== j.contractorId) {
           j.log.push({ at: Date.now(), text: `Assigned to ${cname(patch.contractorId)}` });
           // New crew → new upload link, so the previous crew's link stops working.
@@ -405,7 +431,7 @@
         const usd = (n) => n == null ? 'cleared' : '$' + Number(n).toLocaleString();
         if ('price' in patch && patch.price !== j.price) j.log.push({ at: Date.now(), text: `Customer price → ${usd(patch.price)}` });
         if ('crewPay' in patch && patch.crewPay !== j.crewPay) j.log.push({ at: Date.now(), text: `Crew pay → ${usd(patch.crewPay)}` });
-        for (const k of ['status', 'contractorId', 'scheduledFor', 'price', 'crewPay', 'notes']) if (k in patch) j[k] = patch[k];
+        for (const k of ['contractorId', 'scheduledFor', 'price', 'crewPay', 'notes']) if (k in patch) j[k] = patch[k];
         writeDb(d);
         return j;
       },
@@ -727,6 +753,7 @@
             id: j.id, number: j.number, trade: j.trade, status: j.status, scheduledFor: j.scheduledFor,
             address: j.address, zip: j.zip, description: j.description,
             customerName: b.name || '', customerPhone: b.phone || '',
+            stage: j.stage || null, progressAt: j.progressAt || null, progressBy: j.progressBy || '',
             crewToken: j.crewToken, crewPay: showPay ? j.crewPay : null,
             photos: j.files.filter((f) => f.source === 'crew' && f.contractorId === c.id).length,
             notes: ownNotes(j),
@@ -739,15 +766,17 @@
         if (!j) throw new Error('You can only add notes to your own jobs.');
         pushCrewNote(d, j, text);
       },
-      async setStatus(jobId, status) {
+      // { status?, stage? }: status moves between Scheduled / Working / Done; stage is null or a STAGES id.
+      async setProgress(jobId, { status, stage } = {}) {
         const { d, c, u } = await requireCrew();
         const j = d.jobs.find((x) => x.id === jobId && x.contractorId === c.id);
-        const ok = j && ((status === 'in_progress' && j.status === 'scheduled') || (status === 'completed' && ['scheduled', 'in_progress'].includes(j.status)));
-        if (!ok) throw new Error('That update isn’t available for this job.');
-        j.status = status;
-        j.log.push({ at: Date.now(), text: `Status → ${STATUSES.find((x) => x.id === status).label} (by ${u.name}, crew)` });
+        if (!j || !CREW_STATUSES.includes(j.status)) throw new Error('That update isn’t available for this job.');
+        if (status && !CREW_STATUSES.includes(status)) throw new Error('That update isn’t available for this job.');
+        if (stage && !STAGES.some((x) => x.id === stage && x.status === (status || j.status))) throw new Error('That update isn’t available right now.');
+        applyProgress(j, { status, stage }, u.name, true);
         writeDb(d);
       },
+      async setStatus(jobId, status) { return api.crewPortal.setProgress(jobId, { status }); },
     },
 
     async resetPreview() {
@@ -852,5 +881,5 @@
           el('span', { class: 'muted' }, '→')))));
   }
 
-  window.TH = { loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+  window.TH = { STAGES, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();

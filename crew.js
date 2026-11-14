@@ -178,12 +178,35 @@
     const card = (j) => {
       const t = tradeOf(j.trade);
       const st = find(STATUSES, j.status);
-      const act = async (status, btn) => {
-        if (status === 'completed' && !confirm(`Mark TH-${j.number} as finished?`)) return;
+      // Progress the crew shares with the office: Scheduled → On the way → Working → Done, plus two holds.
+      const go = async (change, msg, btn, ask) => {
+        if (ask && !confirm(ask)) return;
         btn.disabled = true;
-        try { await api.crewPortal.setStatus(j.id, status); renderPortal(status === 'completed' ? `✓ TH-${j.number} marked finished. Thanks!` : `▶ TH-${j.number} marked started.`); }
+        try { await api.crewPortal.setProgress(j.id, change); renderPortal(`${msg} The office can see it.`); }
         catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; btn.disabled = false; }
       };
+      const B = (label, cls, change, msg, ask) => el('button', { class: cls, onclick: (e) => go(change, msg, e.currentTarget, ask) }, label);
+      const n = `TH-${j.number}`;
+      const actions = {
+        scheduled: j.stage === 'on_the_way'
+          ? [B('▶ Start work', 'gold', { status: 'in_progress' }, `▶ ${n} started.`), B('↩ Not on my way', 'ghost', { stage: null }, `↩ ${n}: back to scheduled.`)]
+          : [B('🚚 On my way', 'ghost', { stage: 'on_the_way' }, `🚚 ${n}: on the way.`), B('▶ Start work', 'gold', { status: 'in_progress' }, `▶ ${n} started.`)],
+        in_progress: j.stage
+          ? [B('▶ Back to work', 'ghost', { stage: null }, `▶ ${n}: back to work.`), B('✓ Finished', 'gold', { status: 'completed' }, `✓ ${n} finished. Thanks!`, `Mark ${n} as finished?`)]
+          : [B('⏸ Waiting on materials', 'ghost', { stage: 'waiting_parts' }, `⏸ ${n}: waiting on materials. Add a note saying what you need.`),
+            B('🔁 Needs another visit', 'ghost', { stage: 'return_visit' }, `🔁 ${n}: needs another visit. Add a note about what’s left.`),
+            B('✓ Finished', 'gold', { status: 'completed' }, `✓ ${n} finished. Thanks!`, `Mark ${n} as finished?`),
+            B('↩ Undo start', 'ghost', { status: 'scheduled' }, `↩ ${n}: back to scheduled.`)],
+        completed: [B('↩ Not finished yet', 'ghost', { status: 'in_progress' }, `↩ ${n}: back to working.`, `Move ${n} back to Working?`)],
+      }[j.status] || [];
+      const STEPS = [['scheduled', 'Scheduled'], ['on_the_way', 'On the way'], ['in_progress', 'Working'], ['completed', 'Done']];
+      const pos = j.status === 'completed' ? 3 : j.status === 'in_progress' ? 2 : j.stage === 'on_the_way' ? 1 : 0;
+      const hold = j.stage && j.stage !== 'on_the_way' ? (TH.STAGES || []).find((x) => x.id === j.stage) : null;
+      const progress = el('div', { class: 'crew-progress' },
+        el('div', { class: 'stepper four', 'aria-label': 'Job progress' }, ...STEPS.map(([, label], i) =>
+          el('span', { class: 'stepbit ' + (i < pos ? 'done' : i === pos ? 'on' : '') }, el('span', { class: 'dot' }, i < pos ? '✓' : String(i + 1)), el('span', { class: 'lbl' }, label)))),
+        hold ? el('div', { class: 'hold' }, `${hold.icon} ${hold.label}`) : null,
+        j.progressAt ? el('p', { class: 'muted small' }, `Last update: ${j.progressBy === me.name ? 'you' : j.progressBy || 'the office'} · ${new Date(j.progressAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`) : null);
       const notesHolder = el('div');
       const toggleNotes = () => {
         if (notesHolder.firstChild) { notesHolder.replaceChildren(); return; }
@@ -204,11 +227,11 @@
           el('dt', {}, 'Customer'), el('dd', {}, j.customerName, j.customerPhone ? ' · ' : '', j.customerPhone ? el('a', { href: tel(j.customerPhone) }, j.customerPhone) : ''),
           el('dt', {}, 'Job'), el('dd', { style: 'white-space:pre-wrap' }, j.description),
           j.crewPay != null ? el('dt', {}, 'Your pay') : null, j.crewPay != null ? el('dd', { style: 'font-weight:700' }, usd(j.crewPay)) : null),
+        progress,
+        el('div', { class: 'row wrap-row' }, ...actions),
         el('div', { class: 'row wrap-row' },
-          j.crewToken ? el('a', { class: 'btn ghost', style: 'flex:1', href: `crew.html?t=${j.crewToken}` }, `📷 Photos${j.photos ? ` (${j.photos})` : ''}`) : null,
-          el('button', { class: 'ghost', style: 'flex:1', onclick: toggleNotes }, `📝 Notes${(j.notes || []).length ? ` (${j.notes.length})` : ''}`),
-          j.status === 'scheduled' ? el('button', { class: 'ghost', style: 'flex:1', onclick: (e) => act('in_progress', e.currentTarget) }, '▶ Started') : null,
-          j.status !== 'completed' ? el('button', { class: 'gold', style: 'flex:1', onclick: (e) => act('completed', e.currentTarget) }, '✓ Finished') : null),
+          j.crewToken ? el('a', { class: 'btn ghost', href: `crew.html?t=${j.crewToken}` }, `📷 Photos${j.photos ? ` (${j.photos})` : ''}`) : null,
+          el('button', { class: 'ghost', onclick: toggleNotes }, `📝 Notes${(j.notes || []).length ? ` (${j.notes.length})` : ''}`)),
         notesHolder,
       );
     };

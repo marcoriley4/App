@@ -35,7 +35,8 @@ drop function if exists public.handle_new_user, public.is_staff, public.new_crew
   public.private_after_update, public.files_after_change, public.status_label, public.log_event, public.usd,
   public.doc_total, public.doc_paid, public.docs_before, public.docs_after, public.my_documents, public.respond_estimate,
   public.my_crew, public.staff_invite_crew, public.staff_revoke_crew, public.crew_invite_info, public.claim_crew_invite,
-  public.crew_my_jobs, public.crew_set_status, public.crew_add_note cascade;
+  public.crew_my_jobs, public.crew_set_status, public.crew_set_progress, public.crew_add_note,
+  public.jobs_before_update, public.stage_label cascade;
 
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
@@ -115,6 +116,11 @@ create table public.jobs (
   status text not null default 'new' check (status in ('new', 'qualifying', 'scheduled', 'in_progress', 'completed', 'lost')),
   contractor_id uuid references public.contractors(id) on delete set null,
   scheduled_for timestamp,
+  -- Extra progress detail shared by office and crew, and who last changed progress.
+  stage text check (stage in ('on_the_way', 'waiting_parts', 'return_visit')),
+  progress_at timestamptz,
+  progress_by text not null default '',
+  progress_by_crew boolean not null default false,
   created_at timestamptz not null default now(),
   check (buyer_id is not null or length(trim(contact_name)) > 0)
 );
@@ -188,12 +194,40 @@ end $$;
 create trigger jobs_after_insert after insert on public.jobs
   for each row execute function public.jobs_after_insert();
 
+create function public.stage_label(st text) returns text
+language sql immutable set search_path = '' as $$
+  select case st when 'on_the_way' then 'On the way' when 'waiting_parts' then 'Waiting on materials'
+                 when 'return_visit' then 'Needs another visit' else st end;
+$$;
+
+-- Keep progress detail consistent: "On the way" only while Scheduled, the holds only while Working.
+create function public.jobs_before_update() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  if new.status is distinct from old.status and new.stage is not distinct from old.stage then new.stage := null; end if;
+  if new.stage is not null and not ((new.stage = 'on_the_way' and new.status = 'scheduled')
+     or (new.stage in ('waiting_parts', 'return_visit') and new.status = 'in_progress')) then
+    new.stage := null;
+  end if;
+  if (new.status, new.stage) is distinct from (old.status, old.stage) and new.progress_at is not distinct from old.progress_at then
+    new.progress_at := now();
+  end if;
+  return new;
+end $$;
+create trigger jobs_before_update before update on public.jobs
+  for each row execute function public.jobs_before_update();
+
 create function public.jobs_after_update() returns trigger
 language plpgsql security definer set search_path = '' as $$
 declare cname text;
 begin
   if new.status is distinct from old.status then
-    perform public.log_event(new.id, 'Status → ' || public.status_label(new.status));
+    perform public.log_event(new.id, 'Status → ' || public.status_label(new.status)
+      || case when new.progress_by_crew and new.progress_by <> '' then ' (by ' || new.progress_by || ', crew)' else '' end);
+  end if;
+  if new.stage is distinct from old.stage and (new.stage is not null or new.status is not distinct from old.status) then
+    perform public.log_event(new.id, case when new.stage is null then 'Cleared “' || public.stage_label(old.stage) || '”' else public.stage_label(new.stage) end
+      || case when new.progress_by <> '' then ' (by ' || new.progress_by || case when new.progress_by_crew then ', crew' else '' end || ')' else '' end);
   end if;
   if new.contractor_id is distinct from old.contractor_id then
     select name into cname from public.contractors where id = new.contractor_id;
@@ -308,7 +342,7 @@ language sql stable security definer set search_path = '' as $$
   select coalesce(jsonb_agg(jsonb_build_object(
     'id', j.id, 'number', j.number, 'trade', j.trade, 'status', j.status, 'created_at', j.created_at,
     'description', j.description, 'address', j.address, 'zip', j.zip, 'timeframe', j.timeframe, 'budget', j.budget,
-    'scheduled_for', j.scheduled_for,
+    'scheduled_for', j.scheduled_for, 'stage', j.stage,
     'contractor_name', case when j.status in ('scheduled', 'in_progress', 'completed') then c.name end,
     'shared_files', (select coalesce(jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'kind', f.kind, 'size', f.size,
                        'path', f.path, 'uploaded_at', f.uploaded_at) order by f.uploaded_at), '[]'::jsonb)
@@ -593,6 +627,7 @@ begin
   select coalesce((data->>'showCrewPay')::boolean, true) into show_pay from public.settings where id = 1;
   return (select coalesce(jsonb_agg(jsonb_build_object(
       'id', j.id, 'number', j.number, 'trade', j.trade, 'status', j.status, 'scheduled_for', j.scheduled_for,
+      'stage', j.stage, 'progress_at', j.progress_at, 'progress_by', j.progress_by,
       'address', j.address, 'zip', j.zip, 'description', j.description,
       'customer_name', coalesce(b.name, j.contact_name), 'customer_phone', coalesce(b.phone, j.contact_phone), 'crew_token', p.crew_token,
       'crew_pay', case when coalesce(show_pay, true) then p.crew_pay end,
@@ -606,20 +641,26 @@ begin
     where j.contractor_id = cid and j.status in ('scheduled', 'in_progress', 'completed'));
 end $$;
 
--- Crew: mark their own job started or finished.
-create function public.crew_set_status(p_job uuid, p_status text) returns void
+-- Crew: update progress on their own job. Status moves between Scheduled / Working / Done (either way);
+-- stage is null, 'on_the_way' (while Scheduled), or 'waiting_parts' / 'return_visit' (while Working).
+create function public.crew_set_progress(p_job uuid, p_status text, p_stage text) returns void
 language plpgsql security definer set search_path = '' as $$
-declare cid uuid := public.my_crew(); cur text; who text;
+declare cid uuid := public.my_crew(); cur text; nxt text; who text;
 begin
   if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
   select status into cur from public.jobs where id = p_job and contractor_id = cid for update;
-  if cur is null or not ((p_status = 'in_progress' and cur = 'scheduled')
-                      or (p_status = 'completed' and cur in ('scheduled', 'in_progress'))) then
+  nxt := coalesce(p_status, cur);
+  if cur is null or cur not in ('scheduled', 'in_progress', 'completed') or nxt not in ('scheduled', 'in_progress', 'completed') then
     raise exception 'That update isn''t available for this job.';
   end if;
-  update public.jobs set status = p_status where id = p_job;
+  if p_stage is not null and not ((p_stage = 'on_the_way' and nxt = 'scheduled')
+     or (p_stage in ('waiting_parts', 'return_visit') and nxt = 'in_progress')) then
+    raise exception 'That update isn''t available right now.';
+  end if;
   select name into who from public.profiles where id = auth.uid();
-  perform public.log_event(p_job, 'Updated by ' || coalesce(who, 'crew') || ' (crew)');
+  update public.jobs set status = nxt, stage = p_stage, progress_at = now(),
+         progress_by = coalesce(who, 'Crew'), progress_by_crew = true
+   where id = p_job;
 end $$;
 
 -- Crew: add a note to their job, from the job's photo link (p_token) or their crew login (p_job).
@@ -653,7 +694,7 @@ grant execute on function public.is_staff(), public.owns_job(text), public.custo
   public.create_job(text, text, text, text, text, text), public.add_customer_file(uuid, text, text, text, bigint),
   public.my_jobs(), public.my_documents(), public.respond_estimate(uuid, boolean),
   public.staff_invite_crew(uuid), public.staff_revoke_crew(uuid), public.claim_crew_invite(text),
-  public.crew_my_jobs(), public.crew_set_status(uuid, text) to authenticated;
+  public.crew_my_jobs(), public.crew_set_progress(uuid, text, text) to authenticated;
 grant execute on function public.crew_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_add_note(text, uuid, text) to anon, authenticated;
 grant execute on function public.crew_token_active(text), public.crew_job(text),

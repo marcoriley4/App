@@ -71,6 +71,11 @@
 
   // What needs attention, grouped in plain language. Shared by Today and the job cards.
   const hasNewNote = (j) => (j.crewNotes || []).some((n) => n.at > (j.crewNotesSeenAt || 0));
+  // Anything new from the crew: a note, or a progress update they made.
+  const crewUpdatedAt = (j) => (j.progressByCrew && j.progressAt > (j.crewNotesSeenAt || 0) ? j.progressAt : 0);
+  const hasCrewNews = (j) => hasNewNote(j) || !!crewUpdatedAt(j);
+  const stageOf = (id) => (TH.STAGES || []).find((x) => x.id === id);
+  const progressText = (j) => (j.stage ? `${stageOf(j.stage).icon} ${stageOf(j.stage).label}` : ({ scheduled: 'Scheduled', in_progress: 'Working', completed: 'Done' })[j.status] || statusOf(j.status).label);
   const estWith = (j, st) => (j.docs || []).find((d) => d.type === 'estimate' && d.status === st);
   const liveInvoices = (j) => (j.docs || []).filter((d) => d.type === 'invoice' && d.status !== 'void');
   const needsInvoice = (j) => j.status === 'completed' && !liveInvoices(j).some((d) => d.status !== 'draft');
@@ -86,8 +91,9 @@
       { id: 'new', icon: '🔔', title: 'New leads to call', why: 'Call them to talk through the job.', call: true,
         list: open.filter((j) => j.status === 'new').sort((a, b) => a.created - b.created),
         line: (j) => `${tradeOf(j.trade).label} · came in ${ago(j.created)}` },
-      { id: 'notes', icon: '💬', title: 'New notes from your crew', why: 'Read what your crew wrote on the job.',
-        list: jobs.filter(hasNewNote), line: (j) => `${crewName(j) || 'Crew'} wrote a note` },
+      { id: 'notes', icon: '👷', title: 'New updates from your crew', why: 'Progress updates and notes from the job.',
+        list: jobs.filter(hasCrewNews).sort((a, b) => Math.max(crewUpdatedAt(b), 0) - Math.max(crewUpdatedAt(a), 0)),
+        line: (j) => [crewUpdatedAt(j) ? `${j.progressBy}: ${progressText(j)}` : null, hasNewNote(j) ? 'new note' : null].filter(Boolean).join(' · ') },
       { id: 'schedule', icon: '✅', title: 'Approved: needs a crew & date', why: 'The customer said yes. Pick who’s doing it and when.',
         list: open.filter(needsScheduling), line: (j) => `${tradeOf(j.trade).label}${j.price != null ? ' · ' + money(j.price) : ''}` },
       { id: 'invoice', icon: '🏁', title: 'Finished: send the invoice', why: 'The work is done but no invoice has gone out.',
@@ -178,7 +184,8 @@
     const t = tradeOf(j.trade);
     const c = find(crew, j.contractorId);
     const flags = [
-      hasNewNote(j) ? ['💬 New crew note', 'hot'] : null,
+      hasCrewNews(j) ? ['👷 New crew update', 'hot'] : null,
+      j.stage ? [`${stageOf(j.stage).icon} ${stageOf(j.stage).label}`, ''] : null,
       needsScheduling(j) ? ['✅ Approved, needs scheduling', 'hot'] : null,
       needsInvoice(j) ? ['🏁 Needs invoice', 'hot'] : null,
       owedOn(j) > 0 ? [`💵 ${docs.usd(owedOn(j))} due`, 'hot'] : null,
@@ -259,8 +266,13 @@
       el('div', { class: 'stepper', role: 'group', 'aria-label': 'Job status' }, ...FLOW.map(([s, label], i) =>
         el('button', { type: 'button', class: i < at ? 'done' : i === at ? 'on' : '', 'aria-pressed': String(i === at), 'aria-label': `Status: ${label}`, onclick: () => j.status !== s && update({ status: s }) },
           el('span', { class: 'dot' }, i < at ? '✓' : String(i + 1)), el('span', { class: 'lbl' }, label)))),
+      (TH.STAGES || []).some((x) => x.status === j.status) ? el('div', { class: 'stage-chips' },
+        ...TH.STAGES.filter((x) => x.status === j.status).map((x) => el('button', { type: 'button', class: 'chip', 'aria-pressed': String(j.stage === x.id),
+          onclick: () => update({ stage: j.stage === x.id ? null : x.id }) }, `${x.icon} ${x.label}`))) : null,
+      j.progressAt ? el('p', { class: 'small last-update' + (j.progressByCrew ? ' crew' : '') },
+        `Last update: ${progressText(j)} · ${j.progressByCrew ? `${j.progressBy} (crew)` : j.progressBy || 'office'} · ${ago(j.progressAt)}`) : null,
       el('div', { class: 'row' },
-        el('p', { class: 'muted small', style: 'flex:1' }, j.status === 'lost' ? 'Closed as “Not a fit”. Tap a step to reopen.' : `The customer sees: “${statusOf(j.status).buyer}”`),
+        el('p', { class: 'muted small', style: 'flex:1' }, j.status === 'lost' ? 'Closed as “Not a fit”. Tap a step to reopen.' : `The customer sees: “${j.stage ? stageOf(j.stage).buyer : statusOf(j.status).buyer}”`),
         j.status !== 'lost' ? el('button', { type: 'button', class: 'link small', style: 'color:var(--bad)', onclick: () => { if (confirm('Close this job as “Not a fit”?')) update({ status: 'lost' }); } }, 'Not a fit') : null),
     );
 
@@ -443,10 +455,15 @@
       step = { icon: '✅', title: `${first} approved ${approvedEst.number}: schedule a crew`, why: 'Pick who’s doing the work and when.', act: ['Pick crew & date', focusSetup] };
     } else if (j.status === 'scheduled') {
       if (!assigned || !j.scheduledFor) step = { icon: '👷', title: 'Pick a crew and a date', act: ['Pick crew & date', focusSetup] };
+      else if (j.stage === 'on_the_way') step = { icon: '🚚', title: `${crewFirst} is on the way`, why: 'They’ll mark the work started when they get there. You can too.', act: ['▶ Work has started', () => update({ status: 'in_progress' })] };
       else step = { icon: '📲', title: `Send the job to ${crewFirst}`, why: 'Texts them the date, address, customer phone, job details and photo link. Never prices.',
         href: assigned.phone ? smsHref(assigned.phone, dispatchText) : null, label: `💬 Text job to ${crewFirst}`, second: ['Work has started', () => update({ status: 'in_progress' })] };
+    } else if (j.status === 'in_progress' && j.stage === 'waiting_parts') {
+      step = { icon: '⏸', title: 'Paused: waiting on materials', why: 'Check the crew notes for what’s needed. Resume when the materials are in.', act: ['▶ Work resumed', () => update({ stage: null })] };
+    } else if (j.status === 'in_progress' && j.stage === 'return_visit') {
+      step = { icon: '🔁', title: 'Needs another visit', why: 'Set the date for the return visit, then let the customer know.', act: ['Pick the return date', focusSetup], second: ['Back to work (no visit needed)', () => update({ stage: null })] };
     } else if (j.status === 'in_progress') {
-      step = { icon: '🔨', title: 'Work in progress', why: `${crewFirst || 'The crew'} can mark it finished from their crew login, or you can here.`, act: ['✓ Mark job finished', () => update({ status: 'completed' })] };
+      step = { icon: '🔨', title: 'Work in progress', why: `${crewFirst || 'The crew'} can update progress from their crew login, or you can here.`, act: ['✓ Mark job finished', () => update({ status: 'completed' })] };
     } else if (j.status === 'completed') {
       if (owedInv) step = { icon: '💵', title: `Collect payment: ${docs.usd(docs.owed(owedInv))} due`, why: `Record it when ${first} pays: cash, check, Zelle, card, Venmo or Cash App.`, act: ['Record a payment', () => openDoc(j.id, owedInv.id)] };
       else if (draftInv) step = { icon: '🧾', title: `Finish and send invoice ${draftInv.number}`, act: ['Open the invoice', () => openDoc(j.id, draftInv.id)] };

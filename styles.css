@@ -393,3 +393,23 @@ button.icon:hover { color: var(--bad); }
 /* Crew job card: actions two per row so they're easy to tap */
 .job-card .wrap-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .job-card .wrap-row > * { flex: none !important; white-space: normal; min-width: 0; }
+
+/* Shared job progress (office + crew) */
+.stage-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { background: var(--surface); color: var(--text); border: 1.5px solid var(--border); border-radius: 99px; min-height: 38px; padding: 6px 12px; font-weight: 600; font-size: .88rem; }
+.chip[aria-pressed="true"] { border-color: var(--gold); background: var(--gold-soft); }
+.last-update { background: var(--surface-2); border-radius: 8px; padding: 6px 10px; }
+.last-update.crew { background: var(--gold-soft); }
+.crew-progress { display: flex; flex-direction: column; gap: 8px; background: var(--surface-2); border-radius: 12px; padding: 12px 8px 8px; }
+.stepper.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.stepbit { display: flex; flex-direction: column; align-items: center; gap: 4px; position: relative; color: var(--muted); font-weight: 600; font-size: .74rem; }
+.stepbit::before { content: ""; position: absolute; top: 15px; left: -50%; right: 50%; height: 3px; background: var(--border); }
+.stepbit:first-child::before { display: none; }
+.stepbit.done::before, .stepbit.on::before { background: var(--good); }
+.stepbit .dot { position: relative; z-index: 1; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); border: 2px solid var(--border); font-size: .8rem; }
+.stepbit.done .dot { background: var(--good); border-color: var(--good); color: #fff; }
+.stepbit.on { color: var(--text); }
+.stepbit.on .dot { background: var(--gold); border-color: var(--gold); color: #1b1404; }
+.stepbit .lbl { text-align: center; line-height: 1.15; }
+.hold { align-self: center; background: var(--gold-soft); color: var(--warn); font-weight: 700; font-size: .85rem; border-radius: 99px; padding: 4px 12px; }
+.callout.stage { background: var(--gold-soft); }
