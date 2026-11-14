@@ -59,7 +59,8 @@ select t.ok((select count(*) from public.jobs) = 1, 'staff sees all jobs');
 insert into public.contractors (name, phone, trades) values ('Mike Alvarez', '(555) 300-1122', '{plumbing}'), ('Ray Johnson', '(555) 300-4455', '{roofing}');
 update public.jobs set status = 'qualifying';
 update public.jobs set contractor_id = (select id from public.contractors where name = 'Mike Alvarez'), status = 'scheduled', scheduled_for = '2026-11-16T09:30';
-update public.job_private set price = 1800, crew_pay = 1150.50, notes = 'Gate code 1234';
+update public.job_private set price = 1800, notes = 'Gate code 1234';
+update public.job_costs set crew_pay = 1150.50;
 select t.ok((select crew_token from public.job_private) is not null, 'assigning crew creates upload code');
 select t.ok((select count(*) from public.job_events) >= 6, 'activity history written automatically');
 select t.ok(exists (select 1 from public.job_events where text = 'Crew pay → $1,150.50'), 'money formatted in history');
@@ -184,7 +185,7 @@ reset role;
 select set_config('request.jwt.claim.sub', :'S', false);
 set role authenticated;
 select t.ok((select price from public.job_private) = 422.28, 'approval sets the customer price');
-select t.ok((select crew_pay from public.job_private) = 1150.50, 'approval leaves crew pay alone');
+select t.ok((select crew_pay from public.job_costs) = 1150.50, 'approval leaves crew pay alone');
 select t.ok(exists (select 1 from public.job_events where text like 'E-1001 approved by Ann B. (customer)'), 'approval logged with who');
 do $$ begin
   begin update public.documents set items = '[]' where id = current_setting('t.est')::uuid; perform t.ok(false, 'x');
@@ -456,6 +457,115 @@ do $$ begin
   begin perform public.crew_set_progress(current_setting('t.job')::uuid, 'completed', null); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'turned-off crew login cannot update jobs'); end;
 end $$;
+reset role;
+
+-- ========== Sales team ==========
+\set E '66666666-6666-6666-6666-666666666666'
+\set F '77777777-7777-7777-7777-777777777777'
+insert into auth.users (id, email, raw_user_meta_data) values (:'E', 'maria@sales.test', '{"name":"Maria L"}'), (:'F', 'sam@sales.test', '{"name":"Sam S"}');
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+insert into public.salespeople (name, phone) values ('Maria Lopez', '(555) 444-1212'), ('Sam Smith', '(555) 444-3434');
+select set_config('t.maria', (select id::text from public.salespeople where name = 'Maria Lopez'), false);
+select set_config('t.sam', (select id::text from public.salespeople where name = 'Sam Smith'), false);
+select set_config('t.minv', public.staff_invite_sales(current_setting('t.maria')::uuid), false);
+select set_config('t.sinv', public.staff_invite_sales(current_setting('t.sam')::uuid), false);
+-- the office assigns Ann's job to Maria
+update public.jobs set sales_id = current_setting('t.maria')::uuid where id = current_setting('t.job')::uuid;
+reset role;
+select set_config('request.jwt.claim.sub', '', false);
+set role anon;
+select t.ok((public.sales_invite_info(current_setting('t.minv'))->>'name') = 'Maria Lopez', 'sales invite shows who it is for');
+do $$ begin
+  begin perform public.claim_sales_invite(current_setting('t.minv')); perform t.ok(false, 'x');
+  exception when insufficient_privilege then perform t.ok(true, 'not-logged-in cannot claim a sales invite'); end;
+end $$;
+reset role;
+select set_config('request.jwt.claim.sub', :'E', false);
+set role authenticated;
+select public.claim_sales_invite(current_setting('t.minv'));
+reset role;
+select set_config('request.jwt.claim.sub', :'F', false);
+set role authenticated;
+select public.claim_sales_invite(current_setting('t.sinv'));
+reset role;
+select t.ok((select role from public.profiles where id = :'E') = 'sales', 'invite makes a sales login');
+
+-- Maria (sales)
+select set_config('request.jwt.claim.sub', :'E', false);
+set role authenticated;
+select t.ok((select count(*) from public.jobs) = 1, 'salesperson sees only her assigned job');
+select t.ok((select count(*) from public.job_costs) = 0, 'salesperson never sees crew pay');
+select t.ok((select count(*) from public.contractors) = 0, 'salesperson cannot read the crew list');
+select t.ok((select count(*) from public.profiles where id = :'A') = 1 and (select count(*) from public.profiles where id = :'B') = 0, 'salesperson sees her client''s profile, not other customers');
+select t.ok((select count(*) from public.job_events) > 0 and (select count(*) from public.documents) > 0, 'salesperson sees her client''s history and estimates');
+update public.job_private set notes = 'Maria: follow up Monday';
+select t.ok((select notes from public.job_private) = 'Maria: follow up Monday', 'salesperson can edit notes on her job');
+do $$ begin
+  begin update public.job_private set crew_token = 'x' || crew_token; perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'salesperson cannot change the crew link'); end;
+  begin update public.jobs set status = 'completed'; perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'salesperson cannot move a job past Qualifying'); end;
+  begin update public.jobs set contractor_id = null; perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'salesperson cannot assign crews'); end;
+  begin update public.jobs set sales_id = current_setting('t.sam')::uuid; perform t.ok(false, 'x');
+  exception when raise_exception or check_violation or insufficient_privilege then perform t.ok(true, 'salesperson cannot hand her job to someone else'); end;
+  begin update public.documents set status = 'void' where type = 'invoice'; perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'salesperson cannot void invoices'); end;
+  begin update public.documents set payments = '[]' where type = 'invoice'; perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'salesperson cannot change payments'); end;
+  begin update public.settings set data = '{}'; perform t.ok((select data->>'name' from public.settings) = 'Top Hat Contracting', 'salesperson cannot change company details'); end;
+end $$;
+-- her own new client from a phone call
+insert into public.jobs (sales_id, contact_name, contact_phone, entered_by, trade, description, address, status)
+  values (current_setting('t.maria')::uuid, 'Kim Caller', '(555) 909-1010', 'Maria L', 'painting', 'Repaint exterior trim', '7 Pine Ct', 'qualifying');
+select t.ok((select count(*) from public.jobs) = 2, 'salesperson adds her own clients');
+select public.log_call((select id from public.jobs where contact_name = 'Kim Caller'), 'Left voicemail', 'Try Monday');
+select t.ok(exists (select 1 from public.job_events where text = '📞 Call (Maria L): Left voicemail. Try Monday'), 'calls are logged with her name');
+insert into public.documents (job_id, type, items) select id, 'estimate', '[{"desc":"Trim","qty":1,"price":900}]' from public.jobs where contact_name = 'Kim Caller';
+update public.documents set status = 'sent' where number like 'E-%' and job_id = (select id from public.jobs where contact_name = 'Kim Caller');
+select t.ok(exists (select 1 from public.documents where status = 'sent' and job_id = (select id from public.jobs where contact_name = 'Kim Caller')), 'salesperson can create and send estimates');
+insert into storage.objects (bucket_id, name) select 'job-files', id || '/staff/site.jpg' from public.jobs where contact_name = 'Kim Caller';
+insert into public.job_files (job_id, path, name, source, by_name) select id, id || '/staff/site.jpg', 'site.jpg', 'staff', 'Maria L' from public.jobs where contact_name = 'Kim Caller';
+select t.ok((select count(*) from storage.objects where name like '%/staff/site.jpg') = 1, 'salesperson can upload and open files on her clients');
+select t.ok((select count(*) from storage.objects where name like '%estimate.pdf') = 1, 'salesperson can open files on her assigned job');
+do $$ begin
+  begin insert into public.jobs (sales_id, contact_name, trade, description, address, contractor_id) values (current_setting('t.maria')::uuid, 'X', 'x', 'xxxxx', 'y', (select id from public.contractors limit 1));
+    perform t.ok(false, 'x');
+  exception when raise_exception or foreign_key_violation then perform t.ok(true, 'salesperson cannot add a job with a crew'); end;
+  begin insert into public.jobs (sales_id, contact_name, trade, description, address) values (current_setting('t.sam')::uuid, 'X', 'x', 'xxxxx', 'y'); perform t.ok(false, 'x');
+  exception when raise_exception or insufficient_privilege or check_violation then perform t.ok(true, 'salesperson cannot add jobs for someone else'); end;
+  begin perform public.log_call(current_setting('t.pjob')::uuid, 'Talked', ''); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'salesperson cannot touch jobs that are not hers'); end;
+end $$;
+reset role;
+
+-- Sam (other salesperson) sees none of Maria's work
+select set_config('request.jwt.claim.sub', :'F', false);
+set role authenticated;
+select t.ok((select count(*) from public.jobs) = 0 and (select count(*) from public.documents) = 0 and (select count(*) from public.job_events) = 0, 'other salespeople see none of her clients');
+select t.ok((select count(*) from storage.objects) = 0, 'other salespeople cannot open her files');
+reset role;
+
+-- Customer and crew can't use sales tools
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+do $$ begin
+  begin perform public.log_call(current_setting('t.job')::uuid, 'Talked', ''); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'customers cannot log calls'); end;
+end $$;
+reset role;
+
+-- Owner sees everything, including who did what
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+select t.ok((select count(*) from public.jobs where sales_id = current_setting('t.maria')::uuid) = 2, 'owner sees all of Maria''s clients');
+select t.ok(exists (select 1 from public.job_events where text = 'Job entered by Maria L (sales)'), 'owner sees which jobs sales entered');
+select public.staff_revoke_sales(current_setting('t.maria')::uuid);
+reset role;
+select set_config('request.jwt.claim.sub', :'E', false);
+set role authenticated;
+select t.ok((select count(*) from public.jobs) = 0, 'turned-off sales login sees nothing');
 reset role;
 
 -- ========== Closed job: crew link off ==========

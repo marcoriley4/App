@@ -24,6 +24,12 @@ A job-request app for Top Hat Contracting. Customers post a job and create an ac
 - **Crew photo upload link:** each assigned job gets a private link, included at the end of the crew text (there's also a **Copy link** button). The contractor taps it, with no app or password, sees the job basics, picks **Before / During / After**, adds an optional note and uploads photos. They land in that job's Files, labeled with who sent them. Reassigning the job to another crew makes a new link and turns the old one off.
 - **Estimates & invoices:** create them from any job, prefilled with the customer, job number, address and description. Add line items and tax, then **Send to customer**. The customer sees it in My jobs and can **approve an estimate with one tap**, which also sets the job's customer price. You can **turn an approved estimate into an invoice** in one tap, and **record payments** by cash, check, Zelle, card, Venmo, Cash App or other, including partial payments. The invoice shows Partly paid, Paid or Overdue on its own. You can add an optional Square or Stripe **"Pay by card" link**, text or email the customer a link, void an invoice, and **print or save a PDF**. Approved estimates and paid invoices are locked. **Crew pay never appears** on any estimate or invoice.
 - **Business tab:** company name, phone, email, address, license #, default tax rate, invoice due days, "how customers can pay" (Zelle, Venmo and so on), and default terms. All of these print on every estimate and invoice.
+- **Sales team:** the owner adds salespeople under **Sales** and sends each one a one-time invite link (`sales.html?invite=…`). Salespeople log in on the same login page and land in the office area, but see **only their own clients**:
+  - **+ New job** for each call, and **📝 Log call** on any client with an outcome (talked, left voicemail, no answer, booked a visit, not interested) and a note. Calls are recorded with their name.
+  - Notes, files, moving leads from New to Qualifying (or Not a fit), and creating and sending estimates.
+  - They never see crew pay or profit, can't assign crews or dates or move jobs past Qualifying, can't record payments or void invoices, and have no access to Business settings, the crew list or other salespeople's clients.
+  - When a customer approves, the job goes to the owner's Today as "Approved: needs a crew & date."
+  - The owner's **Sales** tab shows each salesperson's clients, open leads, estimates, sold total and close rate. Tapping one shows **everything they're doing** (calls, new clients, estimates and updates, newest first) and their client list. Every job has a **Salesperson** the owner can assign or change, and the Jobs list can be filtered by salesperson.
 - **Contractor job page, start to finish:** contractors see **My jobs** grouped as Today / Upcoming / Finished. Each job opens to one big **Next step** button: **✓ I'll be there** (or **Can't make it** with a reason, which alerts the office) → **🚚 On my way** (then offers to text the customer) → **▶ Start work** → **✓ Finish job** (reminds them to add After photos) → **Done**, with their pay and time on the job. One-tap buttons are always there: **🧭 Directions, 📞 Call customer, 💬 Text customer** (ready-made texts: on my way, running late, I'm here, all done), **☎️ Call office, 📅 Add to calendar**. The page also has the customer's request photos, Before/During/After photo upload, notes with one-tap starters (need more materials, customer not home, found extra work, running late), Waiting on materials / Needs another visit / Undo, and start and finish times. The office sees who confirmed, **"Crew can't make it"** on Today, and the time on the job.
 - **Shared job progress (office ↔ crew):** both sides update the same progress, and changes show on the other side automatically, labeled with who made them and when. The crew get a progress bar (Scheduled → On the way → Working → Done) and buttons that match where the job is: **🚚 On my way**, **▶ Start work**, **⏸ Waiting on materials**, **🔁 Needs another visit**, **✓ Finished**, plus **↩ Undo** to step back. The office has the same options on the job's progress card. Crew updates show on **Today** ("New updates from your crew") and as a flag on the job card. The customer sees a friendly line ("Your crew is on the way", "We'll be back to finish").
 - **Crew notes:** the contractor on a job can write notes for the office ("need 2 more bundles", "customer not home") from their crew login (📝 Notes on each job) or the job's photo link. The office sees them in a **💬 Crew notes** card near the top of the job, with who wrote each one and when. The job shows **"💬 New crew note"** in the Leads list until someone opens it. Customers never see crew notes, and a contractor only sees their own.
@@ -37,7 +43,8 @@ A job-request app for Top Hat Contracting. Customers post a job and create an ac
 | Job details, address, schedule | ✓ | ✓ | ✓ (via text) |
 | Customer price | ✓ | only in documents you share | **never** |
 | Crew pay | ✓ | **never** | their own only (can be switched off) |
-| Profit | ✓ | **never** | **never** |
+| Profit | ✓ (owner/office) | **never** | **never** |
+| Salespeople | everything on **their own** clients except crew pay, profit, payments and crew/date assignment | | |
 | Internal (office) notes and activity | ✓ | never | never |
 | Crew notes | ✓ | never | their own only |
 | Estimates & invoices | ✓ (incl. drafts) | the ones you send (never drafts) | **never** |
@@ -55,6 +62,7 @@ Everyone uses **one login** (the **Log in** button on the customer site, or `adm
 
 In preview mode the login page has **"Try it as…"** buttons for three sample accounts:
 - **Top Hat office** (staff): **office@tophat.demo** / **tophat**
+- **Salesperson**: **maria@tophat.demo** / **sales1234**
 - **Customer**: **dana@example.com** / **demo1234**
 - **Contractor**: **ray@tophat.demo** / **crew1234**
 
@@ -78,7 +86,7 @@ Who-sees-what is enforced by the database (row-level security and storage polici
 - Prices, crew pay and notes live in the staff-only `job_private` table.
 - Crew reach a job only through its private upload code.
 
-`supabase/` also holds the security test that runs the schema against Postgres and checks each rule (135 checks).
+`supabase/` also holds the security test that runs the schema against Postgres and checks each rule (165 checks).
 
 ## Run it locally
 
@@ -92,6 +100,7 @@ python3 -m http.server 8000
 
 - `index.html`, `buyer.js`: customer site
 - `admin.html`, `admin.js`: staff area
+- `sales.html`, `sales.js`: salesperson invite (sets up a sales login)
 - `crew.html`, `crew.js`: crew sign-in and My jobs, crew invite setup, and the per-job photo upload page
 - `data.js`: preview data layer (`TH.api`, browser storage), plus the lists of trades, timeframes, budgets and statuses
 - `supabase-backend.js`: live data layer (same `TH.api`, backed by Supabase)

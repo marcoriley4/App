@@ -28,7 +28,7 @@ end $$;
 
 -- ---------- clean slate for re-runs ----------
 drop trigger if exists on_auth_user_created on auth.users;
-drop table if exists public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
+drop table if exists public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
 drop function if exists public.handle_new_user, public.is_staff, public.new_crew_token, public.owns_job,
   public.customer_can_read, public.crew_token_active, public.create_job, public.add_customer_file, public.my_jobs,
   public.crew_job, public.crew_add_file, public.jobs_after_insert, public.jobs_before_update, public.jobs_after_update,
@@ -36,7 +36,10 @@ drop function if exists public.handle_new_user, public.is_staff, public.new_crew
   public.doc_total, public.doc_paid, public.docs_before, public.docs_after, public.my_documents, public.respond_estimate,
   public.my_crew, public.staff_invite_crew, public.staff_revoke_crew, public.crew_invite_info, public.claim_crew_invite,
   public.crew_my_jobs, public.crew_set_status, public.crew_set_progress, public.crew_add_note,
-  public.jobs_before_update, public.stage_label, public.crew_respond, public.crew_can_read_customer cascade;
+  public.jobs_before_update, public.stage_label, public.crew_respond, public.crew_can_read_customer,
+  public.my_sales, public.can_access_job, public.office_can_see_profile, public.office_can_access_path, public.sales_guard,
+  public.private_guard, public.costs_after_update, public.log_call, public.staff_invite_sales, public.staff_revoke_sales,
+  public.sales_invite_info, public.claim_sales_invite cascade;
 
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
@@ -60,7 +63,7 @@ $$;
 -- ---------- people ----------
 create table public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
-  role text not null default 'buyer' check (role in ('buyer', 'staff', 'crew')),
+  role text not null default 'buyer' check (role in ('buyer', 'staff', 'crew', 'sales')),
   name text not null default '',
   email text not null default '',
   phone text not null default '',
@@ -98,6 +101,25 @@ create table public.contractors (
 );
 alter table public.profiles add column contractor_id uuid references public.contractors(id) on delete set null;
 
+-- Salespeople: log in to the office area and see only the clients assigned to them.
+create table public.salespeople (
+  id uuid primary key default gen_random_uuid(),
+  name text not null check (length(trim(name)) > 0),
+  phone text not null default '',
+  active boolean not null default true,
+  user_id uuid unique references public.profiles(id) on delete set null,
+  invite_code text unique,
+  created_at timestamptz not null default now()
+);
+alter table public.profiles add column sales_id uuid references public.salespeople(id) on delete set null;
+
+-- The logged-in salesperson's record (null if not sales, turned off, or inactive).
+create function public.my_sales() returns uuid
+language sql stable security definer set search_path = '' as $$
+  select s.id from public.salespeople s join public.profiles p on p.id = s.user_id
+   where p.id = auth.uid() and p.role = 'sales' and p.sales_id = s.id and s.active;
+$$;
+
 -- ---------- jobs ----------
 create table public.jobs (
   id uuid primary key default gen_random_uuid(),
@@ -115,6 +137,7 @@ create table public.jobs (
   budget text not null default '',
   status text not null default 'new' check (status in ('new', 'qualifying', 'scheduled', 'in_progress', 'completed', 'lost')),
   contractor_id uuid references public.contractors(id) on delete set null,
+  sales_id uuid references public.salespeople(id) on delete set null,   -- the salesperson who owns this client
   scheduled_for timestamp,
   -- Extra progress detail shared by office and crew, and who last changed progress.
   stage text check (stage in ('on_the_way', 'waiting_parts', 'return_visit')),
@@ -137,10 +160,15 @@ create index on public.jobs (status);
 create table public.job_private (
   job_id uuid primary key references public.jobs(id) on delete cascade,
   price numeric(12, 2) check (price >= 0),
-  crew_pay numeric(12, 2) check (crew_pay >= 0),
   notes text not null default '',
   crew_token text unique,
   crew_notes_seen_at timestamptz                      -- when the office last opened the crew notes
+);
+
+-- Owner/office only: what the crew is paid. Kept apart so salespeople can work with prices but never see it.
+create table public.job_costs (
+  job_id uuid primary key references public.jobs(id) on delete cascade,
+  crew_pay numeric(12, 2) check (crew_pay >= 0)
 );
 
 create table public.job_events (
@@ -191,7 +219,12 @@ language plpgsql security definer set search_path = '' as $$
 begin
   insert into public.job_private (job_id, crew_token)
   values (new.id, case when new.contractor_id is null then null else public.new_crew_token() end);
-  perform public.log_event(new.id, case when new.entered_by <> '' then 'Job entered by ' || new.entered_by || ' (office)' else 'Lead received' end);
+  insert into public.job_costs (job_id) values (new.id);
+  perform public.log_event(new.id, case when new.entered_by <> '' then 'Job entered by ' || new.entered_by
+    || case when new.sales_id is not null and not public.is_staff() then ' (sales)' else ' (office)' end else 'Lead received' end);
+  if new.sales_id is not null then
+    perform public.log_event(new.id, 'Salesperson → ' || coalesce((select name from public.salespeople where id = new.sales_id), 'sales'));
+  end if;
   if new.contractor_id is not null then
     perform public.log_event(new.id, 'Assigned to ' || coalesce((select name from public.contractors where id = new.contractor_id), 'crew'));
   end if;
@@ -231,6 +264,50 @@ end $$;
 create trigger jobs_before_update before update on public.jobs
   for each row execute function public.jobs_before_update();
 
+-- Office area access: staff reach every job; a salesperson only jobs assigned to them.
+create function public.can_access_job(j uuid) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select public.is_staff() or exists (select 1 from public.jobs x where x.id = j and x.sales_id is not null and x.sales_id = public.my_sales());
+$$;
+create function public.office_can_see_profile(pid uuid) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from public.jobs x where x.buyer_id = pid and public.can_access_job(x.id));
+$$;
+
+-- Salespeople can't schedule crews, set dates, reassign, or move jobs past Qualifying.
+create function public.sales_guard() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  if public.is_staff() or public.my_sales() is null then return new; end if;
+  if tg_op = 'INSERT' then
+    if new.sales_id is distinct from public.my_sales() or new.contractor_id is not null or new.scheduled_for is not null
+       or new.status not in ('new', 'qualifying') then
+      raise exception 'Salespeople add jobs for themselves; the office assigns crews and dates.';
+    end if;
+    return new;
+  end if;
+  if new.contractor_id is distinct from old.contractor_id or new.scheduled_for is distinct from old.scheduled_for
+     or new.sales_id is distinct from old.sales_id or new.stage is distinct from old.stage
+     or (new.status is distinct from old.status and new.status not in ('new', 'qualifying', 'lost')) then
+    raise exception 'Only the office can assign crews, dates or salespeople, or move a job past Qualifying.';
+  end if;
+  return new;
+end $$;
+create trigger jobs_sales_guard before insert or update on public.jobs
+  for each row execute function public.sales_guard();
+
+create function public.private_guard() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  if not public.is_staff() and auth.uid() is not null and public.my_sales() is not null
+     and (new.crew_token is distinct from old.crew_token or new.crew_notes_seen_at is distinct from old.crew_notes_seen_at) then
+    raise exception 'Only the office can change that.';
+  end if;
+  return new;
+end $$;
+create trigger private_guard before update on public.job_private
+  for each row execute function public.private_guard();
+
 create function public.jobs_after_update() returns trigger
 language plpgsql security definer set search_path = '' as $$
 declare cname text;
@@ -242,6 +319,9 @@ begin
   if new.stage is distinct from old.stage and (new.stage is not null or new.status is not distinct from old.status) then
     perform public.log_event(new.id, case when new.stage is null then 'Cleared “' || public.stage_label(old.stage) || '”' else public.stage_label(new.stage) end
       || case when new.progress_by <> '' then ' (by ' || new.progress_by || case when new.progress_by_crew then ', crew' else '' end || ')' else '' end);
+  end if;
+  if new.sales_id is distinct from old.sales_id then
+    perform public.log_event(new.id, 'Salesperson → ' || coalesce((select name from public.salespeople where id = new.sales_id), 'nobody'));
   end if;
   if new.contractor_id is distinct from old.contractor_id then
     select name into cname from public.contractors where id = new.contractor_id;
@@ -265,13 +345,21 @@ begin
   if new.price is distinct from old.price then
     perform public.log_event(new.job_id, 'Customer price → ' || public.usd(new.price));
   end if;
+  return new;
+end $$;
+create trigger private_after_update after update on public.job_private
+  for each row execute function public.private_after_update();
+
+create function public.costs_after_update() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
   if new.crew_pay is distinct from old.crew_pay then
     perform public.log_event(new.job_id, 'Crew pay → ' || public.usd(new.crew_pay));
   end if;
   return new;
 end $$;
-create trigger private_after_update after update on public.job_private
-  for each row execute function public.private_after_update();
+create trigger costs_after_update after update on public.job_costs
+  for each row execute function public.costs_after_update();
 
 create function public.files_after_change() returns trigger
 language plpgsql security definer set search_path = '' as $$
@@ -300,20 +388,31 @@ alter table public.job_events enable row level security;
 alter table public.job_files enable row level security;
 alter table public.crew_notes enable row level security;
 
-create policy "own profile or staff" on public.profiles for select to authenticated using (id = auth.uid() or public.is_staff());
+create policy "own profile or staff" on public.profiles for select to authenticated
+  using (id = auth.uid() or public.is_staff() or (public.my_sales() is not null and public.office_can_see_profile(id)));
 create policy "update own profile" on public.profiles for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
 
 create policy "staff only" on public.contractors for all to authenticated using (public.is_staff()) with check (public.is_staff());
-create policy "staff only" on public.jobs for all to authenticated using (public.is_staff()) with check (public.is_staff());
-create policy "staff only" on public.job_private for all to authenticated using (public.is_staff()) with check (public.is_staff());
-create policy "staff only" on public.job_events for select to authenticated using (public.is_staff());
-create policy "staff only" on public.job_files for all to authenticated using (public.is_staff()) with check (public.is_staff());
-create policy "staff read" on public.crew_notes for select to authenticated using (public.is_staff());
+create policy "office read" on public.jobs for select to authenticated using (public.can_access_job(id));
+create policy "office add" on public.jobs for insert to authenticated with check (public.is_staff() or (public.my_sales() is not null and sales_id = public.my_sales()));
+create policy "office edit" on public.jobs for update to authenticated using (public.can_access_job(id)) with check (public.is_staff() or sales_id = public.my_sales());
+create policy "staff delete" on public.jobs for delete to authenticated using (public.is_staff());
+create policy "office read" on public.job_private for select to authenticated using (public.can_access_job(job_id));
+create policy "office edit" on public.job_private for update to authenticated using (public.can_access_job(job_id)) with check (public.can_access_job(job_id));
+create policy "staff only" on public.job_costs for all to authenticated using (public.is_staff()) with check (public.is_staff());
+create policy "office read" on public.job_events for select to authenticated using (public.can_access_job(job_id));
+create policy "office files" on public.job_files for all to authenticated using (public.can_access_job(job_id)) with check (public.can_access_job(job_id));
+create policy "office read" on public.crew_notes for select to authenticated using (public.can_access_job(job_id));
+alter table public.salespeople enable row level security;
+alter table public.job_costs enable row level security;
+create policy "staff all, sales self" on public.salespeople for select to authenticated using (public.is_staff() or id = public.my_sales());
+create policy "staff edit" on public.salespeople for all to authenticated using (public.is_staff()) with check (public.is_staff());
 create policy "staff delete" on public.crew_notes for delete to authenticated using (public.is_staff());
 
 -- Belt and braces: the public (not logged in) role can't touch tables at all,
 -- and logged-in users can only edit their own name and phone, never their role.
-revoke all on public.profiles, public.contractors, public.jobs, public.job_private, public.job_events, public.job_files, public.crew_notes from anon;
+revoke all on public.profiles, public.contractors, public.jobs, public.job_private, public.job_events, public.job_files, public.crew_notes, public.salespeople, public.job_costs from anon;
+revoke insert, delete on public.job_private from authenticated;
 revoke insert, update on public.crew_notes from authenticated;
 revoke update on public.profiles from authenticated;
 grant update (name, phone) on public.profiles to authenticated;
@@ -495,6 +594,9 @@ begin
   if new.payments is distinct from old.payments and (old.type <> 'invoice' or old.status in ('draft', 'void')) then
     raise exception 'Send the invoice before recording payments.';
   end if;
+  if public.my_sales() is not null and not public.is_staff() and (new.payments is distinct from old.payments or new.status = 'void') then
+    raise exception 'Only the office can record payments or void invoices.';
+  end if;
   if new.status = 'sent' and old.status = 'draft' then new.sent_at := now(); end if;
   return new;
 end $$;
@@ -543,7 +645,7 @@ alter table public.settings enable row level security;
 alter table public.documents enable row level security;
 create policy "logged in can read" on public.settings for select to authenticated using (true);
 create policy "staff edit" on public.settings for update to authenticated using (public.is_staff()) with check (public.is_staff());
-create policy "staff only" on public.documents for all to authenticated using (public.is_staff()) with check (public.is_staff());
+create policy "office only" on public.documents for all to authenticated using (public.can_access_job(job_id)) with check (public.can_access_job(job_id));
 revoke all on public.settings, public.documents from anon;
 revoke insert, delete on public.settings from authenticated;
 
@@ -648,7 +750,7 @@ begin
                            where f.job_id = j.id and f.source = 'customer' and f.mime like 'image/%'),
       'address', j.address, 'zip', j.zip, 'description', j.description,
       'customer_name', coalesce(b.name, j.contact_name), 'customer_phone', coalesce(b.phone, j.contact_phone), 'crew_token', p.crew_token,
-      'crew_pay', case when coalesce(show_pay, true) then p.crew_pay end,
+      'crew_pay', case when coalesce(show_pay, true) then (select k.crew_pay from public.job_costs k where k.job_id = j.id) end,
       'photos', (select count(*) from public.job_files f where f.job_id = j.id and f.source = 'crew' and f.contractor_id = cid),
       'notes', (select coalesce(jsonb_agg(jsonb_build_object('id', n.id, 'text', n.text, 'created_at', n.created_at) order by n.created_at), '[]'::jsonb)
                   from public.crew_notes n where n.job_id = j.id and n.contractor_id = cid)
@@ -737,6 +839,69 @@ begin
   perform public.log_event(jid, coalesce(cname, 'Crew') || ' added a crew note');
 end $$;
 
+-- ---------- sales team ----------
+-- Office or salesperson: record a phone call on a job they can reach.
+create function public.log_call(p_job uuid, p_outcome text, p_note text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare who text; note text := left(trim(coalesce(p_note, '')), 500);
+begin
+  if not public.can_access_job(p_job) then raise exception 'Job not found.'; end if;
+  if length(trim(coalesce(p_outcome, ''))) = 0 then raise exception 'Pick how the call went.'; end if;
+  select name into who from public.profiles where id = auth.uid();
+  perform public.log_event(p_job, '📞 Call (' || coalesce(who, 'office') || '): ' || left(trim(p_outcome), 40) || case when note <> '' then '. ' || note else '' end);
+end $$;
+
+create function public.staff_invite_sales(p_sales uuid) returns text
+language plpgsql security definer set search_path = '' as $$
+declare code text;
+begin
+  if not public.is_staff() then raise exception 'Please log in as Top Hat staff.'; end if;
+  if exists (select 1 from public.salespeople where id = p_sales and user_id is not null) then raise exception 'This salesperson already has a login.'; end if;
+  update public.salespeople set invite_code = public.new_crew_token() where id = p_sales returning invite_code into code;
+  if code is null then raise exception 'Salesperson not found.'; end if;
+  return code;
+end $$;
+
+create function public.staff_revoke_sales(p_sales uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.is_staff() then raise exception 'Please log in as Top Hat staff.'; end if;
+  update public.profiles set sales_id = null where id = (select user_id from public.salespeople where id = p_sales);
+  update public.salespeople set user_id = null, invite_code = null where id = p_sales;
+end $$;
+
+create function public.sales_invite_info(p_code text) returns jsonb
+language sql stable security definer set search_path = '' as $$
+  select jsonb_build_object('name', name) from public.salespeople
+   where length(coalesce(p_code, '')) >= 32 and invite_code = p_code and user_id is null;
+$$;
+
+create function public.claim_sales_invite(p_code text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare x public.salespeople;
+begin
+  if auth.uid() is null then raise exception 'Please create your login first.'; end if;
+  select * into x from public.salespeople
+   where length(coalesce(p_code, '')) >= 32 and invite_code = p_code and user_id is null for update;
+  if x.id is null then raise exception 'This invite link has already been used or was cancelled. Ask the office for a new one.'; end if;
+  if exists (select 1 from public.profiles where id = auth.uid() and role <> 'buyer')
+     or exists (select 1 from public.jobs where buyer_id = auth.uid()) then
+    raise exception 'That email already has an account. Use a different email, or ask the office.';
+  end if;
+  update public.profiles set role = 'sales', sales_id = x.id,
+         name = coalesce(nullif(name, ''), x.name), phone = coalesce(nullif(phone, ''), x.phone)
+   where id = auth.uid();
+  update public.salespeople set user_id = auth.uid(), invite_code = null where id = x.id;
+end $$;
+
+-- Files: a salesperson reaches files on their own clients' jobs.
+create function public.office_can_access_path(p text) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from public.job_files f where f.path = p and public.can_access_job(f.job_id))
+      or (split_part(p, '/', 1) ~ '^[0-9a-f-]{36}$' and split_part(p, '/', 2) = 'staff'
+          and public.can_access_job(split_part(p, '/', 1)::uuid));
+$$;
+
 -- ---------- function permissions ----------
 revoke execute on all functions in schema public from public, anon, authenticated;
 grant execute on function public.is_staff(), public.owns_job(text), public.customer_can_read(text),
@@ -744,7 +909,10 @@ grant execute on function public.is_staff(), public.owns_job(text), public.custo
   public.my_jobs(), public.my_documents(), public.respond_estimate(uuid, boolean),
   public.staff_invite_crew(uuid), public.staff_revoke_crew(uuid), public.claim_crew_invite(text),
   public.crew_my_jobs(), public.crew_set_progress(uuid, text, text), public.crew_respond(uuid, text, text),
-  public.crew_can_read_customer(text) to authenticated;
+  public.crew_can_read_customer(text), public.my_sales(), public.can_access_job(uuid), public.office_can_see_profile(uuid),
+  public.office_can_access_path(text), public.log_call(uuid, text, text), public.staff_invite_sales(uuid), public.staff_revoke_sales(uuid),
+  public.claim_sales_invite(text) to authenticated;
+grant execute on function public.sales_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_add_note(text, uuid, text) to anon, authenticated;
 grant execute on function public.crew_token_active(text), public.crew_job(text),
@@ -762,7 +930,11 @@ drop policy if exists "th customer read shared" on storage.objects;
 drop policy if exists "th crew upload" on storage.objects;
 drop policy if exists "th crew read own" on storage.objects;
 drop policy if exists "th crew read customer photos" on storage.objects;
+drop policy if exists "th sales files" on storage.objects;
 
+create policy "th sales files" on storage.objects for all to authenticated
+  using (bucket_id = 'job-files' and public.my_sales() is not null and public.office_can_access_path(name))
+  with check (bucket_id = 'job-files' and public.my_sales() is not null and public.office_can_access_path(name));
 create policy "th staff all files" on storage.objects for all to authenticated
   using (bucket_id = 'job-files' and public.is_staff())
   with check (bucket_id = 'job-files' and public.is_staff());

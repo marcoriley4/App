@@ -185,11 +185,14 @@
     const buyerPw = await hash('demo1234');
     const c1 = uid(), c2 = uid(), c3 = uid(), cu3 = uid();
     const crewPw = await hash('crew1234');
+    const s1 = uid(), su1 = uid();
+    const salesPw = await hash('sales1234');
     const b1 = uid(), b2 = uid();
     return {
       users: [
         { id: uid(), role: 'staff', name: 'Top Hat Office', email: 'office@tophat.demo', phone: '', password: pw, created: now },
         { id: b1, role: 'buyer', name: 'Dana Whitfield', email: 'dana@example.com', phone: '(555) 201-3344', password: buyerPw, created: now - 30 * H },
+        { id: su1, role: 'sales', salesId: s1, name: 'Maria Lopez', email: 'maria@tophat.demo', phone: '(555) 444-1212', password: salesPw, created: now - 300 * H },
         { id: cu3, role: 'crew', contractorId: c3, name: 'Ray Johnson', email: 'ray@tophat.demo', phone: '(555) 300-4455', password: crewPw, created: now - 200 * H },
         { id: b2, role: 'buyer', name: 'Luis Romero', email: 'luis@example.com', phone: '(555) 410-9821', password: buyerPw, created: now - 75 * H },
       ],
@@ -210,8 +213,9 @@
           id: uid(), buyerId: b2, trade: 'painting', status: 'qualifying', created: now - 26 * H,
           description: 'Interior painting for 3 bedrooms and a hallway. Walls only, ceilings are fine.',
           address: '18 Oak Ridge Dr, Springfield', zip: '62711', timeframe: '2weeks', budget: '1-5k', photos: [],
-          number: 1002, files: [], contractorId: null, scheduledFor: null, price: 3200, crewPay: null, notes: 'Called, wants a quote by Friday. Rooms are roughly 12x12.',
-          log: [{ at: now - 26 * H, text: 'Lead received' }, { at: now - 20 * H, text: 'Status → Qualifying' }],
+          number: 1002, files: [], salesId: s1, contractorId: null, scheduledFor: null, price: 3200, crewPay: null, notes: 'Called, wants a quote by Friday. Rooms are roughly 12x12.',
+          log: [{ at: now - 26 * H, text: 'Lead received' }, { at: now - 22 * H, text: 'Salesperson → Maria Lopez' },
+            { at: now - 21 * H, text: '📞 Call (Maria Lopez): Talked. Wants a quote by Friday.' }, { at: now - 20 * H, text: 'Status → Qualifying' }],
         },
         {
           id: uid(), buyerId: b1, trade: 'roofing', status: 'scheduled', created: now - 70 * H,
@@ -232,6 +236,7 @@
         },
       ],
       nextNumber: 1004,
+      team: [{ id: s1, name: 'Maria Lopez', phone: '(555) 444-1212', active: true, userId: su1, inviteCode: null }],
       settings: { ...DEFAULT_SETTINGS },
     };
   }
@@ -239,6 +244,7 @@
   // Bring older preview data up to date.
   function migrate(d) {
     d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
+    d.team = d.team || [];
     d.nextNumber = d.nextNumber || Math.max(1000, ...d.jobs.map((j) => j.number || 0)) + 1;
     d.jobs.slice().sort((a, b) => a.created - b.created).forEach((j) => {
       if (!j.number) j.number = d.nextNumber++;
@@ -262,7 +268,7 @@
     if (digits(phone).length < 10) throw new Error('Please enter a phone number we can call, with area code.');
     if (!password || password.length < 8) throw new Error('Password must be at least 8 characters.');
   }
-  const clean = (u) => u && { id: u.id, role: u.role, name: u.name, email: u.email, phone: u.phone };
+  const clean = (u) => u && { id: u.id, role: u.role, name: u.name, email: u.email, phone: u.phone, salesId: u.salesId || null };
   const normEmail = (e) => String(e || '').trim().toLowerCase();
   const digits = (p) => String(p || '').replace(/\D/g, '');
 
@@ -284,6 +290,24 @@
     if (!c) throw new Error('Your crew login is turned off. Ask the Top Hat office if this is a mistake.');
     return { d, u, c };
   }
+
+  // Office area: staff (owner/office) see everything; salespeople only the clients assigned to them.
+  async function requireOffice() {
+    const d = await db();
+    const u = d.users.find((x) => x.id === getSession());
+    if (u && u.role === 'staff') return { d, u: clean(u), isStaff: true, salesId: null };
+    const sp = u && u.role === 'sales' && (d.team || []).find((x) => x.id === u.salesId && x.userId === u.id && x.active !== false);
+    if (sp) return { d, u: clean(u), isStaff: false, salesId: sp.id };
+    if (u && u.role === 'sales') throw new Error('Your sales login is turned off. Ask the Top Hat office if this is a mistake.');
+    throw new Error('Please log in as Top Hat staff.');
+  }
+  async function officeJob(jobId) {
+    const ctx = await requireOffice();
+    const j = ctx.d.jobs.find((x) => x.id === jobId);
+    if (!j || (!ctx.isStaff && j.salesId !== ctx.salesId)) throw new Error('Job not found.');
+    return { ...ctx, j };
+  }
+  const SALES_STATUSES = ['new', 'qualifying', 'lost'];
 
   async function withUrl(f) {
     const blob = await blobs.get(f.id).catch(() => null);
@@ -354,7 +378,7 @@
       },
       // Office: enter a job for a customer who called in. Optionally assign a crew and date right away.
       async createForCustomer(input) {
-        const staff = await requireStaff();
+        const { u: staff, isStaff, salesId } = await requireOffice();
         const d = await db();
         const name = String(input.name || '').trim();
         if (!name) throw new Error('Enter the customer’s name.');
@@ -363,16 +387,17 @@
         if (!String(input.address || '').trim()) throw new Error('Enter the job address.');
         const existing = input.customerId ? d.users.find((u) => u.id === input.customerId && u.role === 'buyer') : null;
         const now = Date.now();
-        const crewOk = input.contractorId && d.contractors.some((c) => c.id === input.contractorId);
+        const crewOk = isStaff && input.contractorId && d.contractors.some((c) => c.id === input.contractorId);
+        const owner = isStaff ? ((d.team || []).some((x) => x.id === input.salesId) ? input.salesId : null) : salesId;
         const rec = {
-          id: uid(), number: d.nextNumber++, buyerId: existing ? existing.id : null,
+          id: uid(), number: d.nextNumber++, buyerId: existing ? existing.id : null, salesId: owner,
           contact: existing ? null : { name, phone: String(input.phone || '').trim(), email: normEmail(input.email) },
           status: crewOk && input.scheduledFor ? 'scheduled' : 'qualifying', created: now, files: [], docs: [],
           trade: input.trade || 'other', description: input.description.trim(), address: input.address.trim(), zip: String(input.zip || '').trim(),
           timeframe: input.timeframe || '', budget: '', photos: [],
           contractorId: crewOk ? input.contractorId : null, crewToken: crewOk ? newToken() : null, scheduledFor: input.scheduledFor || null,
           price: null, crewPay: null, notes: '',
-          log: [{ at: now, text: `Job entered by ${staff.name} (office)` }],
+          log: [{ at: now, text: `Job entered by ${staff.name} (${isStaff ? 'office' : 'sales'})` }],
         };
         if (crewOk) rec.log.push({ at: now, text: `Assigned to ${d.contractors.find((c) => c.id === input.contractorId).name}` });
         d.jobs.push(rec); writeDb(d);
@@ -396,33 +421,45 @@
       },
       // Staff: every crew note on a job, newest first. Opening them marks them seen.
       async crewNotes(id) {
-        await requireStaff();
-        const d = await db();
-        const j = d.jobs.find((x) => x.id === id);
-        if (!j) return [];
-        j.crewNotesSeenAt = Date.now();
-        writeDb(d);
+        const { d, j, isStaff } = await officeJob(id);
+        if (isStaff) { j.crewNotesSeenAt = Date.now(); writeDb(d); } // "seen" means seen by the office
         return (j.crewNotes || []).slice().reverse().map((n) => ({ ...n }));
       },
       // Staff: a job's activity history, oldest first.
       async log(id) {
-        await requireStaff();
+        await officeJob(id);
         const j = (await db()).jobs.find((x) => x.id === id);
         return j ? j.log.slice() : [];
       },
       // Staff view: everything, with buyer contact details attached.
       async all() {
-        await requireStaff();
-        const d = await db();
-        return d.jobs.slice().sort((a, b) => b.created - a.created).map((j) => {
-          return { ...j, buyer: customerOf(d, j), hasAccount: !!j.buyerId };
-        });
+        const { d, isStaff, salesId } = await requireOffice();
+        return d.jobs.filter((j) => isStaff || j.salesId === salesId).sort((a, b) => b.created - a.created).map((j) => (
+          // Salespeople never see crew pay (so never profit either).
+          { ...j, crewPay: isStaff ? j.crewPay : null, buyer: customerOf(d, j), hasAccount: !!j.buyerId }));
+      },
+      // Office or sales: record a phone call and how it went.
+      async logCall(id, outcome, note = '') {
+        const { d, u, j } = await officeJob(id);
+        if (!outcome) throw new Error('Pick how the call went.');
+        note = String(note || '').trim().slice(0, 500);
+        j.log.push({ at: Date.now(), text: `📞 Call (${u.name}): ${outcome}${note ? '. ' + note : ''}` });
+        writeDb(d);
       },
       async update(id, patch) {
-        await requireStaff();
+        const { isStaff } = await officeJob(id);
         const d = await db();
         const j = d.jobs.find((x) => x.id === id);
         if (!j) throw new Error('Job not found.');
+        if (!isStaff) {
+          if (['contractorId', 'scheduledFor', 'crewPay', 'salesId', 'stage'].some((k) => k in patch)) throw new Error('Only the office can assign crews, dates, crew pay or salespeople.');
+          if ('status' in patch && !SALES_STATUSES.includes(patch.status)) throw new Error('The office moves jobs to Scheduled and beyond.');
+        }
+        if ('salesId' in patch && patch.salesId !== (j.salesId || null)) {
+          const sp = (d.team || []).find((x) => x.id === patch.salesId);
+          j.log.push({ at: Date.now(), text: `Salesperson → ${sp ? sp.name : 'nobody'}` });
+          j.salesId = sp ? sp.id : null;
+        }
         const cname = (cid) => d.contractors.find((c) => c.id === cid)?.name || 'nobody';
         const staffUser = await me();
         if ('status' in patch || 'stage' in patch) applyProgress(j, { status: patch.status, stage: patch.stage }, staffUser.name, false);
@@ -445,13 +482,11 @@
     files: {
       // Staff: every file in the job's folder, each with a temporary URL to open it.
       async list(jobId) {
-        await requireStaff();
-        const j = (await db()).jobs.find((x) => x.id === jobId);
-        if (!j) return [];
+        const { j } = await officeJob(jobId);
         return Promise.all(j.files.map(withUrl));
       },
       async upload(jobId, file, kind) {
-        const u = await requireStaff();
+        const { u } = await officeJob(jobId);
         if (file.size > MAX_FILE_MB * 1024 * 1024) throw new Error(`"${file.name}" is over ${MAX_FILE_MB} MB.`);
         const d = await db();
         const j = d.jobs.find((x) => x.id === jobId);
@@ -465,7 +500,7 @@
         return meta;
       },
       async update(jobId, fileId, patch) {
-        await requireStaff();
+        await officeJob(jobId);
         const d = await db();
         const j = d.jobs.find((x) => x.id === jobId);
         const f = j && j.files.find((x) => x.id === fileId);
@@ -475,7 +510,7 @@
         writeDb(d);
       },
       async remove(jobId, fileId) {
-        await requireStaff();
+        await officeJob(jobId);
         const d = await db();
         const j = d.jobs.find((x) => x.id === jobId);
         const f = j && j.files.find((x) => x.id === fileId);
@@ -512,12 +547,11 @@
     // Estimates & invoices. Crew pay is never part of these.
     docs: {
       async list(jobId) {
-        await requireStaff();
-        const j = (await db()).jobs.find((x) => x.id === jobId);
-        return j ? JSON.parse(JSON.stringify(j.docs)) : [];
+        const { j } = await officeJob(jobId);
+        return JSON.parse(JSON.stringify(j.docs));
       },
       async save(jobId, doc) {
-        await requireStaff();
+        await officeJob(jobId);
         const d = await db();
         const j = d.jobs.find((x) => x.id === jobId);
         if (!j) throw new Error('Job not found.');
@@ -544,7 +578,7 @@
         return JSON.parse(JSON.stringify(rec));
       },
       async send(jobId, docId) {
-        await requireStaff();
+        await officeJob(jobId);
         const d = await db();
         const j = d.jobs.find((x) => x.id === jobId);
         const rec = j && j.docs.find((x) => x.id === docId);
@@ -556,7 +590,8 @@
       },
       // Staff: mark an estimate approved/declined (e.g. customer said yes by phone), or void an invoice.
       async setStatus(jobId, docId, status) {
-        const u = await requireStaff();
+        const { u, isStaff } = await officeJob(jobId);
+        if (!isStaff && status === 'void') throw new Error('Only the office can void invoices.');
         const d = await db();
         const j = d.jobs.find((x) => x.id === jobId);
         const rec = j && j.docs.find((x) => x.id === docId);
@@ -564,13 +599,13 @@
         const ok = rec.type === 'estimate' ? ['approved', 'declined'].includes(status) && rec.status === 'sent'
           : status === 'void' && rec.status !== 'void';
         if (!ok) throw new Error('That change isn’t allowed.');
-        rec.status = status; rec.respondedAt = Date.now(); rec.respondedBy = `${u.name} (office)`;
+        rec.status = status; rec.respondedAt = Date.now(); rec.respondedBy = `${u.name} (${isStaff ? 'office' : 'sales'})`;
         if (status === 'approved') { j.price = docTotal(rec); j.log.push({ at: Date.now(), text: `Customer price → ${usd(j.price)} (from ${rec.number})` }); }
-        j.log.push({ at: Date.now(), text: `${rec.number} marked ${status} by office` });
+        j.log.push({ at: Date.now(), text: `${rec.number} marked ${status} by ${u.name}` });
         writeDb(d);
       },
       async remove(jobId, docId) {
-        await requireStaff();
+        await officeJob(jobId);
         const d = await db();
         const j = d.jobs.find((x) => x.id === jobId);
         const rec = j && j.docs.find((x) => x.id === docId);
@@ -678,7 +713,8 @@
 
     contractors: {
       async list() {
-        await requireStaff();
+        const ctx = await requireOffice();
+        if (!ctx.isStaff) return [];
         const d = await db();
         return d.contractors.map((c) => {
           const u = c.userId && d.users.find((x) => x.id === c.userId);
@@ -725,6 +761,85 @@
         if (u) u.contractorId = null;
         c.userId = null; c.inviteCode = null;
         writeDb(d);
+      },
+    },
+
+    // Sales team: the owner/office manage salespeople and see everything they do.
+    team: {
+      async list() {
+        const ctx = await requireOffice();
+        const d = ctx.d;
+        return (d.team || []).filter((x) => ctx.isStaff || x.id === ctx.salesId).map((x) => {
+          const u = x.userId && d.users.find((y) => y.id === x.userId);
+          return { ...x, login: u ? 'active' : x.inviteCode ? 'invited' : 'none', loginEmail: u ? u.email : '' };
+        });
+      },
+      async save(x) {
+        await requireStaff();
+        if (!x.name?.trim()) throw new Error('Salesperson needs a name.');
+        const d = await db();
+        const fields = { name: x.name.trim(), phone: (x.phone || '').trim(), active: x.active !== false };
+        const existing = (d.team || []).find((y) => y.id === x.id);
+        if (existing) Object.assign(existing, fields);
+        else d.team.push({ id: uid(), userId: null, inviteCode: null, ...fields });
+        writeDb(d);
+      },
+      async remove(id) {
+        await requireStaff();
+        const d = await db();
+        const x = d.team.find((y) => y.id === id);
+        if (x && x.userId) { const u = d.users.find((y) => y.id === x.userId); if (u) u.salesId = null; }
+        d.team = d.team.filter((y) => y.id !== id);
+        d.jobs.forEach((j) => { if (j.salesId === id) j.salesId = null; });
+        writeDb(d);
+      },
+      async invite(id) {
+        await requireStaff();
+        const d = await db();
+        const x = d.team.find((y) => y.id === id);
+        if (!x) throw new Error('Salesperson not found.');
+        if (x.userId) throw new Error(`${x.name} already has a login.`);
+        x.inviteCode = newToken();
+        writeDb(d);
+        return x.inviteCode;
+      },
+      async revokeLogin(id) {
+        await requireStaff();
+        const d = await db();
+        const x = d.team.find((y) => y.id === id);
+        if (!x) return;
+        const u = x.userId && d.users.find((y) => y.id === x.userId);
+        if (u) u.salesId = null;
+        x.userId = null; x.inviteCode = null;
+        writeDb(d);
+      },
+      // Everything happening on a salesperson's clients, newest first.
+      async activity(id) {
+        await requireStaff();
+        const d = await db();
+        const mine = d.jobs.filter((j) => j.salesId === id);
+        const events = mine.flatMap((j) => j.log.map((l) => ({ ...l, jobId: j.id, number: j.number, customer: customerOf(d, j).name })))
+          .sort((a, b) => b.at - a.at).slice(0, 60);
+        return { events };
+      },
+      inviteInfo: async (code) => {
+        const d = await db();
+        const x = code && code.length >= 32 && (d.team || []).find((y) => y.inviteCode === code);
+        return x ? { name: x.name } : null;
+      },
+      async acceptInvite(code, { email, password }) {
+        const d = await db();
+        const x = code && code.length >= 32 && (d.team || []).find((y) => y.inviteCode === code);
+        if (!x) throw new Error('This invite link has already been used or was cancelled. Ask the office for a new one.');
+        email = normEmail(email);
+        if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error('Please enter a valid email address.');
+        if (!password || password.length < 8) throw new Error('Password must be at least 8 characters.');
+        if (d.users.some((u) => u.email === email)) throw new Error('That email already has an account. Use a different email, or ask the office.');
+        const user = { id: uid(), role: 'sales', salesId: x.id, name: x.name, email, phone: x.phone || '', password: await hash(password), created: Date.now() };
+        d.users.push(user);
+        x.userId = user.id; x.inviteCode = null;
+        writeDb(d); setSession(user.id);
+        return clean(user);
       },
     },
 
@@ -855,7 +970,7 @@
 
   /* ---------- one login for everyone ---------- */
   // Where each kind of account goes after logging in.
-  const HOME = { staff: 'admin.html', crew: 'crew.html', buyer: 'index.html#/jobs' };
+  const HOME = { staff: 'admin.html', sales: 'admin.html', crew: 'crew.html', buyer: 'index.html#/jobs' };
   const here = () => location.pathname.split('/').pop() || 'index.html';
   function goHome(u, onCustomer) {
     const dest = HOME[u.role] || HOME.buyer;
@@ -871,6 +986,7 @@
   // Sample accounts for trying each side of the app (preview mode only).
   const DEMO_ACCOUNTS = [
     { icon: '🎩', label: 'Top Hat office', sub: 'Staff: leads, crew, estimates & invoices', email: 'office@tophat.demo', password: 'tophat' },
+    { icon: '📞', label: 'Salesperson', sub: 'Maria: her own clients, calls & estimates', email: 'maria@tophat.demo', password: 'sales1234' },
     { icon: '🏠', label: 'Customer', sub: 'Dana: her jobs, estimates & invoices', email: 'dana@example.com', password: 'demo1234' },
     { icon: '👷', label: 'Contractor', sub: 'Ray: his assigned jobs & pay', email: 'ray@tophat.demo', password: 'crew1234' },
   ];

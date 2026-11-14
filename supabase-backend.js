@@ -80,13 +80,20 @@
     const user = data.session && data.session.user;
     if (!user) { profile = null; return null; }
     if (profile && profile.id === user.id) return profile;
-    const { data: p } = await sb.from('profiles').select('id, role, name, email, phone').eq('id', user.id).maybeSingle();
+    const { data: p } = await sb.from('profiles').select('id, role, name, email, phone, sales_id').eq('id', user.id).maybeSingle();
+    if (p) p.salesId = p.sales_id || null;
     profile = p || { id: user.id, role: 'buyer', name: user.user_metadata?.name || '', email: user.email, phone: user.user_metadata?.phone || '' };
     return profile;
   }
   async function requireStaff() {
     const u = await me();
     if (!u || u.role !== 'staff') throw new Error('Please log in as Top Hat staff.');
+    return u;
+  }
+  // Office area: staff, or a salesperson (the database limits them to their own clients).
+  async function requireOffice() {
+    const u = await me();
+    if (!u || !['staff', 'sales'].includes(u.role)) throw new Error('Please log in as Top Hat staff.');
     return u;
   }
 
@@ -149,15 +156,17 @@
         }));
       },
       async all() {
-        await requireStaff();
-        const [jobs, priv, files, people, papers, cnotes] = await Promise.all([
+        const u = await requireOffice();
+        const [jobs, priv, files, people, papers, cnotes, costs] = await Promise.all([
           fetchAll(() => sb.from('jobs').select('*').order('created_at', { ascending: false })),
           fetchAll(() => sb.from('job_private').select('*')),
           fetchAll(() => sb.from('job_files').select('id, job_id, kind')),
           fetchAll(() => sb.from('profiles').select('id, name, email, phone')),
           fetchAll(() => sb.from('documents').select('id, job_id, type, number, status, items, tax_rate, due_date, payments')),
           fetchAll(() => sb.from('crew_notes').select('id, job_id, created_at')),
+          u.role === 'staff' ? fetchAll(() => sb.from('job_costs').select('job_id, crew_pay')) : Promise.resolve([]),
         ]);
+        const costBy = Object.fromEntries(costs.map((c) => [c.job_id, c.crew_pay]));
         const notesBy = {};
         cnotes.forEach((n) => { (notesBy[n.job_id] ||= []).push({ id: n.id, at: ms(n.created_at) }); });
         const docsBy = {};
@@ -172,7 +181,8 @@
             id: j.id, number: j.number, buyerId: j.buyer_id, trade: j.trade, status: j.status, created: ms(j.created_at),
             description: j.description, address: j.address, zip: j.zip, timeframe: j.timeframe, budget: j.budget, photos: [],
             contractorId: j.contractor_id, scheduledFor: local16(j.scheduled_for),
-            price: num(p.price), crewPay: num(p.crew_pay), notes: p.notes || '', crewToken: p.crew_token || null,
+            salesId: j.sales_id || null,
+            price: num(p.price), crewPay: num(costBy[j.id]), notes: p.notes || '', crewToken: p.crew_token || null,
             files: filesBy[j.id] || [], docs: docsBy[j.id] || [],
             crewNotes: notesBy[j.id] || [], crewNotesSeenAt: ms(p.crew_notes_seen_at) || 0,
             buyer: peopleBy[j.buyer_id] || { name: j.contact_name || 'Unknown', email: j.contact_email || '', phone: j.contact_phone || '' },
@@ -184,14 +194,15 @@
         });
       },
       async crewNotes(id) {
-        await requireStaff();
+        const u = await requireOffice();
         const rows = must(await sb.from('crew_notes').select('id, by_name, text, created_at').eq('job_id', id).order('created_at', { ascending: false }));
-        await sb.from('job_private').update({ crew_notes_seen_at: new Date().toISOString() }).eq('job_id', id);
+        if (u.role === 'staff') await sb.from('job_private').update({ crew_notes_seen_at: new Date().toISOString() }).eq('job_id', id);
         return rows.map((n) => ({ id: n.id, at: ms(n.created_at), by: n.by_name, text: n.text }));
       },
       // Office: enter a job for a customer who called in; optionally assign crew and date.
       async createForCustomer(input) {
-        const staff = await requireStaff();
+        const staff = await requireOffice();
+        const isSales = staff.role === 'sales';
         const name = String(input.name || '').trim();
         const phone = String(input.phone || '').trim();
         const email = normEmail(input.email);
@@ -199,25 +210,32 @@
         if (phone.replace(/\D/g, '').length < 10 && !/^\S+@\S+\.\S+$/.test(email)) throw new Error('Enter a phone number (with area code) or an email so you can reach them.');
         if (String(input.description || '').trim().length < 5) throw new Error('Describe the job in a few words.');
         if (!String(input.address || '').trim()) throw new Error('Enter the job address.');
-        const scheduled = input.contractorId && input.scheduledFor;
+        const scheduled = !isSales && input.contractorId && input.scheduledFor;
         const row = must(await sb.from('jobs').insert({
           buyer_id: input.customerId || null,
           contact_name: input.customerId ? '' : name, contact_phone: input.customerId ? '' : phone, contact_email: input.customerId ? '' : email,
           entered_by: staff.name || 'Office',
           trade: input.trade || 'other', description: input.description.trim(), address: input.address.trim(), zip: String(input.zip || '').trim(),
           timeframe: input.timeframe || '', status: scheduled ? 'scheduled' : 'qualifying',
-          contractor_id: input.contractorId || null, scheduled_for: input.scheduledFor || null,
+          contractor_id: isSales ? null : input.contractorId || null, scheduled_for: isSales ? null : input.scheduledFor || null,
+          sales_id: isSales ? staff.salesId : input.salesId || null,
         }).select('id').single());
         return row.id;
       },
+      async logCall(id, outcome, note = '') {
+        await requireOffice();
+        if (!outcome) throw new Error('Pick how the call went.');
+        must(await sb.rpc('log_call', { p_job: id, p_outcome: outcome, p_note: note || '' }));
+      },
       async log(id) {
-        await requireStaff();
+        await requireOffice();
         const rows = await fetchAll(() => sb.from('job_events').select('at, text').eq('job_id', id).order('at').order('id'));
         return rows.map((r) => ({ at: ms(r.at), text: r.text }));
       },
       async update(id, patch) {
-        await requireStaff();
+        await requireOffice();
         const jobPatch = {}, privPatch = {};
+        if ('salesId' in patch) jobPatch.sales_id = patch.salesId || null;
         if ('status' in patch) jobPatch.status = patch.status;
         if ('stage' in patch) jobPatch.stage = patch.stage;
         if ('status' in patch || 'stage' in patch) {
@@ -227,7 +245,7 @@
         if ('contractorId' in patch) jobPatch.contractor_id = patch.contractorId;
         if ('scheduledFor' in patch) jobPatch.scheduled_for = patch.scheduledFor;
         if ('price' in patch) privPatch.price = patch.price;
-        if ('crewPay' in patch) privPatch.crew_pay = patch.crewPay;
+        if ('crewPay' in patch) must(await sb.from('job_costs').update({ crew_pay: patch.crewPay }).eq('job_id', id));
         if ('notes' in patch) privPatch.notes = patch.notes;
         if (Object.keys(jobPatch).length) must(await sb.from('jobs').update(jobPatch).eq('id', id));
         if (Object.keys(privPatch).length) must(await sb.from('job_private').update(privPatch).eq('job_id', id));
@@ -236,13 +254,13 @@
 
     files: {
       async list(jobId) {
-        await requireStaff();
+        await requireOffice();
         const rows = must(await sb.from('job_files').select('*').eq('job_id', jobId).order('uploaded_at'));
         const urls = await signedUrls(rows.map((r) => r.path));
         return rows.map((r) => mapFile(r, urls[r.path]));
       },
       async upload(jobId, file, kind) {
-        const u = await requireStaff();
+        const u = await requireOffice();
         tooBig(file);
         const path = `${jobId}/staff/${rid()}-${safeName(file.name)}`;
         await upload(path, file);
@@ -253,14 +271,14 @@
         if (error) { await sb.storage.from(BUCKET).remove([path]); throw new Error(friendly(error)); }
       },
       async update(jobId, fileId, patch) {
-        await requireStaff();
+        await requireOffice();
         const p = {};
         if ('kind' in patch) p.kind = patch.kind;
         if ('shared' in patch) p.shared = patch.shared;
         must(await sb.from('job_files').update(p).eq('id', fileId));
       },
       async remove(jobId, fileId) {
-        await requireStaff();
+        await requireOffice();
         const row = must(await sb.from('job_files').select('path').eq('id', fileId).maybeSingle());
         if (!row) return;
         must(await sb.from('job_files').delete().eq('id', fileId));
@@ -291,11 +309,11 @@
 
     docs: {
       async list(jobId) {
-        await requireStaff();
+        await requireOffice();
         return must(await sb.from('documents').select('*').eq('job_id', jobId).order('created_at')).map(mapDoc);
       },
       async save(jobId, doc) {
-        await requireStaff();
+        await requireOffice();
         const row = {
           items: (doc.items || []).map((i) => ({ desc: String(i.desc || '').trim(), qty: Number(i.qty) || 0, price: Number(i.price) || 0 })),
           tax_rate: Number(doc.taxRate) || 0, notes: doc.notes || '', due_date: doc.dueDate || null, pay_link: (doc.payLink || '').trim(),
@@ -305,17 +323,17 @@
         return mapDoc(must(await sb.from('documents').insert({ ...row, job_id: jobId, type: doc.type, from_estimate: doc.fromEstimateId || null, number: 'pending' }).select().single()));
       },
       async send(jobId, docId) {
-        await requireStaff();
+        await requireOffice();
         const r = await getDoc(docId);
         if (!(r.items || []).some((i) => i.desc && i.qty && i.price)) throw new Error('Add at least one line with a description, quantity and price.');
         must(await sb.from('documents').update({ status: 'sent' }).eq('id', docId));
       },
       async setStatus(jobId, docId, status) {
-        const u = await requireStaff();
+        const u = await requireOffice();
         must(await sb.from('documents').update({ status, responded_at: new Date().toISOString(), responded_by: `${u.name} (office)` }).eq('id', docId));
       },
       async remove(jobId, docId) {
-        await requireStaff();
+        await requireOffice();
         must(await sb.from('documents').delete().eq('id', docId));
       },
       async addPayment(jobId, docId, p) {
@@ -369,7 +387,7 @@
 
     contractors: {
       async list() {
-        await requireStaff();
+        await requireOffice();
         const rows = await fetchAll(() => sb.from('contractors').select('*').order('name'));
         const ids = rows.map((c) => c.user_id).filter(Boolean);
         const emails = ids.length ? Object.fromEntries(must(await sb.from('profiles').select('id, email').in('id', ids)).map((p) => [p.id, p.email])) : {};
@@ -447,6 +465,59 @@
       async setStatus(jobId, status) { return api.crewPortal.setProgress(jobId, { status }); },
       async respond(jobId, response, note = '') {
         must(await sb.rpc('crew_respond', { p_job: jobId, p_response: response, p_note: note || '' }));
+      },
+    },
+
+    team: {
+      async list() {
+        const u = await requireOffice();
+        const rows = await fetchAll(() => sb.from('salespeople').select('*').order('name'));
+        const ids = rows.map((x) => x.user_id).filter(Boolean);
+        const emails = u.role === 'staff' && ids.length ? Object.fromEntries(must(await sb.from('profiles').select('id, email').in('id', ids)).map((p) => [p.id, p.email])) : {};
+        return rows.map((x) => ({ id: x.id, name: x.name, phone: x.phone, active: x.active,
+          login: x.user_id ? 'active' : x.invite_code ? 'invited' : 'none', inviteCode: x.invite_code || null, loginEmail: emails[x.user_id] || '' }));
+      },
+      async save(x) {
+        await requireStaff();
+        if (!x.name || !x.name.trim()) throw new Error('Salesperson needs a name.');
+        const row = { name: x.name.trim(), phone: (x.phone || '').trim(), active: x.active !== false };
+        if (x.id) must(await sb.from('salespeople').update(row).eq('id', x.id));
+        else must(await sb.from('salespeople').insert(row));
+      },
+      async remove(id) {
+        await requireStaff();
+        must(await sb.rpc('staff_revoke_sales', { p_sales: id }));
+        must(await sb.from('salespeople').delete().eq('id', id));
+      },
+      async invite(id) { await requireStaff(); return must(await sb.rpc('staff_invite_sales', { p_sales: id })); },
+      async revokeLogin(id) { await requireStaff(); must(await sb.rpc('staff_revoke_sales', { p_sales: id })); },
+      // Everything happening on a salesperson's clients, newest first.
+      async activity(id) {
+        await requireStaff();
+        const jobs = must(await sb.from('jobs').select('id, number, buyer_id, contact_name').eq('sales_id', id));
+        if (!jobs.length) return { events: [] };
+        const people = Object.fromEntries((must(await sb.from('profiles').select('id, name').in('id', jobs.map((j) => j.buyer_id).filter(Boolean)))).map((p) => [p.id, p.name]));
+        const byId = Object.fromEntries(jobs.map((j) => [j.id, j]));
+        const rows = must(await sb.from('job_events').select('job_id, at, text').in('job_id', jobs.map((j) => j.id)).order('at', { ascending: false }).limit(60));
+        return { events: rows.map((r) => ({ at: ms(r.at), text: r.text, jobId: r.job_id, number: byId[r.job_id].number,
+          customer: people[byId[r.job_id].buyer_id] || byId[r.job_id].contact_name || 'Customer' })) };
+      },
+      async inviteInfo(code) {
+        if (!code || code.length < 32) return null;
+        return must(await sb.rpc('sales_invite_info', { p_code: code })) || null;
+      },
+      async acceptInvite(code, { email, password }) {
+        const info = await api.team.inviteInfo(code);
+        if (!info) throw new Error('This invite link has already been used or was cancelled. Ask the office for a new one.');
+        email = normEmail(email);
+        if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error('Please enter a valid email address.');
+        if (!password || password.length < 8) throw new Error('Password must be at least 8 characters.');
+        const data = must(await sb.auth.signUp({ email, password, options: { data: { name: info.name } } }));
+        if (!data.session) throw new Error('That email already has an account, or needs confirming. Use a different email, or ask the office.');
+        const { error } = await sb.rpc('claim_sales_invite', { p_code: code });
+        if (error) { await sb.auth.signOut(); profile = null; throw new Error(friendly(error)); }
+        profile = null;
+        return me();
       },
     },
 

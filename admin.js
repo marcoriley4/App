@@ -12,6 +12,9 @@
   let jobs = [];
   let crew = [];
   let settings = {};
+  let team = [];
+  let meUser = null;
+  let isStaff = true; // false for salespeople
   const docs = TH.docs;
   const siteUrl = () => new URL('index.html', location.href).href;
   const addDays = (n) => { const d = new Date(Date.now() + n * 86400e3); return new Date(d - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 10); };
@@ -48,7 +51,7 @@
   async function boot() {
     const me = await api.auth.me();
     const nav = document.getElementById('nav');
-    if (!me || me.role !== 'staff') {
+    if (!me || !['staff', 'sales'].includes(me.role)) {
       nav.replaceChildren(el('a', { class: 'btn ghost small', href: 'index.html' }, 'Customer site'));
       return loginView(me);
     }
@@ -56,18 +59,24 @@
       el('a', { class: 'btn ghost small', href: 'index.html', target: '_blank' }, 'Customer site'),
       el('button', { class: 'link small', onclick: async () => { await api.auth.signOut(); location.reload(); } }, 'Log out'),
     );
-    await load();
+    meUser = me; isStaff = me.role === 'staff';
+    if (!isStaff) document.querySelector('.logo small').textContent = 'Sales';
+    try { await load(); } catch (err) { await api.auth.signOut(); return loginView(null, err.message); }
+    if (!(isStaff ? MAIN_TABS : SALES_TABS).some(([id]) => id === tab)) tab = 'today';
     render();
   }
-  async function load() { [jobs, crew, settings] = await Promise.all([api.jobs.all(), api.contractors.list(), api.settings.get()]); }
+  async function load() { [jobs, crew, settings, team] = await Promise.all([api.jobs.all(), api.contractors.list(), api.settings.get(), api.team.list()]); }
 
-  function loginView(me) {
-    view.replaceChildren(TH.loginForm({ note: me ? `You're signed in as ${me.email}, which isn't a staff account. Log in with a staff account, or open your own area.` : '' }));
+  function loginView(me, note) {
+    view.replaceChildren(TH.loginForm({ note: note || (me ? `You're signed in as ${me.email}, which isn't a staff account. Log in with a staff account, or open your own area.` : '') }));
   }
 
   /* ---------- main ---------- */
-  const MAIN_TABS = [['today', 'Today'], ['jobs', 'Jobs'], ['crew', 'Crew'], ['business', 'Business']];
+  const MAIN_TABS = [['today', 'Today'], ['jobs', 'Jobs'], ['sales', 'Sales'], ['crew', 'Crew'], ['business', 'Business']];
+  const SALES_TABS = [['today', 'Today'], ['jobs', 'My clients']];
   if (MAIN_TABS.some(([id]) => id === location.hash.slice(1))) tab = location.hash.slice(1);
+  const salesName = (id) => team.find((x) => x.id === id)?.name;
+  let salesFilter = ''; // owner: show one salesperson's jobs ('' = everyone, 'none' = unassigned)
 
   // What needs attention, grouped in plain language. Shared by Today and the job cards.
   const hasNewNote = (j) => (j.crewNotes || []).some((n) => n.at > (j.crewNotesSeenAt || 0));
@@ -83,6 +92,9 @@
   const dayKey = (ms) => { const x = new Date(ms); return new Date(x - x.getTimezoneOffset() * 60e3).toISOString().slice(0, 10); };
   const timeOf = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const crewName = (j) => find(crew, j.contractorId)?.name;
+
+  // Approved estimate totals: what a salesperson has sold.
+  const soldTotal = (list) => list.reduce((t, j) => t + (j.docs || []).filter((d) => d.type === 'estimate' && d.status === 'approved').reduce((u, d) => u + docs.totals(d).total, 0), 0);
 
   function buckets() {
     const open = jobs.filter((j) => j.status !== 'lost');
@@ -112,23 +124,26 @@
         line: (j) => `${j.scheduledFor.slice(0, 10) === today ? 'Today' : 'Tomorrow'} ${timeOf(j.scheduledFor)} · ${crewName(j) || 'No crew yet'}` },
     ];
   }
-  const attentionCount = () => buckets().filter((b) => !b.info).reduce((t, b) => t + b.list.length, 0);
+  // Salespeople only see what's theirs to act on: calls to make and estimates waiting.
+  const SALES_BUCKETS = ['new', 'waiting'];
+  const myBuckets = () => buckets().filter((b) => isStaff || SALES_BUCKETS.includes(b.id));
+  const attentionCount = () => myBuckets().filter((b) => !b.info).reduce((t, b) => t + b.list.length, 0);
 
   function render() {
     const todo = attentionCount();
     const newCount = jobs.filter((j) => j.status === 'new').length;
     const tabs = el('div', { class: 'tabs-bar main-tabs', role: 'tablist', style: 'margin-top:8px' },
-      ...MAIN_TABS.map(([id, label]) => el('button', { role: 'tab', 'aria-current': String(tab === id), onclick: () => { tab = id; history.replaceState(null, '', '#' + id); render(); } },
+      ...(isStaff ? MAIN_TABS : SALES_TABS).map(([id, label]) => el('button', { role: 'tab', 'aria-current': String(tab === id), onclick: () => { tab = id; history.replaceState(null, '', '#' + id); render(); } },
         label,
         id === 'today' && todo ? el('span', { class: 'count hot' }, String(todo)) : null,
         id === 'jobs' && newCount ? el('span', { class: 'count' }, String(newCount)) : null)));
-    const body = tab === 'today' ? todayView() : tab === 'jobs' ? leadsView() : tab === 'crew' ? crewView() : businessView();
+    const body = tab === 'today' ? todayView() : tab === 'jobs' ? leadsView() : tab === 'sales' ? salesTeamView() : tab === 'crew' ? crewView() : businessView();
     view.replaceChildren(tabs, el('div', { class: 'stack', style: 'margin:16px 0' }, body));
   }
 
   /* ---------- today ---------- */
   function todayView() {
-    const bs = buckets();
+    const bs = myBuckets();
     const today = dayKey(Date.now()), weekEnd = dayKey(Date.now() + 7 * 86400e3);
     const thisWeek = jobs.filter((j) => ['scheduled', 'in_progress'].includes(j.status) && j.scheduledFor && j.scheduledFor.slice(0, 10) >= today && j.scheduledFor.slice(0, 10) <= weekEnd).length;
     const kpi = (v, k) => el('div', { class: 'kpi' }, el('b', {}, String(v)), el('span', {}, k));
@@ -149,7 +164,9 @@
         el('div', { style: 'flex:1;min-width:0' }, el('h1', {}, h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'),
           el('p', { class: 'muted' }, new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }))),
         el('button', { class: 'gold', onclick: () => newJobForm() }, '+ New job')),
-      el('div', { class: 'kpis three' }, kpi(bs[0].list.length, 'New leads'), kpi(thisWeek, 'Jobs this week'), kpi(docs.usd(jobs.reduce((t, j) => t + owedOn(j), 0)), 'Owed to you')),
+      isStaff ? el('div', { class: 'kpis three' }, kpi(bs[0].list.length, 'New leads'), kpi(thisWeek, 'Jobs this week'), kpi(docs.usd(jobs.reduce((t, j) => t + owedOn(j), 0)), 'Owed to you'))
+        : el('div', { class: 'kpis three' }, kpi(jobs.filter((j) => ['new', 'qualifying'].includes(j.status)).length, 'Open leads'),
+          kpi(jobs.filter((j) => estWith(j, 'sent')).length, 'Estimates out'), kpi(money(soldTotal(jobs)), 'Sold')),
       ...(sections.length ? sections : [el('div', { class: 'card caught-up' },
         el('div', { style: 'font-size:2.4rem' }, '🎉'), el('h2', {}, 'All caught up'), el('p', { class: 'muted' }, 'Nothing needs your attention right now.'))]),
       el('button', { class: 'ghost block', onclick: () => { tab = 'jobs'; history.replaceState(null, '', '#jobs'); render(); } }, 'See all jobs →'),
@@ -170,7 +187,11 @@
     const filterBar = el('div', { class: 'tabs-bar' }, ...FILTERS.map(([id, label, fn]) =>
       el('button', { 'aria-current': String(filter === id), onclick: () => { filter = id; render(); } }, label, el('span', { class: 'count' }, String(jobs.filter(fn).length)))));
     const matches = (j, q) => !q || [jobNo(j), String(j.number), j.buyer.name, j.buyer.phone, j.buyer.email, j.address, j.zip, j.description, tradeOf(j.trade).label].join(' ').toLowerCase().includes(q);
-    const inFilter = FILTERS.find(([id]) => id === filter)[2];
+    const byStatus = FILTERS.find(([id]) => id === filter)[2];
+    const inFilter = (j) => byStatus(j) && (!salesFilter || (salesFilter === 'none' ? !j.salesId : j.salesId === salesFilter));
+    const salesSel = isStaff && team.length ? el('select', { 'aria-label': 'Salesperson', onchange: (e) => { salesFilter = e.target.value; render(); } },
+      el('option', { value: '' }, 'All salespeople'), el('option', { value: 'none', selected: salesFilter === 'none' }, 'No salesperson'),
+      ...team.map((x) => el('option', { value: x.id, selected: salesFilter === x.id }, `💼 ${x.name}`))) : null;
     const renderList = () => {
       const q = search.trim().toLowerCase();
       const list = jobs.filter((j) => inFilter(j) && matches(j, q));
@@ -180,7 +201,7 @@
     let listWrap = renderList();
     const searchBox = el('input', { type: 'search', placeholder: 'Search name, phone, address, job #…', value: search, 'aria-label': 'Search jobs',
       oninput: (e) => { search = e.target.value; const list = renderList(); listWrap.replaceWith(list); listWrap = list; } });
-    return [el('div', { class: 'row' }, el('h2', { style: 'flex:1' }, 'Jobs'), el('button', { class: 'gold', onclick: () => newJobForm() }, '+ New job')), filterBar, searchBox, listWrap];
+    return [el('div', { class: 'row' }, el('h2', { style: 'flex:1' }, isStaff ? 'Jobs' : 'My clients'), el('button', { class: 'gold', onclick: () => newJobForm() }, '+ New job')), filterBar, salesSel, searchBox, listWrap];
   }
 
   function leadCard(j) {
@@ -201,7 +222,7 @@
       el('span', { class: 'body' },
         el('span', { class: 'line1' }, el('b', {}, j.buyer.name), el('span', { class: 'spacer' }), el('span', { class: `pill s-${j.status}` }, statusOf(j.status).label)),
         el('span', { class: 'muted small' }, `${t.label} · ${jobNo(j)} · ${j.zip || j.address}${j.status === 'new' ? ' · ' + ago(j.created) : ''}`),
-        j.scheduledFor || c ? el('span', { class: 'small' }, [j.scheduledFor ? '📅 ' + fmtWhen(j.scheduledFor) : null, c ? '👷 ' + c.name : null].filter(Boolean).join('   ')) : null,
+        j.scheduledFor || c || (isStaff && j.salesId) ? el('span', { class: 'small' }, [j.scheduledFor ? '📅 ' + fmtWhen(j.scheduledFor) : null, c ? '👷 ' + c.name : null, isStaff && salesName(j.salesId) ? '💼 ' + salesName(j.salesId) : null].filter(Boolean).join('   ')) : null,
         flags.length ? el('span', { class: 'flags' }, ...flags.map(([txt, cls]) => el('span', { class: 'flag ' + cls }, txt))) : null),
     );
   }
@@ -237,14 +258,36 @@
     }
 
     // Summary: who, where, when, crew, money, at a glance.
+    // Log a call: who called, how it went. Shows in the job history and the owner's Sales view.
+    let callOutcome = '';
+    const callNote = el('input', { type: 'text', placeholder: 'Quick note (optional)', autocomplete: 'off', maxlength: '500' });
+    const outcomeBtns = el('div', { class: 'stage-chips' });
+    const drawOutcomes = () => outcomeBtns.replaceChildren(...['Talked', 'Left voicemail', 'No answer', 'Booked a visit', 'Not interested'].map((o) =>
+      el('button', { type: 'button', class: 'chip', 'aria-pressed': String(callOutcome === o), onclick: () => { callOutcome = o; drawOutcomes(); } }, o)));
+    drawOutcomes();
+    const callBox = el('div', { class: 'call-box stack', hidden: true },
+      el('b', { class: 'small' }, 'How did the call go?'), outcomeBtns, callNote,
+      el('button', { type: 'button', onclick: async (e) => {
+        e.currentTarget.disabled = true;
+        try { await api.jobs.logCall(j.id, callOutcome, callNote.value); await load(); flashSaved(); openLead(j.id); }
+        catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; e.currentTarget.disabled = false; }
+      } }, 'Save call'));
+    const lastCall = history.slice().reverse().find((l) => l.text.startsWith('📞 Call'));
     const summary = el('section', { class: 'card stack summary' },
       el('div', { class: 'row' }, el('span', { class: 'avatar' }, initials(b.name)),
         el('div', { style: 'flex:1;min-width:0' }, el('h2', {}, b.name), el('p', { class: 'muted small' }, `${t.icon} ${t.label} · ${jobNo(j)}`))),
       el('div', { class: 'contact' },
         b.phone ? el('a', { class: 'btn ghost small', href: telHref(b.phone) }, '📞 Call') : null,
+        el('button', { type: 'button', class: 'ghost small', onclick: () => { callBox.hidden = !callBox.hidden; } }, '📝 Log call'),
         b.phone ? el('a', { class: 'btn ghost small', href: smsHref(b.phone) }, '💬 Text') : null,
         b.email ? el('a', { class: 'btn ghost small', href: `mailto:${b.email}?subject=${encodeURIComponent('Your ' + t.label.toLowerCase() + ' request with Top Hat Contracting')}` }, '✉️ Email') : null),
+      callBox,
       el('ul', { class: 'facts' },
+        isStaff ? el('li', {}, el('span', { class: 'fi' }, '💼'), team.length
+          ? el('select', { class: 'inline-select', 'aria-label': 'Salesperson', onchange: (e) => update({ salesId: e.target.value || null }) },
+            el('option', { value: '' }, 'No salesperson'), ...team.map((x) => el('option', { value: x.id, selected: x.id === j.salesId }, x.name)))
+          : el('span', { class: 'muted' }, 'No sales team yet')) : null,
+        lastCall ? el('li', {}, el('span', { class: 'fi' }, '📞'), el('span', { class: 'muted' }, `${lastCall.text.replace(/^📞 Call /, 'Last call ')} · ${ago(lastCall.at)}`)) : null,
         el('li', {}, el('span', { class: 'fi' }, '📍'), el('a', { href: 'https://maps.google.com/?q=' + encodeURIComponent(`${j.address} ${j.zip}`), target: '_blank', rel: 'noopener' }, `${j.address} ${j.zip}`)),
         el('li', {}, el('span', { class: 'fi' }, '📅'), j.scheduledFor ? el('span', {}, fmtWhen(j.scheduledFor)) : el('span', { class: 'muted' }, 'Not scheduled yet')),
         el('li', {}, el('span', { class: 'fi' }, '👷'), assigned ? el('span', {}, assigned.name,
@@ -275,9 +318,9 @@
     const progress = el('section', { class: 'card stack' },
       el('div', { class: 'row' }, el('h3', {}, 'Progress'), el('span', { class: 'spacer' }), savedNote),
       el('div', { class: 'stepper', role: 'group', 'aria-label': 'Job status' }, ...FLOW.map(([s, label], i) =>
-        el('button', { type: 'button', class: i < at ? 'done' : i === at ? 'on' : '', 'aria-pressed': String(i === at), 'aria-label': `Status: ${label}`, onclick: () => j.status !== s && update({ status: s }) },
+        el('button', { type: 'button', class: i < at ? 'done' : i === at ? 'on' : '', 'aria-pressed': String(i === at), 'aria-label': `Status: ${label}`, disabled: !isStaff && !['new', 'qualifying'].includes(s), onclick: () => j.status !== s && update({ status: s }) },
           el('span', { class: 'dot' }, i < at ? '✓' : String(i + 1)), el('span', { class: 'lbl' }, label)))),
-      (TH.STAGES || []).some((x) => x.status === j.status) ? el('div', { class: 'stage-chips' },
+      isStaff && (TH.STAGES || []).some((x) => x.status === j.status) ? el('div', { class: 'stage-chips' },
         ...TH.STAGES.filter((x) => x.status === j.status).map((x) => el('button', { type: 'button', class: 'chip', 'aria-pressed': String(j.stage === x.id),
           onclick: () => update({ stage: j.stage === x.id ? null : x.id }) }, `${x.icon} ${x.label}`))) : null,
       j.progressAt ? el('p', { class: 'small last-update' + (j.progressByCrew ? ' crew' : '') },
@@ -351,13 +394,13 @@
       e.preventDefault();
       const price = num(priceInput.value), crewPay = num(payInput.value);
       if ((price != null && price < 0) || (crewPay != null && crewPay < 0)) { errorBox.textContent = 'Prices can’t be negative.'; errorBox.hidden = false; return; }
-      update({ price, crewPay });
+      update(isStaff ? { price, crewPay } : { price });
     } },
       el('div', { class: 'row' }, el('h3', {}, 'Prices'), el('span', { class: 'spacer' }), el('span', { class: 'pill lock' }, '🔒 Staff only')),
       el('div', { class: 'two' },
         el('label', { class: 'field' }, 'Customer price', el('span', { class: 'hint' }, 'What the customer pays'), priceInput),
-        el('label', { class: 'field' }, 'Crew pay', el('span', { class: 'hint' }, 'What you pay the crew'), payInput)),
-      profitOut,
+        isStaff ? el('label', { class: 'field' }, 'Crew pay', el('span', { class: 'hint' }, 'What you pay the crew'), payInput) : el('span')),
+      isStaff ? profitOut : null,
       el('button', { type: 'submit' }, 'Save prices'),
       el('p', { class: 'muted small' }, 'The crew never sees the customer price or your profit. The customer never sees crew pay.'),
     );
@@ -445,6 +488,10 @@
     const draftInv = invs.find((d) => d.status === 'draft');
     const owedInv = invs.find((d) => docs.owed(d) > 0);
     const crewFirst = assigned ? assigned.name.split(' ')[0] : '';
+    const salesHandoff = el('section', { class: 'card stack' },
+      el('h3', {}, '👷 Crew & schedule'),
+      el('p', { class: 'small' }, assigned ? `${assigned.name}${j.scheduledFor ? ' · ' + fmtWhen(j.scheduledFor) : ''}` : j.scheduledFor ? `Scheduled ${fmtWhen(j.scheduledFor)}` : 'Not scheduled yet.'),
+      el('p', { class: 'muted small' }, 'The office picks the crew and date once the customer approves the estimate.'));
     let step;
     if (j.status === 'lost') {
       step = { icon: '🚫', title: 'This job is closed (Not a fit).', act: ['Reopen as a new lead', () => update({ status: 'new' })], ghost: true };
@@ -482,6 +529,12 @@
       else if (!invs.length) step = { icon: '🧾', title: 'Job finished: send the invoice', why: invoiceBase ? `It starts from approved estimate ${invoiceBase.number}.` : 'Add the work and the total.', act: ['+ Create invoice', () => openDoc(j.id, null, 'invoice', invoiceBase)] };
       else step = { icon: '🎉', title: 'All done: paid in full', why: 'Nice work.' };
     }
+    // Salespeople hand off once it's approved; the office takes it from there.
+    if (!isStaff && (approvedEst || !['new', 'qualifying', 'lost'].includes(j.status))) {
+      step = ['new', 'qualifying'].includes(j.status)
+        ? { icon: '✅', title: 'Sold! The office will schedule it', why: `${first} approved ${approvedEst.number}. It’s on the office’s list to pick a crew and date.` }
+        : { icon: '👷', title: `With the office: ${statusOf(j.status).label}`, why: j.scheduledFor ? `Scheduled ${fmtWhen(j.scheduledFor)}` : 'The office is handling scheduling and the work.' };
+    }
     const nextCard = step ? el('section', { class: 'card next-step' },
       el('span', { class: 'eyebrow' }, 'Next step'),
       el('div', { class: 'row', style: 'align-items:flex-start' }, el('span', { class: 'next-ic' }, step.icon),
@@ -498,7 +551,7 @@
     function renderTab() {
       tabsBar.replaceChildren(...TABS.map(([id, label]) => el('button', { role: 'tab', 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } }, label)));
       const content = {
-        overview: [nextCard, progress, crewNotes.length ? crewNotesCard() : null, setup, details],
+        overview: [nextCard, progress, crewNotes.length ? crewNotesCard() : null, isStaff ? setup : salesHandoff, details],
         money: [moneyCard, docsCard],
         files: [filesCard],
         history: [notesCard, crewNotesCard(), log],
@@ -559,6 +612,7 @@
         const id = await api.jobs.createForCustomer({
           customerId: match && f.get('useAccount') === 'on' ? match.id : null,
           name: f.get('name'), phone: f.get('phone'), email: f.get('email'),
+          salesId: f.get('salesId') || null,
           trade: f.get('trade'), description: f.get('description'), address: f.get('address'), zip: f.get('zip'),
           timeframe: f.get('timeframe'), contractorId: f.get('contractorId') || null, scheduledFor: f.get('scheduledFor') || null,
         });
@@ -580,7 +634,10 @@
           el('label', { class: 'field', style: 'grid-column:1/-1' }, 'Address', el('input', { name: 'address', autocomplete: 'off', placeholder: 'Street, city' })),
           el('label', { class: 'field' }, 'ZIP', el('input', { name: 'zip', inputmode: 'numeric', maxlength: '5', autocomplete: 'off' })),
           el('label', { class: 'field' }, 'Needed', el('select', { name: 'timeframe' }, ...TIMEFRAMES.map((t) => el('option', { value: t.id }, t.label)))))),
-      el('section', { class: 'card stack' },
+      isStaff && team.length ? el('section', { class: 'card stack' },
+        el('h3', {}, 'Salesperson ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(optional)')),
+        el('select', { name: 'salesId' }, el('option', { value: '' }, '— None —'), ...team.filter((x) => x.active !== false).map((x) => el('option', { value: x.id }, x.name)))) : null,
+      !isStaff ? null : el('section', { class: 'card stack' },
         el('h3', {}, '3. Crew & date ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(optional)')),
         el('p', { class: 'muted small' }, 'Pick both and the job is scheduled right away. It shows up in that contractor’s crew login, and you can text them the details.'),
         el('label', { class: 'field' }, 'Crew', el('span', { class: 'hint' }, '★ = does this kind of work'), crewSel),
@@ -699,7 +756,7 @@
 
     // Payments (invoices that have been sent)
     let paymentsCard = null;
-    if (isInv && !isNew && !['draft', 'void'].includes(doc.status)) {
+    if (isStaff && isInv && !isNew && !['draft', 'void'].includes(doc.status)) {
       const tt = docs.totals(doc);
       const amount = el('input', { type: 'number', inputmode: 'decimal', min: '0.01', step: '0.01', value: tt.balance > 0 ? tt.balance : '', 'aria-label': 'Amount received' });
       const method = el('select', { 'aria-label': 'Payment method' }, ...docs.METHODS.map((m) => el('option', {}, m)));
@@ -780,6 +837,129 @@
       el('button', { type: 'submit' }, 'Save'),
     );
     return [form];
+  }
+
+  /* ---------- sales team (owner/office) ---------- */
+  function salesStats(id) {
+    const mine = jobs.filter((j) => j.salesId === id);
+    const ests = mine.flatMap((j) => (j.docs || []).filter((d) => d.type === 'estimate' && d.status !== 'draft'));
+    const approved = ests.filter((d) => d.status === 'approved').length;
+    return {
+      clients: mine.length,
+      open: mine.filter((j) => ['new', 'qualifying'].includes(j.status)).length,
+      sent: ests.length, approved, sold: soldTotal(mine),
+      close: ests.length ? Math.round((approved / ests.length) * 100) : null,
+    };
+  }
+  function salesTeamView() {
+    const unassigned = jobs.filter((j) => !j.salesId && ['new', 'qualifying'].includes(j.status)).length;
+    const list = el('div', { class: 'stack' },
+      team.length ? null : el('div', { class: 'card muted' }, 'No salespeople yet. Add one, then send them an invite to log in.'),
+      ...team.slice().sort((a, b) => (b.active !== false) - (a.active !== false) || a.name.localeCompare(b.name)).map((x) => {
+        const st = salesStats(x.id);
+        return el('button', { type: 'button', class: 'sales-card' + (x.active === false ? ' inactive' : ''), onclick: () => salesDetail(x.id) },
+          el('div', { class: 'row' }, el('span', { class: 'avatar' }, initials(x.name)),
+            el('div', { style: 'flex:1;min-width:0;text-align:left' }, el('b', {}, x.name),
+              el('p', { class: 'muted small' }, x.login === 'active' ? '🔑 Has login' : x.login === 'invited' ? '✉️ Invite sent' : 'No login yet')),
+            el('span', { class: 'chev' }, '›')),
+          el('div', { class: 'sales-stats' },
+            ...[[st.clients, 'Clients'], [st.open, 'Open'], [st.sent, 'Estimates'], [money(st.sold), 'Sold'], [st.close == null ? '—' : st.close + '%', 'Close rate']]
+              .map(([v, k]) => el('span', {}, el('b', {}, String(v)), el('span', {}, k)))));
+      }));
+    return [el('div', { class: 'row' }, el('h2', { style: 'flex:1' }, 'Sales team'), el('button', { class: 'gold small', onclick: () => salesForm() }, '+ Add')),
+      unassigned ? el('div', { class: 'callout stage' }, `${unassigned} open lead${unassigned === 1 ? '' : 's'} with no salesperson. Open a job to assign one.`) : null,
+      list,
+      el('p', { class: 'muted small' }, 'Salespeople log in on the same login page. They see only their own clients, never crew pay or your profit.')];
+  }
+
+  async function salesDetail(id) {
+    const x = team.find((y) => y.id === id);
+    if (!x) return;
+    const { events } = await api.team.activity(id);
+    const st = salesStats(id);
+    const mine = jobs.filter((j) => j.salesId === id);
+    const calls = events.filter((e) => e.text.startsWith('📞 Call')).length;
+    const panel = el('div', { class: 'panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': x.name },
+      el('div', { class: 'panel-head' }, el('button', { class: 'ghost small', onclick: closeDrawer }, '← Back'), el('b', { style: 'flex:1' }, `💼 ${x.name}`),
+        el('button', { class: 'ghost small', onclick: () => salesForm(x) }, 'Edit')),
+      el('div', { class: 'panel-body' },
+        el('div', { class: 'kpis three' },
+          ...[[st.clients, 'Clients'], [calls, 'Calls logged'], [st.sent, 'Estimates sent'], [money(st.sold), 'Sold'], [st.close == null ? '—' : st.close + '%', 'Close rate'], [st.open, 'Open leads']]
+            .map(([v, k]) => el('div', { class: 'kpi' }, el('b', {}, String(v)), el('span', {}, k)))),
+        el('section', { class: 'card stack' },
+          el('h3', {}, 'Everything they’re doing'),
+          events.length ? el('ul', { class: 'log feed' }, ...events.map((e) => el('li', {},
+            el('span', {}, `${new Date(e.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`),
+            el('button', { type: 'button', class: 'link small feed-item', onclick: () => openLead(e.jobId, 'overview') }, el('b', {}, `TH-${e.number} · ${e.customer}`), el('span', {}, e.text)))))
+            : el('p', { class: 'muted small' }, 'Nothing yet. Their calls, new clients, estimates and updates will show here.')),
+        el('section', { class: 'card stack' },
+          el('h3', {}, `Their clients (${mine.length})`),
+          mine.length ? el('div', { class: 'leads' }, ...mine.map(leadCard)) : el('p', { class: 'muted small' }, 'No clients yet.')),
+      ));
+    releaseUrls();
+    drawerRoot.replaceChildren(el('div', { class: 'drawer', onclick: (e) => { if (e.target === e.currentTarget) closeDrawer(); } }, panel));
+    document.body.style.overflow = 'hidden';
+  }
+
+  function salesForm(x) {
+    const editing = !!x;
+    x = x || { name: '', phone: '', active: true };
+    const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const back = () => (editing ? salesDetail(x.id) : closeDrawer());
+    let loginCard = null;
+    if (editing) {
+      const st = x.login || 'none';
+      const first = x.name.split(' ')[0];
+      const inviteBox = el('div', { class: 'stack' });
+      const showInvite = (code) => {
+        const link = new URL(`sales.html?invite=${code}`, location.href).href;
+        const msg = `Hi ${first}, here's your Top Hat sales login invite. Tap to set your password: ${link}`;
+        inviteBox.replaceChildren(el('div', { class: 'share-box' },
+          el('span', { class: 'small' }, `Invite link. It works once, only for ${first}:`),
+          el('div', { class: 'row' }, ...[x.phone ? el('a', { class: 'btn gold small', style: 'flex:1', href: smsHref(x.phone, msg) }, '💬 Text invite') : null,
+            el('button', { type: 'button', class: 'ghost small', style: 'flex:1', onclick: async (e) => {
+              try { await navigator.clipboard.writeText(link); e.currentTarget.textContent = 'Copied ✓'; } catch { prompt('Copy this invite link:', link); }
+            } }, 'Copy link')].filter(Boolean))));
+      };
+      if (st === 'invited' && x.inviteCode) showInvite(x.inviteCode);
+      const refresh = async () => { await load(); salesForm(team.find((y) => y.id === x.id)); };
+      loginCard = el('section', { class: 'card stack' },
+        el('div', { class: 'row' }, el('h3', {}, '🔑 Sales login'), el('span', { class: 'spacer' }),
+          el('span', { class: 'pill ' + (st === 'active' ? 's-completed' : st === 'invited' ? 's-qualifying' : '') }, st === 'active' ? 'Active' : st === 'invited' ? 'Invite sent' : 'No login')),
+        el('p', { class: 'muted small' }, st === 'active' ? `${first} logs in with ${x.loginEmail}.` : `Invite ${first} to set up a login. They’ll see only their own clients.`),
+        inviteBox,
+        st !== 'active' ? el('button', { type: 'button', class: st === 'invited' ? 'ghost' : 'gold', onclick: async (e) => {
+          e.currentTarget.disabled = true;
+          try { await api.team.invite(x.id); await refresh(); } catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
+        } }, st === 'invited' ? 'Make a new invite link (old one stops working)' : 'Create invite link') : null,
+        st !== 'none' ? el('button', { type: 'button', class: 'link', style: 'color:var(--bad)', onclick: async () => {
+          if (!confirm(st === 'active' ? `Turn off ${first}'s login?` : 'Cancel this invite?')) return;
+          await api.team.revokeLogin(x.id); await refresh();
+        } }, st === 'active' ? 'Turn off login' : 'Cancel invite') : null);
+    }
+    const form = el('form', { class: 'panel-body', onsubmit: async (e) => {
+      e.preventDefault();
+      const f = new FormData(form);
+      try {
+        await api.team.save({ ...(editing ? { id: x.id } : {}), name: f.get('name'), phone: f.get('phone'), active: f.get('active') === 'on' });
+        await load(); editing ? salesDetail(x.id) : closeDrawer();
+      } catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
+    } },
+      errorBox,
+      el('label', { class: 'field' }, 'Name', el('input', { name: 'name', value: x.name, required: true, autocomplete: 'off' })),
+      el('label', { class: 'field' }, 'Phone', el('input', { name: 'phone', type: 'tel', value: x.phone, autocomplete: 'off' })),
+      el('label', { class: 'row', style: 'font-weight:600' }, el('input', { type: 'checkbox', name: 'active', checked: x.active !== false, style: 'width:22px;height:22px;min-height:0' }), 'Active'),
+      el('button', { type: 'submit' }, editing ? 'Save' : 'Add salesperson'),
+      loginCard,
+      editing ? el('button', { type: 'button', class: 'link', style: 'color:var(--bad)', onclick: async () => {
+        if (!confirm(`Remove ${x.name}? Their clients stay, with no salesperson.`)) return;
+        await api.team.remove(x.id); await load(); closeDrawer();
+      } }, 'Remove salesperson') : null);
+    drawerRoot.replaceChildren(el('div', { class: 'drawer', onclick: (e) => { if (e.target === e.currentTarget) closeDrawer(); } },
+      el('div', { class: 'panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': editing ? 'Edit salesperson' : 'Add salesperson' },
+        el('div', { class: 'panel-head' }, el('button', { class: 'ghost small', onclick: back }, '← Back'), el('b', {}, editing ? 'Edit salesperson' : 'Add salesperson')),
+        form)));
+    document.body.style.overflow = 'hidden';
   }
 
   /* ---------- crew ---------- */

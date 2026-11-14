@@ -428,3 +428,21 @@ button.icon:hover { color: var(--bad); }
 .texts { display: flex; flex-direction: column; gap: 8px; background: var(--gold-soft); border-radius: 12px; padding: 10px; }
 .texts .btn { justify-content: flex-start; }
 .bad-text { color: var(--bad); font-weight: 600; }
+
+/* Sales team */
+.sales-card { display: flex; flex-direction: column; gap: 10px; width: 100%; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 14px; padding: 14px; font-weight: 400; white-space: normal; min-height: 0; box-shadow: var(--shadow); }
+.sales-card:hover { border-color: var(--gold); }
+.sales-card.inactive { opacity: .55; }
+.sales-card .chev { font-size: 1.5rem; color: var(--muted); }
+.sales-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; background: var(--surface-2); border-radius: 10px; padding: 8px 4px; }
+.sales-stats > span { display: flex; flex-direction: column; align-items: center; font-size: .7rem; color: var(--muted); text-align: center; }
+.sales-stats b { font-size: .98rem; color: var(--text); font-variant-numeric: tabular-nums; }
+.call-box { background: var(--surface-2); border-radius: 12px; padding: 12px; }
+.inline-select { width: auto; min-height: 34px; padding: 4px 10px; font-size: 15px; }
+.feed li { align-items: flex-start; }
+.feed-item { display: flex; flex-direction: column; align-items: flex-start; text-align: left; white-space: normal; color: var(--text); font-weight: 400; }
+.feed-item b { color: var(--accent); font-size: .82rem; }
+.stepper button:disabled { opacity: .45; cursor: not-allowed; }
+.feed .feed-item > span { color: var(--text); font-weight: 400; }
+.main-tabs button { padding: 8px 9px; font-size: .95rem; }
+@media (max-width: 400px) { .main-tabs button { padding: 8px 7px; font-size: .9rem; } }
