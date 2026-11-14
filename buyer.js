@@ -50,6 +50,7 @@
   async function home() {
     view.append(el('div', { class: 'stack' },
       el('section', { class: 'hero' },
+        el('img', { class: 'hero-logo', src: 'img/logo.jpg', alt: 'Top Hat Contracting Services' }),
         el('h1', {}, 'Get your project done right.'),
         el('p', {}, "Tell us what you need. Top Hat Contracting reviews every request, schedules the work, and sends a trusted crew to your door."),
       ),

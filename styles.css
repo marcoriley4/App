@@ -446,3 +446,11 @@ button.icon:hover { color: var(--bad); }
 .feed .feed-item > span { color: var(--text); font-weight: 400; }
 .main-tabs button { padding: 8px 9px; font-size: .95rem; }
 @media (max-width: 400px) { .main-tabs button { padding: 8px 7px; font-size: .9rem; } }
+
+/* Top Hat logo */
+img.logo-mark { width: 40px; height: 40px; border-radius: 9px; background: #000; object-fit: cover; display: block; }
+.hero-logo { display: block; width: min(240px, 62vw); height: auto; margin: 0 auto 18px; border-radius: 16px; background: #000; }
+.hero { text-align: center; }
+.doc-logo-img { display: block; width: 110px; height: auto; border-radius: 8px; background: #000; margin-bottom: 8px; }
+@media (max-width: 520px) { .doc-logo-img { width: 88px; } }
+@media print { .doc-stamp { top: 150px !important; right: 10px; } }
