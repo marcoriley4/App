@@ -107,15 +107,15 @@
         el('p', { class: 'cta-note' }, 'Tap to start'),
         el('p', { class: 'hero-pitch' },
           el('span', { class: 'hl' }, 'Get a free estimate for your project.'),
-          'Answer a few quick questions, add your measurements and photos, and ',
-          el('span', { class: 'brand-hl' }, 'Top Hat Contracting'), ' will send you an estimate.',
-          el('span', { class: 'pitch-close' }, 'Get on the schedule today to build your dream for tomorrow.')),
+          'Answer a few quick questions and add your measurements and photos.',
+          el('span', { class: 'pitch-close' }, 'Book your spot today.',
+            el('small', {}, 'A ', el('span', { class: 'brand-hl' }, 'Top Hat'), ' rep comes out, walks through your project with you, and goes over your free estimate.'))),
       ),
       el('h2', { class: 'how-title' }, 'How it works'),
       el('ol', { class: 'how-steps' },
         el('li', {}, el('span', { class: 'n' }, '1'), el('div', {}, el('b', {}, 'Pick your project'), el('span', {}, 'Roofing, plumbing, flooring, remodel and more.'))),
         el('li', {}, el('span', { class: 'n' }, '2'), el('div', {}, el('b', {}, 'Add measurements & photos'), el('span', {}, 'Rough sizes and a few phone pictures are perfect.'))),
-        el('li', {}, el('span', { class: 'n' }, '3'), el('div', {}, el('b', {}, 'Get your free estimate'), el('span', {}, 'We review it, call you to confirm, and send your estimate.'))),
+        el('li', {}, el('span', { class: 'n' }, '3'), el('div', {}, el('b', {}, 'Meet your Top Hat rep'), el('span', {}, 'We call to book your visit, then a rep comes out for a walkthrough and your free estimate.'))),
       ),
     ));
   }
@@ -286,7 +286,7 @@
     view.append(el('div', { class: 'card stack', style: 'margin-top:28px;text-align:center' },
       el('div', { class: 'done-mark' }, '✓'),
       el('h1', {}, "You're all set!"),
-      el('p', { class: 'muted' }, `Thanks${me ? ', ' + me.name.split(' ')[0] : ''}. The Top Hat team will look over your measurements and photos, call you ${me?.phone ? 'at ' + me.phone : 'soon'} to confirm the details, and send your free estimate. You'll see it under My jobs.`),
+      el('p', { class: 'muted' }, `Thanks${me ? ', ' + me.name.split(' ')[0] : ''}. The Top Hat team will look over your measurements and photos and call you ${me?.phone ? 'at ' + me.phone : 'soon'} to book your visit. A rep will come out, walk through the project with you, and go over your free estimate. You'll see everything under My jobs.`),
       el('a', { class: 'btn block', href: '#/jobs' }, 'See my jobs'),
       el('a', { class: 'btn ghost block', href: '#/request' }, 'Start another project'),
     ));
