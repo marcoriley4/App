@@ -336,3 +336,8 @@ button.icon:hover { color: var(--bad); }
 .demo-acct .body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .login-box + .login-box { margin-top: 14px; }
 .login-box:has(+ .login-box) { margin-bottom: 0; }
+
+/* Crew notes */
+.crew-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.crew-notes li { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.crew-notes p { white-space: pre-wrap; overflow-wrap: anywhere; }

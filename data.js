@@ -197,6 +197,7 @@
             ],
             notes: DEFAULT_SETTINGS.estimateTerms, created: now - 55 * H, sentAt: now - 54 * H, respondedAt: now - 45 * H, respondedBy: 'Dana Whitfield',
           }],
+          crewNotes: [{ id: uid(), at: now - 3 * H, contractorId: c3, by: 'Ray Johnson', text: 'Looked at it from the street. Will need about 2 extra bundles of shingles. Color match is “Weathered Wood”.' }],
           contractorId: c3, crewToken: newToken(), scheduledFor: (() => { const t = new Date(now + 48 * H); t.setHours(9, 0, 0, 0); return new Date(t - t.getTimezoneOffset() * 60e3).toISOString().slice(0, 16); })(), price: 1800, crewPay: 1150, notes: 'Insurance claim filed.',
           log: [{ at: now - 70 * H, text: 'Lead received' }, { at: now - 60 * H, text: 'Status → Qualifying' }, { at: now - 40 * H, text: 'Status → Scheduled · Ray Johnson' }],
         },
@@ -260,6 +261,23 @@
     return { ...f, url: blob ? URL.createObjectURL(blob) : null };
   }
 
+  const MAX_NOTE = 2000;
+  // Crew note on a job, written by the contractor currently assigned. Office sees all; customers never do.
+  function pushCrewNote(d, j, text) {
+    text = String(text || '').trim();
+    if (!text) throw new Error('Write a note first.');
+    if (text.length > MAX_NOTE) throw new Error(`Notes can be up to ${MAX_NOTE} characters.`);
+    const c = d.contractors.find((x) => x.id === j.contractorId);
+    j.crewNotes = j.crewNotes || [];
+    const note = { id: uid(), at: Date.now(), text, contractorId: j.contractorId, by: c ? c.name : 'Crew' };
+    j.crewNotes.push(note);
+    j.log.push({ at: note.at, text: `${note.by} added a crew note` });
+    writeDb(d);
+    return note;
+  }
+  const ownNotes = (j) => (j.crewNotes || []).filter((n) => n.contractorId === j.contractorId)
+    .map(({ id, at, text }) => ({ id, at, text }));
+
   const api = {
     mode: 'preview',
 
@@ -314,6 +332,16 @@
             sharedFiles: j.files.filter((f) => f.shared).length,
           };
         });
+      },
+      // Staff: every crew note on a job, newest first. Opening them marks them seen.
+      async crewNotes(id) {
+        await requireStaff();
+        const d = await db();
+        const j = d.jobs.find((x) => x.id === id);
+        if (!j) return [];
+        j.crewNotesSeenAt = Date.now();
+        writeDb(d);
+        return (j.crewNotes || []).slice().reverse().map((n) => ({ ...n }));
       },
       // Staff: a job's activity history, oldest first.
       async log(id) {
@@ -561,7 +589,14 @@
             const { id, name, mime, stage, note, uploaded, url } = await withUrl(f);
             return { id, name, mime, stage, note, uploaded, url };
           })),
+          notes: ownNotes(j),
         };
+      },
+      async addNote(token, text) {
+        const d = await db();
+        const j = token && d.jobs.find((x) => x.crewToken && x.crewToken === token);
+        if (!j || j.status === 'lost') throw new Error('This link is no longer active. Ask the Top Hat office for a new one.');
+        pushCrewNote(d, j, text);
       },
       async upload(token, file, { stage = '', note = '' } = {}) {
         const d = await db();
@@ -664,8 +699,15 @@
             customerName: b.name || '', customerPhone: b.phone || '',
             crewToken: j.crewToken, crewPay: showPay ? j.crewPay : null,
             photos: j.files.filter((f) => f.source === 'crew' && f.contractorId === c.id).length,
+            notes: ownNotes(j),
           };
         });
+      },
+      async addNote(jobId, text) {
+        const { d, c } = await requireCrew();
+        const j = d.jobs.find((x) => x.id === jobId && x.contractorId === c.id && ['scheduled', 'in_progress', 'completed'].includes(x.status));
+        if (!j) throw new Error('You can only add notes to your own jobs.');
+        pushCrewNote(d, j, text);
       },
       async setStatus(jobId, status) {
         const { d, c, u } = await requireCrew();

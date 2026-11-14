@@ -20,6 +20,7 @@ A job-request app for Top Hat Contracting. Customers post a job and create an ac
 - **Crew photo upload link:** each assigned job gets a private link, included at the end of the crew text (there's also a **Copy link** button). The contractor taps it, with no app or password, sees the job basics, picks **Before / During / After**, adds an optional note and uploads photos. They land in that job's Files, labeled with who sent them. Reassigning the job to another crew makes a new link and turns the old one off.
 - **Estimates & invoices:** create them from any job, prefilled with the customer, job number, address and description. Add line items and tax, then **Send to customer**. The customer sees it in My jobs and can **approve an estimate with one tap**, which also sets the job's customer price. You can **turn an approved estimate into an invoice** in one tap, and **record payments** by cash, check, Zelle, card, Venmo, Cash App or other, including partial payments. The invoice shows Partly paid, Paid or Overdue on its own. You can add an optional Square or Stripe **"Pay by card" link**, text or email the customer a link, void an invoice, and **print or save a PDF**. Approved estimates and paid invoices are locked. **Crew pay never appears** on any estimate or invoice.
 - **Business tab:** company name, phone, email, address, license #, default tax rate, invoice due days, "how customers can pay" (Zelle, Venmo and so on), and default terms. All of these print on every estimate and invoice.
+- **Crew notes:** the contractor on a job can write notes for the office ("need 2 more bundles", "customer not home") from their crew login (📝 Notes on each job) or the job's photo link. The office sees them in a **💬 Crew notes** card near the top of the job, with who wrote each one and when. The job shows **"💬 New crew note"** in the Leads list until someone opens it. Customers never see crew notes, and a contractor only sees their own.
 - **Crew:** add, edit or deactivate your contractors and the trades they cover.
 - **Crew login:** open a crew member and tap **Create invite link**, then **Text invite**. The link works once and only for that person. They set their own email and password, then sign in at `crew.html` to see **only the jobs assigned to them**: date, address, customer name and phone, and the job description. From there they can send photos and tap **Started** or **Finished**, which updates the job's status (shown in the job history with their name). They see their **own crew pay** and totals, and you can switch that off under **Business → Show crew their pay**. **Turn off login** removes access right away. Crew can still use the per-job photo link from the job text without logging in.
 
@@ -31,7 +32,8 @@ A job-request app for Top Hat Contracting. Customers post a job and create an ac
 | Customer price | ✓ | only in documents you share | **never** |
 | Crew pay | ✓ | **never** | their own only (can be switched off) |
 | Profit | ✓ | **never** | **never** |
-| Internal notes and activity | ✓ | never | never |
+| Internal (office) notes and activity | ✓ | never | never |
+| Crew notes | ✓ | never | their own only |
 | Estimates & invoices | ✓ (incl. drafts) | the ones you send (never drafts) | **never** |
 | Files | ✓ | only files marked "Customer can see" | only the photos they uploaded |
 
@@ -70,7 +72,7 @@ Who-sees-what is enforced by the database (row-level security and storage polici
 - Prices, crew pay and notes live in the staff-only `job_private` table.
 - Crew reach a job only through its private upload code.
 
-`supabase/` also holds the security test that runs the schema against Postgres and checks each rule (96 checks).
+`supabase/` also holds the security test that runs the schema against Postgres and checks each rule (109 checks).
 
 ## Run it locally
 

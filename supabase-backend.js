@@ -150,13 +150,16 @@
       },
       async all() {
         await requireStaff();
-        const [jobs, priv, files, people, papers] = await Promise.all([
+        const [jobs, priv, files, people, papers, cnotes] = await Promise.all([
           fetchAll(() => sb.from('jobs').select('*').order('created_at', { ascending: false })),
           fetchAll(() => sb.from('job_private').select('*')),
           fetchAll(() => sb.from('job_files').select('id, job_id, kind')),
           fetchAll(() => sb.from('profiles').select('id, name, email, phone')),
           fetchAll(() => sb.from('documents').select('id, job_id, type, number, status, items, tax_rate, due_date, payments')),
+          fetchAll(() => sb.from('crew_notes').select('id, job_id, created_at')),
         ]);
+        const notesBy = {};
+        cnotes.forEach((n) => { (notesBy[n.job_id] ||= []).push({ id: n.id, at: ms(n.created_at) }); });
         const docsBy = {};
         papers.forEach((r) => { (docsBy[r.job_id] ||= []).push(mapDoc(r)); });
         const privBy = Object.fromEntries(priv.map((p) => [p.job_id, p]));
@@ -171,9 +174,16 @@
             contractorId: j.contractor_id, scheduledFor: local16(j.scheduled_for),
             price: num(p.price), crewPay: num(p.crew_pay), notes: p.notes || '', crewToken: p.crew_token || null,
             files: filesBy[j.id] || [], docs: docsBy[j.id] || [],
+            crewNotes: notesBy[j.id] || [], crewNotesSeenAt: ms(p.crew_notes_seen_at) || 0,
             buyer: peopleBy[j.buyer_id] || { name: 'Unknown', email: '', phone: '' },
           };
         });
+      },
+      async crewNotes(id) {
+        await requireStaff();
+        const rows = must(await sb.from('crew_notes').select('id, by_name, text, created_at').eq('job_id', id).order('created_at', { ascending: false }));
+        await sb.from('job_private').update({ crew_notes_seen_at: new Date().toISOString() }).eq('job_id', id);
+        return rows.map((n) => ({ id: n.id, at: ms(n.created_at), by: n.by_name, text: n.text }));
       },
       async log(id) {
         await requireStaff();
@@ -312,7 +322,11 @@
           scheduledFor: local16(j.scheduled_for), customerName: j.customer_name || '', customerPhone: j.customer_phone || '',
           crewName: j.crew_name || '',
           uploads: (j.uploads || []).map((f) => ({ id: f.id, name: f.name, mime: f.mime, stage: f.stage, note: f.note, uploaded: ms(f.uploaded_at), url: urls[f.path] || null })),
+          notes: (j.notes || []).map((n) => ({ id: n.id, at: ms(n.created_at), text: n.text })),
         };
+      },
+      async addNote(token, text) {
+        must(await sb.rpc('crew_add_note', { p_token: token, p_job: null, p_text: text }));
       },
       async upload(token, file, { stage = '', note = '' } = {}) {
         tooBig(file);
@@ -386,7 +400,11 @@
           address: j.address, zip: j.zip, description: j.description,
           customerName: j.customer_name || '', customerPhone: j.customer_phone || '',
           crewToken: j.crew_token || null, crewPay: num(j.crew_pay), photos: Number(j.photos) || 0,
+          notes: (j.notes || []).map((n) => ({ id: n.id, at: ms(n.created_at), text: n.text })),
         }));
+      },
+      async addNote(jobId, text) {
+        must(await sb.rpc('crew_add_note', { p_token: null, p_job: jobId, p_text: text }));
       },
       async setStatus(jobId, status) {
         must(await sb.rpc('crew_set_status', { p_job: jobId, p_status: status }));

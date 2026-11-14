@@ -28,14 +28,14 @@ end $$;
 
 -- ---------- clean slate for re-runs ----------
 drop trigger if exists on_auth_user_created on auth.users;
-drop table if exists public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
+drop table if exists public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
 drop function if exists public.handle_new_user, public.is_staff, public.new_crew_token, public.owns_job,
   public.customer_can_read, public.crew_token_active, public.create_job, public.add_customer_file, public.my_jobs,
   public.crew_job, public.crew_add_file, public.jobs_after_insert, public.jobs_before_update, public.jobs_after_update,
   public.private_after_update, public.files_after_change, public.status_label, public.log_event, public.usd,
   public.doc_total, public.doc_paid, public.docs_before, public.docs_after, public.my_documents, public.respond_estimate,
   public.my_crew, public.staff_invite_crew, public.staff_revoke_crew, public.crew_invite_info, public.claim_crew_invite,
-  public.crew_my_jobs, public.crew_set_status cascade;
+  public.crew_my_jobs, public.crew_set_status, public.crew_add_note cascade;
 
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
@@ -122,7 +122,8 @@ create table public.job_private (
   price numeric(12, 2) check (price >= 0),
   crew_pay numeric(12, 2) check (crew_pay >= 0),
   notes text not null default '',
-  crew_token text unique
+  crew_token text unique,
+  crew_notes_seen_at timestamptz                      -- when the office last opened the crew notes
 );
 
 create table public.job_events (
@@ -150,6 +151,17 @@ create table public.job_files (
   uploaded_at timestamptz not null default now()
 );
 create index on public.job_files (job_id);
+
+-- Notes the assigned contractor writes for the office. Office reads them; customers never do.
+create table public.crew_notes (
+  id uuid primary key default gen_random_uuid(),
+  job_id uuid not null references public.jobs(id) on delete cascade,
+  contractor_id uuid references public.contractors(id) on delete set null,
+  by_name text not null default '',
+  text text not null check (length(trim(text)) between 1 and 2000),
+  created_at timestamptz not null default now()
+);
+create index on public.crew_notes (job_id);
 
 -- ---------- activity history (written by the database, so it can't be skipped) ----------
 create function public.log_event(j uuid, msg text) returns void
@@ -230,6 +242,7 @@ alter table public.jobs enable row level security;
 alter table public.job_private enable row level security;
 alter table public.job_events enable row level security;
 alter table public.job_files enable row level security;
+alter table public.crew_notes enable row level security;
 
 create policy "own profile or staff" on public.profiles for select to authenticated using (id = auth.uid() or public.is_staff());
 create policy "update own profile" on public.profiles for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
@@ -239,10 +252,13 @@ create policy "staff only" on public.jobs for all to authenticated using (public
 create policy "staff only" on public.job_private for all to authenticated using (public.is_staff()) with check (public.is_staff());
 create policy "staff only" on public.job_events for select to authenticated using (public.is_staff());
 create policy "staff only" on public.job_files for all to authenticated using (public.is_staff()) with check (public.is_staff());
+create policy "staff read" on public.crew_notes for select to authenticated using (public.is_staff());
+create policy "staff delete" on public.crew_notes for delete to authenticated using (public.is_staff());
 
 -- Belt and braces: the public (not logged in) role can't touch tables at all,
 -- and logged-in users can only edit their own name and phone, never their role.
-revoke all on public.profiles, public.contractors, public.jobs, public.job_private, public.job_events, public.job_files from anon;
+revoke all on public.profiles, public.contractors, public.jobs, public.job_private, public.job_events, public.job_files, public.crew_notes from anon;
+revoke insert, update on public.crew_notes from authenticated;
 revoke update on public.profiles from authenticated;
 grant update (name, phone) on public.profiles to authenticated;
 revoke insert, delete on public.profiles from authenticated;
@@ -316,7 +332,9 @@ language sql stable security definer set search_path = '' as $$
     'customer_name', b.name, 'customer_phone', b.phone, 'crew_name', c.name,
     'uploads', (select coalesce(jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'mime', f.mime, 'stage', f.stage,
                   'note', f.note, 'path', f.path, 'uploaded_at', f.uploaded_at) order by f.uploaded_at), '[]'::jsonb)
-                from public.job_files f where f.job_id = j.id and f.source = 'crew' and f.contractor_id is not distinct from j.contractor_id))
+                from public.job_files f where f.job_id = j.id and f.source = 'crew' and f.contractor_id is not distinct from j.contractor_id),
+    'notes', (select coalesce(jsonb_agg(jsonb_build_object('id', n.id, 'text', n.text, 'created_at', n.created_at) order by n.created_at), '[]'::jsonb)
+                from public.crew_notes n where n.job_id = j.id and n.contractor_id is not distinct from j.contractor_id))
   from public.job_private p
   join public.jobs j on j.id = p.job_id
   join public.profiles b on b.id = j.buyer_id
@@ -570,7 +588,9 @@ begin
       'address', j.address, 'zip', j.zip, 'description', j.description,
       'customer_name', b.name, 'customer_phone', b.phone, 'crew_token', p.crew_token,
       'crew_pay', case when coalesce(show_pay, true) then p.crew_pay end,
-      'photos', (select count(*) from public.job_files f where f.job_id = j.id and f.source = 'crew' and f.contractor_id = cid)
+      'photos', (select count(*) from public.job_files f where f.job_id = j.id and f.source = 'crew' and f.contractor_id = cid),
+      'notes', (select coalesce(jsonb_agg(jsonb_build_object('id', n.id, 'text', n.text, 'created_at', n.created_at) order by n.created_at), '[]'::jsonb)
+                  from public.crew_notes n where n.job_id = j.id and n.contractor_id = cid)
     ) order by j.scheduled_for nulls last), '[]'::jsonb)
     from public.jobs j
     join public.job_private p on p.job_id = j.id
@@ -594,6 +614,31 @@ begin
   perform public.log_event(p_job, 'Updated by ' || coalesce(who, 'crew') || ' (crew)');
 end $$;
 
+-- Crew: add a note to their job, from the job's photo link (p_token) or their crew login (p_job).
+create function public.crew_add_note(p_token text, p_job uuid, p_text text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare jid uuid; cid uuid; cname text;
+begin
+  if length(trim(coalesce(p_text, ''))) = 0 then raise exception 'Write a note first.'; end if;
+  if length(p_text) > 2000 then raise exception 'Notes can be up to 2000 characters.'; end if;
+  if p_token is not null then
+    if not public.crew_token_active(p_token) then
+      raise exception 'This link is no longer active. Ask the Top Hat office for a new one.';
+    end if;
+    select j.id, j.contractor_id into jid, cid
+      from public.job_private p join public.jobs j on j.id = p.job_id where p.crew_token = p_token;
+  else
+    cid := public.my_crew();
+    if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
+    select id into jid from public.jobs
+     where id = p_job and contractor_id = cid and status in ('scheduled', 'in_progress', 'completed');
+    if jid is null then raise exception 'You can only add notes to your own jobs.'; end if;
+  end if;
+  select name into cname from public.contractors where id = cid;
+  insert into public.crew_notes (job_id, contractor_id, by_name, text) values (jid, cid, coalesce(cname, 'Crew'), trim(p_text));
+  perform public.log_event(jid, coalesce(cname, 'Crew') || ' added a crew note');
+end $$;
+
 -- ---------- function permissions ----------
 revoke execute on all functions in schema public from public, anon, authenticated;
 grant execute on function public.is_staff(), public.owns_job(text), public.customer_can_read(text),
@@ -602,6 +647,7 @@ grant execute on function public.is_staff(), public.owns_job(text), public.custo
   public.staff_invite_crew(uuid), public.staff_revoke_crew(uuid), public.claim_crew_invite(text),
   public.crew_my_jobs(), public.crew_set_status(uuid, text) to authenticated;
 grant execute on function public.crew_invite_info(text) to anon, authenticated;
+grant execute on function public.crew_add_note(text, uuid, text) to anon, authenticated;
 grant execute on function public.crew_token_active(text), public.crew_job(text),
   public.crew_add_file(text, text, text, text, bigint, text, text) to anon, authenticated;
 -- Trigger and helper functions run with the table owner's rights; no one needs to call them directly.

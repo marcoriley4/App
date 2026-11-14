@@ -22,6 +22,23 @@
   const tel = (p) => 'tel:' + String(p).replace(/[^\d+]/g, '');
   const maps = (a) => 'https://maps.google.com/?q=' + encodeURIComponent(a);
 
+  const fmtAt = (ms) => new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  // Notes the contractor writes for the office. Only the office sees them.
+  function notesSection(notes, send, { compact = false } = {}) {
+    const ta = el('textarea', { rows: 3, maxlength: '2000', placeholder: 'Note for the office, e.g. “Need 2 more bundles of shingles” or “Customer not home, rescheduling”', 'aria-label': 'Note for the office' });
+    const err = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const btn = el('button', { type: 'button', class: 'block', onclick: async () => {
+      btn.disabled = true; err.hidden = true;
+      try { await send(ta.value); } catch (x) { err.textContent = x.message; err.hidden = false; btn.disabled = false; }
+    } }, 'Send note to office');
+    return el('section', { class: compact ? 'stack' : 'card stack' },
+      el(compact ? 'h3' : 'h2', {}, 'Notes for the office'),
+      el('p', { class: 'muted small' }, 'Only the Top Hat office sees these. Customers never do.'),
+      notes.length ? el('ul', { class: 'crew-notes' }, ...notes.slice().reverse().map((n) => el('li', {},
+        el('span', { class: 'muted small' }, fmtAt(n.at)), el('p', {}, n.text)))) : null,
+      err, ta, btn);
+  }
+
   async function crewMe() {
     const me = await api.auth.me();
     return me && me.role === 'crew' ? me : null;
@@ -94,6 +111,7 @@
         status,
         el('p', { class: 'muted small' }, 'Take new photos or pick from your library. They go straight into this job’s file at the Top Hat office.'),
       ),
+      notesSection(job.notes || [], async (t) => { await api.crew.addNote(token, t); renderUpload('✓ Note sent to the office.'); }),
       job.uploads.length ? el('section', { class: 'card stack' },
         el('h3', {}, `You’ve sent ${job.uploads.length} ${job.uploads.length === 1 ? 'file' : 'files'}`),
         ...[...byStage, ...(other.length ? [[{ label: 'Other' }, other]] : [])].map(([s, list]) => el('div', { class: 'stack', style: 'gap:6px' },
@@ -166,6 +184,15 @@
         try { await api.crewPortal.setStatus(j.id, status); renderPortal(status === 'completed' ? `✓ TH-${j.number} marked finished. Thanks!` : `▶ TH-${j.number} marked started.`); }
         catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; btn.disabled = false; }
       };
+      const notesHolder = el('div');
+      const toggleNotes = () => {
+        if (notesHolder.firstChild) { notesHolder.replaceChildren(); return; }
+        notesHolder.replaceChildren(notesSection(j.notes || [], async (t) => {
+          await api.crewPortal.addNote(j.id, t);
+          renderPortal(`✓ Note sent to the office about TH-${j.number}.`);
+        }, { compact: true }));
+        notesHolder.querySelector('textarea').focus();
+      };
       return el('article', { class: 'card job-card' },
         el('div', { class: 'head' },
           el('span', { style: 'font-size:1.6rem' }, t.icon),
@@ -179,8 +206,10 @@
           j.crewPay != null ? el('dt', {}, 'Your pay') : null, j.crewPay != null ? el('dd', { style: 'font-weight:700' }, usd(j.crewPay)) : null),
         el('div', { class: 'row wrap-row' },
           j.crewToken ? el('a', { class: 'btn ghost', style: 'flex:1', href: `crew.html?t=${j.crewToken}` }, `📷 Photos${j.photos ? ` (${j.photos})` : ''}`) : null,
+          el('button', { class: 'ghost', style: 'flex:1', onclick: toggleNotes }, `📝 Notes${(j.notes || []).length ? ` (${j.notes.length})` : ''}`),
           j.status === 'scheduled' ? el('button', { class: 'ghost', style: 'flex:1', onclick: (e) => act('in_progress', e.currentTarget) }, '▶ Started') : null,
           j.status !== 'completed' ? el('button', { class: 'gold', style: 'flex:1', onclick: (e) => act('completed', e.currentTarget) }, '✓ Finished') : null),
+        notesHolder,
       );
     };
 

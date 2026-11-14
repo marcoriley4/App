@@ -115,6 +115,8 @@
           j.scheduledFor ? el('span', {}, '📅 ' + fmtWhen(j.scheduledFor)) : null,
           c ? el('span', {}, '👷 ' + c.name) : null,
           j.files.length ? el('span', {}, `📁 ${j.files.length}`) : null,
+          (j.crewNotes || []).some((n) => n.at > (j.crewNotesSeenAt || 0)) ? el('span', { style: 'color:var(--warn);font-weight:600' }, '💬 New crew note')
+            : (j.crewNotes || []).length ? el('span', {}, `💬 ${j.crewNotes.length}`) : null,
           owedOn(j) > 0 ? el('span', { style: 'color:var(--warn);font-weight:600' }, `🧾 ${docs.usd(owedOn(j))} due`)
             : (j.docs || []).some((d) => d.type === 'estimate' && d.status === 'sent') ? el('span', {}, '📝 Estimate sent') : null,
           el('span', {}, ago(j.created)))),
@@ -126,7 +128,8 @@
     const j = jobs.find((x) => x.id === id);
     if (!j) return;
     releaseUrls();
-    const [files, history, jobDocs] = await Promise.all([api.files.list(j.id), api.jobs.log(j.id), api.docs.list(j.id)]);
+    const [files, history, jobDocs, crewNotes] = await Promise.all([api.files.list(j.id), api.jobs.log(j.id), api.docs.list(j.id), api.jobs.crewNotes(j.id)]);
+    j.crewNotesSeenAt = Date.now(); // opened → no longer "new" in the list
     fileUrls = files.map((f) => f.url).filter(Boolean);
     const t = tradeOf(j.trade);
     const close = closeDrawer;
@@ -173,6 +176,16 @@
       el('div', { class: 'status-pick' }, ...STATUSES.map((s) =>
         el('button', { type: 'button', 'aria-pressed': String(j.status === s.id), onclick: () => j.status !== s.id && update({ status: s.id }) }, s.label))),
       el('p', { class: 'muted small' }, `The customer sees: “${statusOf(j.status).buyer}”`),
+    );
+
+    // Notes from the crew (customers never see these)
+    const crewNotesCard = el('section', { class: 'card stack' },
+      el('div', { class: 'row' }, el('h3', {}, '💬 Crew notes'), el('span', { class: 'spacer' }), crewNotes.length ? el('span', { class: 'pill' }, String(crewNotes.length)) : null),
+      crewNotes.length ? el('ul', { class: 'crew-notes' }, ...crewNotes.map((n) => el('li', {},
+        el('span', { class: 'muted small' }, `${n.by} · ${new Date(n.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${ago(n.at)})`),
+        el('p', {}, n.text))))
+        : el('p', { class: 'muted small' }, 'No notes from the crew yet. The contractor on this job can add notes from their crew login or the job’s photo link.'),
+      el('p', { class: 'muted small' }, 'Customers never see crew notes.'),
     );
 
     // Set up the job
@@ -324,7 +337,7 @@
         el('button', { class: 'ghost small', onclick: close, 'aria-label': 'Close' }, '← Back'),
         el('b', { style: 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, `${jobNo(j)} · ${t.icon} ${t.label}`),
         el('span', { class: `pill s-${j.status}` }, statusOf(j.status).label)),
-      el('div', { class: 'panel-body' }, errorBox, contact, status, setup, moneyCard, docsCard, filesCard, details, notesCard, log),
+      el('div', { class: 'panel-body' }, errorBox, contact, status, crewNotesCard, setup, moneyCard, docsCard, filesCard, details, notesCard, log),
     );
     const scroll = drawerRoot.querySelector('.panel')?.scrollTop || 0;
     drawerRoot.replaceChildren(el('div', { class: 'drawer', onclick: (e) => { if (e.target === e.currentTarget) close(); } }, panel));

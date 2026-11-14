@@ -88,7 +88,7 @@ reset role;
 select set_config('request.jwt.claim.sub', '', false);
 set role anon;
 select t.ok(public.crew_job(current_setting('t.token')) is not null, 'crew link opens job');
-select t.ok(public.crew_job(current_setting('t.token'))::text !~ '1800|1150|Gate code|price|crew_pay|notes|ann@example', 'crew sees no prices, notes or customer email');
+select t.ok(public.crew_job(current_setting('t.token'))::text !~ '1800|1150|Gate code|price|crew_pay|ann@example', 'crew sees no prices, office notes or customer email');
 select t.ok(public.crew_job('nope') is null, 'bad crew code shows nothing');
 select t.ok(public.crew_job(left(current_setting('t.token'), 20)) is null, 'partial crew code shows nothing');
 select t.ok((select count(*) from storage.objects) = 0, 'crew cannot see office or customer files');
@@ -300,6 +300,48 @@ do $$ begin
   begin perform public.claim_crew_invite(current_setting('t.invite')); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'invite code works only once'); end;
 end $$;
+reset role;
+
+-- ---- crew notes ----
+select set_config('request.jwt.claim.sub', :'C', false);
+set role authenticated;
+select public.crew_add_note(null, current_setting('t.job')::uuid, 'Need 2 more bundles of shingles');
+select t.ok((public.crew_my_jobs()->0->'notes'->0->>'text') = 'Need 2 more bundles of shingles', 'crew sees their own note (login)');
+do $$ begin
+  begin perform public.crew_add_note(null, gen_random_uuid(), 'x'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'crew cannot note jobs that are not theirs'); end;
+  begin perform public.crew_add_note(null, current_setting('t.job')::uuid, '   '); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'empty note refused'); end;
+end $$;
+select t.ok((select count(*) from public.crew_notes) = 0, 'crew cannot read the notes table directly');
+reset role;
+
+select set_config('request.jwt.claim.sub', '', false);
+set role anon;
+select public.crew_add_note(current_setting('t.token2'), null, 'Customer not home, back at 3');
+select t.ok(jsonb_array_length(public.crew_job(current_setting('t.token2'))->'notes') = 2, 'photo-link page shows the crew''s notes');
+do $$ begin
+  begin perform public.crew_add_note(current_setting('t.token'), null, 'old link'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'old photo link cannot add notes'); end;
+  begin perform public.crew_add_note(null, current_setting('t.job')::uuid, 'anon by job id'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'not-logged-in cannot add notes without the link'); end;
+  begin perform * from public.crew_notes; perform t.ok(false, 'x');
+  exception when insufficient_privilege then perform t.ok(true, 'not-logged-in cannot read notes'); end;
+end $$;
+reset role;
+
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+select t.ok((select count(*) from public.crew_notes) = 0, 'customer cannot read crew notes');
+select t.ok(public.my_jobs()::text !~ 'shingles|not home', 'customer job view has no crew notes');
+reset role;
+
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+select t.ok((select count(*) from public.crew_notes where by_name = 'Ray Johnson') = 2, 'office sees crew notes with who wrote them');
+select t.ok(exists (select 1 from public.job_events where text = 'Ray Johnson added a crew note'), 'crew note logged in history');
+update public.job_private set crew_notes_seen_at = now();
+select t.ok((select crew_notes_seen_at is not null from public.job_private), 'office can mark notes seen');
 reset role;
 
 update public.settings set data = data || '{"showCrewPay": false}';
