@@ -100,11 +100,11 @@
   async function home() {
     view.append(el('div', { class: 'stack' },
       el('section', { class: 'hero' },
-        el('img', { class: 'hero-logo', src: 'img/logo.jpg', alt: 'Top Hat Contracting Services' }),
         el('span', { class: 'hero-tag' }, 'Premier residential contracting'),
+        el('img', { class: 'hero-logo', src: 'img/logo.jpg', alt: 'Top Hat Contracting Services' }),
         el('a', { class: 'btn gold block hero-cta', href: '#/request', onclick: () => { if (draft.step > 4) clearDraft(); } },
           el('h1', {}, 'Start your project the right way, right now.')),
-        el('p', { class: 'cta-note' }, 'Tap to start · Takes about 2 minutes · Free'),
+        el('p', { class: 'cta-note' }, 'Tap to start'),
         el('p', { class: 'hero-pitch' },
           el('span', { class: 'hl' }, 'Get a free estimate for your project.'),
           'Answer a few quick questions, add your measurements and photos, and ',
