@@ -161,100 +161,273 @@
     view.replaceChildren(TH.loginForm({ note }));
   }
 
-  /* ---------- my jobs ---------- */
-  async function renderPortal(message) {
+  /* ---------- my jobs (crew login) ---------- */
+  const todayKey = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 10); };
+  const timeOf = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const dur = (a, b) => { const m = Math.max(0, Math.round((b - a) / 60000)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60}m`; };
+  const stageOf = (id) => (TH.STAGES || []).find((x) => x.id === id);
+
+  async function loadCrew() {
     const me = await crewMe();
-    if (!me) return renderLogin();
-    let jobs;
-    try { jobs = await api.crewPortal.jobs(); }
-    catch (err) { await api.auth.signOut(); await renderNav(); return renderLogin(err.message); }
-    const upcoming = jobs.filter((j) => j.status !== 'completed')
+    if (!me) return { me: null };
+    try {
+      const [jobs, company] = await Promise.all([api.crewPortal.jobs(), api.settings.get().catch(() => ({}))]);
+      return { me, jobs, company };
+    } catch (err) {
+      await api.auth.signOut(); await renderNav();
+      return { me: null, error: err.message };
+    }
+  }
+
+  async function renderPortal(message) {
+    const { me, jobs, error } = await loadCrew();
+    if (!me) return renderLogin(error);
+    const tk = todayKey();
+    const notDone = jobs.filter((j) => j.status !== 'completed')
       .sort((a, b) => String(a.scheduledFor || '9999').localeCompare(String(b.scheduledFor || '9999')));
-    const finished = jobs.filter((j) => j.status === 'completed').sort((a, b) => String(b.scheduledFor || '').localeCompare(String(a.scheduledFor || ''))).slice(0, 30);
+    const today = notDone.filter((j) => j.status === 'in_progress' || (j.scheduledFor || '').slice(0, 10) === tk || (j.scheduledFor && j.scheduledFor.slice(0, 10) < tk));
+    const upcoming = notDone.filter((j) => !today.includes(j));
+    const finished = jobs.filter((j) => j.status === 'completed').sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0)).slice(0, 20);
     const pay = (list) => list.reduce((t, j) => t + (Number(j.crewPay) || 0), 0);
     const showPay = jobs.some((j) => j.crewPay != null);
-    const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const toConfirm = notDone.filter((j) => j.status === 'scheduled' && !j.crewResponse).length;
 
     const card = (j) => {
       const t = tradeOf(j.trade);
-      const st = find(STATUSES, j.status);
-      // Progress the crew shares with the office: Scheduled → On the way → Working → Done, plus two holds.
-      const go = async (change, msg, btn, ask) => {
-        if (ask && !confirm(ask)) return;
-        btn.disabled = true;
-        try { await api.crewPortal.setProgress(j.id, change); renderPortal(`${msg} The office can see it.`); }
-        catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; btn.disabled = false; }
-      };
-      const B = (label, cls, change, msg, ask) => el('button', { class: cls, onclick: (e) => go(change, msg, e.currentTarget, ask) }, label);
-      const n = `TH-${j.number}`;
-      const actions = {
-        scheduled: j.stage === 'on_the_way'
-          ? [B('▶ Start work', 'gold', { status: 'in_progress' }, `▶ ${n} started.`), B('↩ Not on my way', 'ghost', { stage: null }, `↩ ${n}: back to scheduled.`)]
-          : [B('🚚 On my way', 'ghost', { stage: 'on_the_way' }, `🚚 ${n}: on the way.`), B('▶ Start work', 'gold', { status: 'in_progress' }, `▶ ${n} started.`)],
-        in_progress: j.stage
-          ? [B('▶ Back to work', 'ghost', { stage: null }, `▶ ${n}: back to work.`), B('✓ Finished', 'gold', { status: 'completed' }, `✓ ${n} finished. Thanks!`, `Mark ${n} as finished?`)]
-          : [B('⏸ Waiting on materials', 'ghost', { stage: 'waiting_parts' }, `⏸ ${n}: waiting on materials. Add a note saying what you need.`),
-            B('🔁 Needs another visit', 'ghost', { stage: 'return_visit' }, `🔁 ${n}: needs another visit. Add a note about what’s left.`),
-            B('✓ Finished', 'gold', { status: 'completed' }, `✓ ${n} finished. Thanks!`, `Mark ${n} as finished?`),
-            B('↩ Undo start', 'ghost', { status: 'scheduled' }, `↩ ${n}: back to scheduled.`)],
-        completed: [B('↩ Not finished yet', 'ghost', { status: 'in_progress' }, `↩ ${n}: back to working.`, `Move ${n} back to Working?`)],
-      }[j.status] || [];
-      const STEPS = [['scheduled', 'Scheduled'], ['on_the_way', 'On the way'], ['in_progress', 'Working'], ['completed', 'Done']];
-      const pos = j.status === 'completed' ? 3 : j.status === 'in_progress' ? 2 : j.stage === 'on_the_way' ? 1 : 0;
-      const hold = j.stage && j.stage !== 'on_the_way' ? (TH.STAGES || []).find((x) => x.id === j.stage) : null;
-      const progress = el('div', { class: 'crew-progress' },
-        el('div', { class: 'stepper four', 'aria-label': 'Job progress' }, ...STEPS.map(([, label], i) =>
-          el('span', { class: 'stepbit ' + (i < pos ? 'done' : i === pos ? 'on' : '') }, el('span', { class: 'dot' }, i < pos ? '✓' : String(i + 1)), el('span', { class: 'lbl' }, label)))),
-        hold ? el('div', { class: 'hold' }, `${hold.icon} ${hold.label}`) : null,
-        j.progressAt ? el('p', { class: 'muted small' }, `Last update: ${j.progressBy === me.name ? 'you' : j.progressBy || 'the office'} · ${new Date(j.progressAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`) : null);
-      const notesHolder = el('div');
-      const toggleNotes = () => {
-        if (notesHolder.firstChild) { notesHolder.replaceChildren(); return; }
-        notesHolder.replaceChildren(notesSection(j.notes || [], async (t) => {
-          await api.crewPortal.addNote(j.id, t);
-          renderPortal(`✓ Note sent to the office about TH-${j.number}.`);
-        }, { compact: true }));
-        notesHolder.querySelector('textarea').focus();
-      };
-      return el('article', { class: 'card job-card' },
-        el('div', { class: 'head' },
-          el('span', { style: 'font-size:1.6rem' }, t.icon),
-          el('div', { class: 't' }, el('h3', {}, `TH-${j.number} · ${t.label}`),
-            el('p', { class: 'small', style: 'font-weight:600' }, j.scheduledFor ? '📅 ' + fmtWhen(j.scheduledFor) : 'Date to be set')),
-          el('span', { class: `pill s-${j.status}` }, st.label)),
-        el('dl', { class: 'dl' },
-          el('dt', {}, 'Address'), el('dd', {}, el('a', { href: maps(`${j.address} ${j.zip}`), target: '_blank', rel: 'noopener' }, `${j.address} ${j.zip}`)),
-          el('dt', {}, 'Customer'), el('dd', {}, j.customerName, j.customerPhone ? ' · ' : '', j.customerPhone ? el('a', { href: tel(j.customerPhone) }, j.customerPhone) : ''),
-          el('dt', {}, 'Job'), el('dd', { style: 'white-space:pre-wrap' }, j.description),
-          j.crewPay != null ? el('dt', {}, 'Your pay') : null, j.crewPay != null ? el('dd', { style: 'font-weight:700' }, usd(j.crewPay)) : null),
-        progress,
-        el('div', { class: 'row wrap-row' }, ...actions),
-        el('div', { class: 'row wrap-row' },
-          j.crewToken ? el('a', { class: 'btn ghost', href: `crew.html?t=${j.crewToken}` }, `📷 Photos${j.photos ? ` (${j.photos})` : ''}`) : null,
-          el('button', { class: 'ghost', onclick: toggleNotes }, `📝 Notes${(j.notes || []).length ? ` (${j.notes.length})` : ''}`)),
-        notesHolder,
-      );
+      const d = j.scheduledFor ? new Date(j.scheduledFor) : null;
+      const st = stageOf(j.stage);
+      const chip = j.status === 'scheduled' && !j.crewResponse ? ['Confirm this job', 'hot']
+        : j.crewResponse === 'declined' && j.status === 'scheduled' ? ['You can’t make it', '']
+        : st ? [`${st.icon} ${st.label}`, 'hot']
+        : j.status === 'in_progress' ? ['🔨 Working', 'hot']
+        : j.status === 'completed' ? ['✓ Done', ''] : ['✓ Confirmed', ''];
+      return el('a', { class: 'crew-job', href: `#/job/${j.id}` },
+        el('span', { class: 'when' }, d ? el('b', {}, d.toLocaleDateString(undefined, { weekday: 'short' })) : el('b', {}, '—'),
+          d ? el('span', {}, d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })) : null,
+          d ? el('span', { class: 'muted' }, timeOf(j.scheduledFor)) : null),
+        el('span', { class: 'body' },
+          el('b', {}, `${t.icon} ${t.label} · TH-${j.number}`),
+          el('span', { class: 'muted small' }, `${j.address}${j.zip ? ' ' + j.zip : ''}`),
+          el('span', { class: 'flag ' + chip[1] }, chip[0])),
+        el('span', { class: 'chev', 'aria-hidden': 'true' }, '›'));
     };
+    const section = (title, list, empty) => [el('h2', { style: 'margin-top:6px' }, title),
+      list.length ? el('div', { class: 'crew-jobs' }, ...list.map(card)) : el('div', { class: 'card muted' }, empty)];
 
     view.replaceChildren(el('div', { class: 'stack', style: 'margin:20px 0' },
       el('div', {}, el('h1', {}, `Hi ${me.name.split(' ')[0]}`), el('p', { class: 'muted' }, 'Your Top Hat jobs')),
       showPay ? el('div', { class: 'kpis', style: 'grid-template-columns:1fr 1fr' },
-        el('div', { class: 'kpi' }, el('b', {}, usd(pay(upcoming))), el('span', {}, `Upcoming pay · ${upcoming.length} job${upcoming.length === 1 ? '' : 's'}`)),
+        el('div', { class: 'kpi' }, el('b', {}, usd(pay(notDone))), el('span', {}, `Upcoming pay · ${notDone.length} job${notDone.length === 1 ? '' : 's'}`)),
         el('div', { class: 'kpi' }, el('b', {}, usd(pay(finished))), el('span', {}, 'Finished jobs'))) : null,
       message ? el('div', { class: 'callout' }, message) : null,
-      errorBox,
-      el('h2', {}, 'Upcoming'),
-      upcoming.length ? upcoming.map(card) : el('div', { class: 'card muted' }, 'No upcoming jobs right now. The office will text you when you’re assigned one.'),
-      finished.length ? el('h2', { style: 'margin-top:8px' }, 'Finished') : null,
-      ...finished.map(card),
+      toConfirm ? el('div', { class: 'callout stage' }, `👋 ${toConfirm} new job${toConfirm === 1 ? '' : 's'} to confirm. Tap to open.`) : null,
+      ...section('Today', today, 'Nothing scheduled for today.'),
+      ...section('Upcoming', upcoming, 'No upcoming jobs. The office will text you when you’re assigned one.'),
+      ...(finished.length ? section('Finished', finished, '') : []),
     ));
+  }
+
+  // Build an .ics file so the job lands in the phone's calendar.
+  function calendarHref(j, company) {
+    const pad = (n) => String(n).padStart(2, '0');
+    const local = (d) => `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}T${pad(d.getHours())}${pad(d.getMinutes())}00`;
+    const esc = (x) => String(x || '').replace(/\\/g, '\\\\').replace(/[,;]/g, (m) => '\\' + m).replace(/\n/g, '\\n');
+    const start = new Date(j.scheduledFor);
+    const end = new Date(start.getTime() + 2 * 3600e3);
+    const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Top Hat Contracting//Crew//EN', 'BEGIN:VEVENT',
+      `UID:th-${j.number}-${j.id}@tophat`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').slice(0, 15)}Z`,
+      `DTSTART:${local(start)}`, `DTEND:${local(end)}`,
+      `SUMMARY:${esc(`TH-${j.number} ${tradeOf(j.trade).label} · ${j.customerName}`)}`,
+      `LOCATION:${esc(`${j.address} ${j.zip || ''}`)}`,
+      `DESCRIPTION:${esc(`${j.description}\nCustomer: ${j.customerName} ${j.customerPhone}${company.phone ? `\nOffice: ${company.phone}` : ''}`)}`,
+      'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+    return 'data:text/calendar;charset=utf-8,' + encodeURIComponent(ics);
+  }
+
+  // One job, everything the contractor needs from start to finish.
+  async function renderJob(id, message) {
+    const { me, jobs, company = {}, error } = await loadCrew();
+    if (!me) return renderLogin(error);
+    const j = jobs.find((x) => x.id === id);
+    if (!j) { location.hash = ''; return renderPortal('That job is no longer assigned to you.'); }
+    urls.forEach((u) => URL.revokeObjectURL(u));
+    const extra = j.crewToken ? await api.crew.job(j.crewToken) : null; // photos you've sent + your notes
+    const uploads = extra ? extra.uploads : [];
+    const notes = extra ? extra.notes || [] : j.notes || [];
+    urls = uploads.map((f) => f.url).filter(Boolean);
+    const t = tradeOf(j.trade);
+    const n = `TH-${j.number}`;
+    const custFirst = (j.customerName || '').split(' ')[0] || 'there';
+    const myFirst = me.name.split(' ')[0];
+    const co = company.name || 'Top Hat Contracting';
+    const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const fail = (err) => { errorBox.textContent = err.message; errorBox.hidden = false; errorBox.scrollIntoView({ block: 'center' }); };
+    const afterCount = uploads.filter((f) => f.stage === 'after').length;
+
+    const go = async (change, msg, btn) => {
+      if (btn) btn.disabled = true;
+      try { await api.crewPortal.setProgress(j.id, change); renderJob(j.id, msg); }
+      catch (err) { fail(err); if (btn) btn.disabled = false; }
+    };
+    const respond = async (response, note, btn) => {
+      if (btn) btn.disabled = true;
+      try { await api.crewPortal.respond(j.id, response, note); renderJob(j.id, response === 'confirmed' ? '✓ Confirmed. The office can see it.' : 'Sent. The office will reassign or reschedule.'); }
+      catch (err) { fail(err); if (btn) btn.disabled = false; }
+    };
+    const sms = (body) => (j.customerPhone ? 'sms:' + j.customerPhone.replace(/[^\d+]/g, '') + '?&body=' + encodeURIComponent(body) : null);
+    const TEXTS = [
+      ['🚚 On my way', `Hi ${custFirst}, this is ${myFirst} with ${co}. I’m on my way now and should be there soon.`],
+      ['⏰ Running late', `Hi ${custFirst}, this is ${myFirst} with ${co}. I’m running about 15 minutes late, sorry about that. See you soon.`],
+      ['📍 I’m here', `Hi ${custFirst}, this is ${myFirst} with ${co}. I’ve arrived.`],
+      ['✅ All done', `Hi ${custFirst}, this is ${myFirst} with ${co}. All finished up. Thanks for having us!`],
+    ];
+
+    // Next step: the one big button.
+    const declineBox = el('div', { class: 'stack', hidden: true },
+      el('textarea', { rows: 2, maxlength: '500', placeholder: 'Why? e.g. “Sick today” or “Can do Thursday instead”', 'aria-label': 'Reason' }),
+      el('button', { class: 'block', onclick: (e) => respond('declined', declineBox.querySelector('textarea').value, e.currentTarget) }, 'Tell the office'));
+    let step;
+    const st = stageOf(j.stage);
+    if (j.status === 'scheduled' && !j.crewResponse) {
+      step = { icon: '👋', title: 'New job: can you do it?', why: j.scheduledFor ? `${fmtWhen(j.scheduledFor)} at ${j.address}` : 'The office will set the time.',
+        btn: ['✓ I’ll be there', (e) => respond('confirmed', '', e.currentTarget)], second: ['Can’t make it', () => { declineBox.hidden = false; declineBox.querySelector('textarea').focus(); }] };
+    } else if (j.status === 'scheduled' && j.crewResponse === 'declined') {
+      step = { icon: '🙅', title: 'You told the office you can’t make it', why: j.crewResponseNote ? `“${j.crewResponseNote}”` : '', btn: ['Actually, I can make it', (e) => respond('confirmed', '', e.currentTarget)], ghost: true };
+    } else if (j.status === 'scheduled' && j.stage === 'on_the_way') {
+      step = { icon: '📍', title: 'When you get there', why: 'Tap Start work when you arrive.', btn: ['▶ Start work', (e) => go({ status: 'in_progress' }, `▶ ${n} started.`, e.currentTarget)],
+        second: ['↩ Not on my way', () => go({ stage: null }, `↩ ${n}: back to scheduled.`)] };
+    } else if (j.status === 'scheduled') {
+      step = { icon: '🚚', title: 'Head out when it’s time', why: j.scheduledFor ? `Scheduled ${fmtWhen(j.scheduledFor)}` : '',
+        btn: ['🚚 On my way', (e) => go({ stage: 'on_the_way' }, 'on_the_way', e.currentTarget)],
+        second: ['▶ I’m already here: start work', () => go({ status: 'in_progress' }, `▶ ${n} started.`)] };
+    } else if (j.status === 'in_progress' && st) {
+      step = { icon: st.icon, title: st.label, why: 'Add a note so the office knows what’s needed.', btn: ['▶ Back to work', (e) => go({ stage: null }, `▶ ${n}: back to work.`, e.currentTarget)],
+        second: ['✓ Finish job', () => finish()] };
+    } else if (j.status === 'in_progress') {
+      step = { icon: '🔨', title: 'Working on it', why: j.startedAt ? `Started ${timeOf(new Date(j.startedAt).toISOString())} · ${dur(j.startedAt, Date.now())} so far` : '',
+        btn: ['✓ Finish job', () => finish()] };
+    } else {
+      step = { icon: '🎉', title: 'Job done. Thanks!', why: [j.crewPay != null ? `Your pay: ${usd(j.crewPay)}` : null, j.startedAt && j.finishedAt ? `Time on job: ${dur(j.startedAt, j.finishedAt)}` : null].filter(Boolean).join(' · '),
+        btn: null, second: ['↩ Not finished yet', () => { if (confirm(`Move ${n} back to Working?`)) go({ status: 'in_progress' }, `↩ ${n}: back to working.`); }] };
+    }
+    function finish() {
+      if (!afterCount && !confirm('You haven’t added any After photos yet.\n\nTap OK to finish anyway, or Cancel to add photos first.')) {
+        photoStage = 'after'; renderPhotoStage(); photosCard.scrollIntoView({ block: 'start', behavior: 'smooth' }); return;
+      }
+      go({ status: 'completed' }, `✓ ${n} finished. Thanks!`);
+    }
+    const onWayMsg = message === 'on_the_way';
+    const nextCard = el('section', { class: 'card next-step' },
+      el('span', { class: 'eyebrow' }, 'Next step'),
+      el('div', { class: 'row', style: 'align-items:flex-start' }, el('span', { class: 'next-ic' }, step.icon),
+        el('div', { style: 'flex:1;min-width:0' }, el('h3', {}, step.title), step.why ? el('p', { class: 'muted small' }, step.why) : null)),
+      step.btn ? el('button', { class: (step.ghost ? 'ghost' : 'gold') + ' block big', onclick: step.btn[1] }, step.btn[0]) : null,
+      step.second ? el('button', { class: 'link', onclick: step.second[1] }, step.second[0]) : null,
+      declineBox);
+
+    // One-tap buttons
+    const textsBox = el('div', { class: 'texts', hidden: !onWayMsg },
+      el('p', { class: 'muted small' }, onWayMsg ? `🚚 Marked on the way. Let ${custFirst} know:` : `Text ${custFirst}:`),
+      ...TEXTS.map(([label, body]) => (sms(body) ? el('a', { class: 'btn ghost small', href: sms(body) }, label) : null)).filter(Boolean),
+      sms('') ? el('a', { class: 'btn ghost small', href: sms('') }, '✏️ Write my own') : el('p', { class: 'muted small' }, 'No phone number on file.'));
+    const quick = el('section', { class: 'card stack' },
+      el('div', { class: 'quick' },
+        el('a', { class: 'qbtn', href: maps(`${j.address} ${j.zip || ''}`), target: '_blank', rel: 'noopener' }, el('span', {}, '🧭'), 'Directions'),
+        j.customerPhone ? el('a', { class: 'qbtn', href: tel(j.customerPhone) }, el('span', {}, '📞'), 'Call customer') : null,
+        j.customerPhone ? el('button', { class: 'qbtn', onclick: () => { textsBox.hidden = !textsBox.hidden; } }, el('span', {}, '💬'), 'Text customer') : null,
+        company.phone ? el('a', { class: 'qbtn', href: tel(company.phone) }, el('span', {}, '☎️'), 'Call office') : null,
+        j.scheduledFor && j.status !== 'completed' ? el('a', { class: 'qbtn', href: calendarHref(j, company), download: `TH-${j.number}.ics` }, el('span', {}, '📅'), 'Add to calendar') : null),
+      onWayMsg ? null : textsBox);
+
+    // Progress
+    const STEPS = [['Scheduled'], ['On the way'], ['Working'], ['Done']];
+    const pos = j.status === 'completed' ? 3 : j.status === 'in_progress' ? 2 : j.stage === 'on_the_way' ? 1 : 0;
+    const progress = el('section', { class: 'card stack' },
+      el('h3', {}, 'Progress'),
+      el('div', { class: 'crew-progress' },
+        el('div', { class: 'stepper four', 'aria-label': 'Job progress' }, ...STEPS.map(([label], i) =>
+          el('span', { class: 'stepbit ' + (i < pos ? 'done' : i === pos ? 'on' : '') }, el('span', { class: 'dot' }, i < pos ? '✓' : String(i + 1)), el('span', { class: 'lbl' }, label)))),
+        st && j.stage !== 'on_the_way' ? el('div', { class: 'hold' }, `${st.icon} ${st.label}`) : null),
+      j.status === 'in_progress' ? el('div', { class: 'stage-chips' },
+        ...(TH.STAGES || []).filter((x) => x.status === 'in_progress').map((x) => el('button', { class: 'chip', 'aria-pressed': String(j.stage === x.id),
+          onclick: () => go({ stage: j.stage === x.id ? null : x.id }, j.stage === x.id ? `▶ ${n}: back to work.` : `${x.icon} ${n}: ${x.label.toLowerCase()}. Add a note for the office.`) }, `${x.icon} ${x.label}`)),
+        el('button', { class: 'chip', onclick: () => { if (confirm('Undo start? The job goes back to Scheduled.')) go({ status: 'scheduled' }, `↩ ${n}: back to scheduled.`); } }, '↩ Undo start')) : null,
+      el('p', { class: 'muted small' }, [
+        j.crewResponse === 'confirmed' ? '✓ You confirmed this job' : null,
+        j.startedAt ? `Started ${new Date(j.startedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : null,
+        j.finishedAt ? `Finished ${timeOf(new Date(j.finishedAt).toISOString())}` : null,
+        j.progressAt ? `Last update: ${j.progressBy === me.name ? 'you' : j.progressBy || 'the office'}` : null,
+      ].filter(Boolean).join(' · ')),
+    );
+
+    // The job itself
+    const details = el('section', { class: 'card stack' },
+      el('h3', {}, 'The job'),
+      el('dl', { class: 'dl' },
+        el('dt', {}, 'When'), el('dd', { style: 'font-weight:600' }, j.scheduledFor ? fmtWhen(j.scheduledFor) : 'To be set'),
+        el('dt', {}, 'Address'), el('dd', {}, el('a', { href: maps(`${j.address} ${j.zip || ''}`), target: '_blank', rel: 'noopener' }, `${j.address} ${j.zip || ''}`)),
+        el('dt', {}, 'Customer'), el('dd', {}, j.customerName, j.customerPhone ? ' · ' : '', j.customerPhone ? el('a', { href: tel(j.customerPhone) }, j.customerPhone) : ''),
+        el('dt', {}, 'What to do'), el('dd', { style: 'white-space:pre-wrap' }, j.description),
+        j.crewPay != null ? el('dt', {}, 'Your pay') : null, j.crewPay != null ? el('dd', { style: 'font-weight:700' }, usd(j.crewPay)) : null),
+      (j.customerPhotos || []).length ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Photos from the customer'),
+        el('div', { class: 'photo-row' }, ...j.customerPhotos.map((src, i) => el('a', { href: src, target: '_blank' }, el('img', { src, alt: `Customer photo ${i + 1}` }))))) : null,
+    );
+
+    // Photos (Before / During / After), right here
+    let photoStage = j.status === 'completed' ? 'after' : j.status === 'in_progress' ? 'during' : 'before';
+    const stageSeg = el('div', { class: 'seg3', role: 'radiogroup', 'aria-label': 'Photo stage' });
+    function renderPhotoStage() {
+      stageSeg.replaceChildren(...PHOTO_STAGES.map((s) => el('button', { type: 'button', role: 'radio', 'aria-checked': String(photoStage === s.id), onclick: () => { photoStage = s.id; renderPhotoStage(); } }, s.label)));
+    }
+    renderPhotoStage();
+    const photoStatus = el('p', { class: 'muted small', role: 'status', 'aria-live': 'polite' });
+    const photoNote = el('input', { type: 'text', placeholder: 'Optional caption, e.g. “Rot behind the sink”', autocomplete: 'off' });
+    const picker = el('input', { type: 'file', accept: 'image/*,application/pdf', multiple: true, hidden: true, onchange: async (e) => {
+      const files = [...e.target.files];
+      if (!files.length || !j.crewToken) return;
+      let done = 0;
+      for (const f of files) {
+        photoStatus.textContent = `Uploading ${done + 1} of ${files.length}…`;
+        try { await api.crew.upload(j.crewToken, f, { stage: photoStage, note: photoNote.value }); done++; }
+        catch (err) { fail(err); break; }
+      }
+      if (done) renderJob(j.id, `📷 ${done} ${done === 1 ? 'photo' : 'photos'} sent to the office.`);
+    } });
+    const byStage = PHOTO_STAGES.map((s) => [s, uploads.filter((f) => f.stage === s.id)]).filter(([, l]) => l.length);
+    const photosCard = el('section', { class: 'card stack' },
+      el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, '📷 Job photos'), uploads.length ? el('span', { class: 'pill' }, String(uploads.length)) : null),
+      stageSeg, photoNote,
+      el('label', { class: 'btn gold block big' }, '📷 Take or add photos', picker),
+      photoStatus,
+      ...byStage.map(([s, list]) => el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, `${s.label} (${list.length})`),
+        el('div', { class: 'photo-row', style: 'flex-wrap:wrap' }, ...list.map((f) => /^image\//.test(f.mime) && f.url
+          ? el('img', { src: f.url, alt: f.note || f.name, title: f.note || f.name, style: 'width:84px;height:84px' })
+          : el('span', { class: 'pill' }, '📎 ' + f.name))))),
+    );
+
+    // Notes with one-tap starters
+    const notesCard = notesSection(notes, async (txt) => { await api.crewPortal.addNote(j.id, txt); renderJob(j.id, '✓ Note sent to the office.'); });
+    const ta = notesCard.querySelector('textarea');
+    notesCard.insertBefore(el('div', { class: 'stage-chips' },
+      ...['Need more materials: ', 'Customer not home.', 'Found extra work: ', 'Running late. ETA '].map((txt) =>
+        el('button', { type: 'button', class: 'chip', onclick: () => { ta.value = txt; ta.focus(); ta.setSelectionRange(txt.length, txt.length); } }, txt.replace(/[:.]?\s*(ETA\s*)?$/, '')))), ta);
+
+    view.replaceChildren(el('div', { class: 'stack', style: 'margin:14px 0 20px' },
+      el('div', { class: 'row' }, el('a', { class: 'btn ghost small', href: '#/' }, '← My jobs'), el('span', { class: 'spacer' }), el('span', { class: `pill s-${j.status}` }, find(STATUSES, j.status).label)),
+      el('div', {}, el('h1', { style: 'font-size:1.45rem' }, `${t.icon} ${t.label}`), el('p', { class: 'muted' }, `${n} · ${j.customerName}`)),
+      message && !onWayMsg ? el('div', { class: 'callout' }, message) : null,
+      errorBox, nextCard, onWayMsg ? textsBox : null, quick, progress, details, photosCard, notesCard,
+    ));
+    window.scrollTo(0, 0);
   }
 
   async function route() {
     await renderNav();
     if (token) return renderUpload();
     if (invite) return renderInvite();
-    return renderPortal();
+    const m = location.hash.match(/^#\/job\/(.+)$/);
+    return m ? renderJob(decodeURIComponent(m[1])) : renderPortal();
   }
+  window.addEventListener('hashchange', () => { if (!token && !invite) route(); });
   route();
 })();

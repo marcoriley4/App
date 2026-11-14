@@ -91,6 +91,9 @@
       { id: 'new', icon: '🔔', title: 'New leads to call', why: 'Call them to talk through the job.', call: true,
         list: open.filter((j) => j.status === 'new').sort((a, b) => a.created - b.created),
         line: (j) => `${tradeOf(j.trade).label} · came in ${ago(j.created)}` },
+      { id: 'declined', icon: '🙅', title: 'Crew can’t make it', why: 'Pick another crew or a new date.',
+        list: open.filter((j) => j.status === 'scheduled' && j.crewResponse === 'declined'),
+        line: (j) => `${crewName(j) || 'Crew'}: “${j.crewResponseNote || 'no reason given'}”` },
       { id: 'notes', icon: '👷', title: 'New updates from your crew', why: 'Progress updates and notes from the job.',
         list: jobs.filter(hasCrewNews).sort((a, b) => Math.max(crewUpdatedAt(b), 0) - Math.max(crewUpdatedAt(a), 0)),
         line: (j) => [crewUpdatedAt(j) ? `${j.progressBy}: ${progressText(j)}` : null, hasNewNote(j) ? 'new note' : null].filter(Boolean).join(' · ') },
@@ -184,6 +187,8 @@
     const t = tradeOf(j.trade);
     const c = find(crew, j.contractorId);
     const flags = [
+      j.status === 'scheduled' && j.crewResponse === 'declined' ? ['🙅 Crew can’t make it', 'hot'] : null,
+      j.status === 'scheduled' && j.contractorId && !j.crewResponse ? ['⏳ Crew hasn’t confirmed', ''] : null,
       hasCrewNews(j) ? ['👷 New crew update', 'hot'] : null,
       j.stage ? [`${stageOf(j.stage).icon} ${stageOf(j.stage).label}`, ''] : null,
       needsScheduling(j) ? ['✅ Approved, needs scheduling', 'hot'] : null,
@@ -242,7 +247,13 @@
       el('ul', { class: 'facts' },
         el('li', {}, el('span', { class: 'fi' }, '📍'), el('a', { href: 'https://maps.google.com/?q=' + encodeURIComponent(`${j.address} ${j.zip}`), target: '_blank', rel: 'noopener' }, `${j.address} ${j.zip}`)),
         el('li', {}, el('span', { class: 'fi' }, '📅'), j.scheduledFor ? el('span', {}, fmtWhen(j.scheduledFor)) : el('span', { class: 'muted' }, 'Not scheduled yet')),
-        el('li', {}, el('span', { class: 'fi' }, '👷'), assigned ? el('span', {}, assigned.name) : el('span', { class: 'muted' }, 'No crew yet')),
+        el('li', {}, el('span', { class: 'fi' }, '👷'), assigned ? el('span', {}, assigned.name,
+          j.status === 'scheduled' ? el('span', { class: j.crewResponse === 'declined' ? 'bad-text' : 'muted' },
+            j.crewResponse === 'confirmed' ? ' · ✓ confirmed' : j.crewResponse === 'declined' ? ` · can’t make it: “${j.crewResponseNote}”` : ' · not confirmed yet') : null)
+          : el('span', { class: 'muted' }, 'No crew yet')),
+        j.startedAt ? el('li', {}, el('span', { class: 'fi' }, '⏱'), el('span', {},
+          `Started ${new Date(j.startedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
+          j.finishedAt ? ` · finished after ${(() => { const m = Math.round((j.finishedAt - j.startedAt) / 60000); return m < 60 ? m + ' min' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm'; })()}` : '')) : null,
         el('li', {}, el('span', { class: 'fi' }, '💲'), j.price != null
           ? el('span', {}, `${money(j.price)} customer price`, j.crewPay != null ? el('span', { class: 'muted' }, ` · ${money(j.price - j.crewPay)} profit`) : null)
           : el('span', { class: 'muted' }, 'No price yet'))),
@@ -455,6 +466,7 @@
       step = { icon: '✅', title: `${first} approved ${approvedEst.number}: schedule a crew`, why: 'Pick who’s doing the work and when.', act: ['Pick crew & date', focusSetup] };
     } else if (j.status === 'scheduled') {
       if (!assigned || !j.scheduledFor) step = { icon: '👷', title: 'Pick a crew and a date', act: ['Pick crew & date', focusSetup] };
+      else if (j.crewResponse === 'declined') step = { icon: '🙅', title: `${crewFirst} can’t make it`, why: j.crewResponseNote ? `“${j.crewResponseNote}”` : 'Pick another crew or a new date.', act: ['Pick another crew or date', focusSetup] };
       else if (j.stage === 'on_the_way') step = { icon: '🚚', title: `${crewFirst} is on the way`, why: 'They’ll mark the work started when they get there. You can too.', act: ['▶ Work has started', () => update({ status: 'in_progress' })] };
       else step = { icon: '📲', title: `Send the job to ${crewFirst}`, why: 'Texts them the date, address, customer phone, job details and photo link. Never prices.',
         href: assigned.phone ? smsHref(assigned.phone, dispatchText) : null, label: `💬 Text job to ${crewFirst}`, second: ['Work has started', () => update({ status: 'in_progress' })] };

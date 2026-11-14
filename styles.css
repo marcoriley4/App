@@ -413,3 +413,18 @@ button.icon:hover { color: var(--bad); }
 .stepbit .lbl { text-align: center; line-height: 1.15; }
 .hold { align-self: center; background: var(--gold-soft); color: var(--warn); font-weight: 700; font-size: .85rem; border-radius: 99px; padding: 4px 12px; }
 .callout.stage { background: var(--gold-soft); }
+
+/* Crew: job list + job page */
+.crew-jobs { display: flex; flex-direction: column; gap: 10px; }
+.crew-job { display: flex; align-items: center; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 12px; color: var(--text); text-decoration: none; box-shadow: var(--shadow); }
+.crew-job:hover { border-color: var(--gold); }
+.crew-job .when { display: flex; flex-direction: column; align-items: center; min-width: 58px; padding: 6px 4px; background: var(--surface-2); border-radius: 10px; font-size: .78rem; line-height: 1.25; text-align: center; }
+.crew-job .when b { font-size: .95rem; }
+.crew-job .body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
+.crew-job .chev { font-size: 1.6rem; color: var(--muted); }
+.quick { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 8px; }
+.qbtn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 72px; padding: 8px 4px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); text-decoration: none; font-weight: 600; font-size: .8rem; text-align: center; white-space: normal; line-height: 1.2; }
+.qbtn span { font-size: 1.4rem; }
+.texts { display: flex; flex-direction: column; gap: 8px; background: var(--gold-soft); border-radius: 12px; padding: 10px; }
+.texts .btn { justify-content: flex-start; }
+.bad-text { color: var(--bad); font-weight: 600; }

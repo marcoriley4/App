@@ -80,6 +80,10 @@
       j.log.push({ at: Date.now(), text: nextStage ? `${STAGES.find((x) => x.id === nextStage).label}${tag || ` (by ${who})`}` : `Cleared “${STAGES.find((x) => x.id === j.stage)?.label}”${tag}` });
     }
     if (next !== j.status || (nextStage || null) !== (j.stage || null)) {
+      // Time on the job: first start, and when it was finished.
+      if (next === 'in_progress' && !j.startedAt) j.startedAt = Date.now();
+      if (next === 'completed' && j.status !== 'completed') j.finishedAt = Date.now();
+      if (next !== 'completed') j.finishedAt = null;
       j.status = next; j.stage = nextStage;
       j.progressAt = Date.now(); j.progressBy = who; j.progressByCrew = !!byCrew;
     }
@@ -426,6 +430,7 @@
           j.log.push({ at: Date.now(), text: `Assigned to ${cname(patch.contractorId)}` });
           // New crew → new upload link, so the previous crew's link stops working.
           j.crewToken = patch.contractorId ? newToken() : null;
+          j.crewResponse = null; j.crewResponseNote = ''; j.crewResponseAt = null; // new crew needs to confirm
         }
         if ('scheduledFor' in patch && patch.scheduledFor !== j.scheduledFor && patch.scheduledFor) j.log.push({ at: Date.now(), text: `Scheduled for ${new Date(patch.scheduledFor).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}` });
         const usd = (n) => n == null ? 'cleared' : '$' + Number(n).toLocaleString();
@@ -747,9 +752,14 @@
       async jobs() {
         const { d, c } = await requireCrew();
         const showPay = d.settings.showCrewPay !== false;
-        return d.jobs.filter((j) => j.contractorId === c.id && ['scheduled', 'in_progress', 'completed'].includes(j.status)).map((j) => {
+        return Promise.all(d.jobs.filter((j) => j.contractorId === c.id && ['scheduled', 'in_progress', 'completed'].includes(j.status)).map(async (j) => {
           const b = customerOf(d, j);
+          // Photos the customer sent with their request, so the crew knows what they're walking into.
+          const custFiles = await Promise.all(j.files.filter((f) => f.source === 'customer' && /^image\//.test(f.mime)).map(withUrl));
           return {
+            crewResponse: j.crewResponse || null, crewResponseNote: j.crewResponseNote || '',
+            startedAt: j.startedAt || null, finishedAt: j.finishedAt || null,
+            customerPhotos: [...(j.photos || []), ...custFiles.map((f) => f.url).filter(Boolean)],
             id: j.id, number: j.number, trade: j.trade, status: j.status, scheduledFor: j.scheduledFor,
             address: j.address, zip: j.zip, description: j.description,
             customerName: b.name || '', customerPhone: b.phone || '',
@@ -758,7 +768,21 @@
             photos: j.files.filter((f) => f.source === 'crew' && f.contractorId === c.id).length,
             notes: ownNotes(j),
           };
-        });
+        }));
+      },
+      // Crew confirms they'll do the job, or tells the office they can't (with a reason).
+      async respond(jobId, response, note = '') {
+        const { d, c, u } = await requireCrew();
+        const j = d.jobs.find((x) => x.id === jobId && x.contractorId === c.id && x.status === 'scheduled');
+        if (!j || !['confirmed', 'declined'].includes(response)) throw new Error('That isn’t available for this job.');
+        note = String(note || '').trim().slice(0, 500);
+        if (response === 'declined' && !note) throw new Error('Tell the office why, so they can plan.');
+        j.crewResponse = response; j.crewResponseNote = note; j.crewResponseAt = Date.now();
+        j.progressAt = Date.now(); j.progressBy = u.name; j.progressByCrew = true;
+        if (response === 'confirmed') j.log.push({ at: Date.now(), text: `${u.name} confirmed the job` });
+        else pushCrewNote(d, j, `Can’t make it: ${note}`);
+        if (response === 'declined') j.log.push({ at: Date.now(), text: `${u.name} can’t make it` });
+        writeDb(d);
       },
       async addNote(jobId, text) {
         const { d, c } = await requireCrew();

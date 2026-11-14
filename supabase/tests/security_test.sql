@@ -395,6 +395,48 @@ set role authenticated;
 select t.ok(public.my_jobs()::text !~ 'Pat Phone|Furnace', 'other customers never see office-entered jobs');
 reset role;
 
+-- ---- crew confirms / declines, time on job, customer photos ----
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+update public.jobs set status = 'scheduled' where id = current_setting('t.pjob')::uuid;
+reset role;
+select set_config('request.jwt.claim.sub', :'C', false);
+set role authenticated;
+do $$ begin
+  begin perform public.crew_respond(current_setting('t.pjob')::uuid, 'declined', ''); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'declining needs a reason'); end;
+  begin perform public.crew_respond(gen_random_uuid(), 'confirmed', ''); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'crew cannot confirm jobs that are not theirs'); end;
+end $$;
+select public.crew_respond(current_setting('t.pjob')::uuid, 'declined', 'Out sick Friday');
+select t.ok((select x->>'crew_response' from jsonb_array_elements(public.crew_my_jobs()) x where x->>'id' = current_setting('t.pjob')) = 'declined', 'crew can say they can''t make it');
+select public.crew_respond(current_setting('t.pjob')::uuid, 'confirmed', '');
+select public.crew_set_progress(current_setting('t.pjob')::uuid, 'in_progress', null);
+select public.crew_set_progress(current_setting('t.pjob')::uuid, 'completed', null);
+select t.ok((select (x->>'started_at') is not null and (x->>'finished_at') is not null from jsonb_array_elements(public.crew_my_jobs()) x where x->>'id' = current_setting('t.pjob')), 'start and finish times recorded');
+select public.crew_set_progress(current_setting('t.pjob')::uuid, 'in_progress', null);
+select t.ok((select (x->>'finished_at') is null from jsonb_array_elements(public.crew_my_jobs()) x where x->>'id' = current_setting('t.pjob')), 'undoing finish clears the finish time');
+reset role;
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+select t.ok(exists (select 1 from public.crew_notes where text = 'Can’t make it: Out sick Friday'), 'office gets the can''t-make-it reason as a note');
+select t.ok(exists (select 1 from public.job_events where text = 'Ray Johnson confirmed the job'), 'confirmation logged');
+update public.jobs set contractor_id = (select id from public.contractors where name = 'Mike Alvarez') where id = current_setting('t.pjob')::uuid;
+select t.ok((select crew_response from public.jobs where id = current_setting('t.pjob')::uuid) is null, 'reassigning clears the previous crew''s answer');
+update public.jobs set contractor_id = (select id from public.contractors where name = 'Ray Johnson') where id = current_setting('t.pjob')::uuid;
+reset role;
+-- customer photo on Ann's job (assigned to Ray) is readable by Ray's login, not by anon or other customers
+select t.ok(public.crew_can_read_customer((select path from public.job_files where source = 'customer' limit 1)) is false, 'helper is false without a crew login');
+select set_config('request.jwt.claim.sub', :'C', false);
+set role authenticated;
+select t.ok((select count(*) from storage.objects where name like '%/customer/%') = 1, 'crew can open customer request photos on their job');
+select t.ok(jsonb_array_length((select x->'customer_photos' from jsonb_array_elements(public.crew_my_jobs()) x where x->>'id' = current_setting('t.job'))) = 1, 'crew job lists customer photos');
+reset role;
+select set_config('request.jwt.claim.sub', :'B', false);
+set role authenticated;
+select t.ok((select count(*) from storage.objects where name like '%/customer/%') = 0, 'other customers still cannot open them');
+reset role;
+
 update public.settings set data = data || '{"showCrewPay": false}';
 select set_config('request.jwt.claim.sub', :'C', false);
 set role authenticated;

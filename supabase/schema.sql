@@ -36,7 +36,7 @@ drop function if exists public.handle_new_user, public.is_staff, public.new_crew
   public.doc_total, public.doc_paid, public.docs_before, public.docs_after, public.my_documents, public.respond_estimate,
   public.my_crew, public.staff_invite_crew, public.staff_revoke_crew, public.crew_invite_info, public.claim_crew_invite,
   public.crew_my_jobs, public.crew_set_status, public.crew_set_progress, public.crew_add_note,
-  public.jobs_before_update, public.stage_label cascade;
+  public.jobs_before_update, public.stage_label, public.crew_respond, public.crew_can_read_customer cascade;
 
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
@@ -121,6 +121,12 @@ create table public.jobs (
   progress_at timestamptz,
   progress_by text not null default '',
   progress_by_crew boolean not null default false,
+  -- The assigned contractor's answer, and time on the job.
+  crew_response text check (crew_response in ('confirmed', 'declined')),
+  crew_response_note text not null default '',
+  crew_response_at timestamptz,
+  started_at timestamptz,
+  finished_at timestamptz,
   created_at timestamptz not null default now(),
   check (buyer_id is not null or length(trim(contact_name)) > 0)
 );
@@ -212,6 +218,14 @@ begin
   if (new.status, new.stage) is distinct from (old.status, old.stage) and new.progress_at is not distinct from old.progress_at then
     new.progress_at := now();
   end if;
+  -- A new crew has to confirm for themselves.
+  if new.contractor_id is distinct from old.contractor_id then
+    new.crew_response := null; new.crew_response_note := ''; new.crew_response_at := null;
+  end if;
+  -- Time on the job.
+  if new.status = 'in_progress' and new.started_at is null then new.started_at := now(); end if;
+  if new.status = 'completed' and old.status is distinct from 'completed' then new.finished_at := now(); end if;
+  if new.status <> 'completed' then new.finished_at := null; end if;
   return new;
 end $$;
 create trigger jobs_before_update before update on public.jobs
@@ -628,6 +642,10 @@ begin
   return (select coalesce(jsonb_agg(jsonb_build_object(
       'id', j.id, 'number', j.number, 'trade', j.trade, 'status', j.status, 'scheduled_for', j.scheduled_for,
       'stage', j.stage, 'progress_at', j.progress_at, 'progress_by', j.progress_by,
+      'crew_response', j.crew_response, 'crew_response_note', j.crew_response_note,
+      'started_at', j.started_at, 'finished_at', j.finished_at,
+      'customer_photos', (select coalesce(jsonb_agg(f.path order by f.uploaded_at), '[]'::jsonb) from public.job_files f
+                           where f.job_id = j.id and f.source = 'customer' and f.mime like 'image/%'),
       'address', j.address, 'zip', j.zip, 'description', j.description,
       'customer_name', coalesce(b.name, j.contact_name), 'customer_phone', coalesce(b.phone, j.contact_phone), 'crew_token', p.crew_token,
       'crew_pay', case when coalesce(show_pay, true) then p.crew_pay end,
@@ -663,6 +681,37 @@ begin
    where id = p_job;
 end $$;
 
+-- Crew: confirm they'll do a scheduled job, or tell the office they can't (reason required).
+create function public.crew_respond(p_job uuid, p_response text, p_note text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare cid uuid := public.my_crew(); who text; note text := left(trim(coalesce(p_note, '')), 500);
+begin
+  if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
+  if p_response not in ('confirmed', 'declined') or not exists (
+       select 1 from public.jobs where id = p_job and contractor_id = cid and status = 'scheduled') then
+    raise exception 'That isn''t available for this job.';
+  end if;
+  if p_response = 'declined' and note = '' then raise exception 'Tell the office why, so they can plan.'; end if;
+  select name into who from public.contractors where id = cid;
+  update public.jobs set crew_response = p_response, crew_response_note = note, crew_response_at = now(),
+         progress_at = now(), progress_by = coalesce(who, 'Crew'), progress_by_crew = true
+   where id = p_job;
+  if p_response = 'confirmed' then
+    perform public.log_event(p_job, coalesce(who, 'Crew') || ' confirmed the job');
+  else
+    insert into public.crew_notes (job_id, contractor_id, by_name, text) values (p_job, cid, coalesce(who, 'Crew'), 'Can’t make it: ' || note);
+    perform public.log_event(p_job, coalesce(who, 'Crew') || ' can’t make it');
+  end if;
+end $$;
+
+-- Logged-in crew may open the customer's request photos, only on jobs assigned to them.
+create function public.crew_can_read_customer(p text) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from public.job_files f join public.jobs j on j.id = f.job_id
+                 where f.path = p and f.source = 'customer' and j.contractor_id = public.my_crew()
+                   and j.status in ('scheduled', 'in_progress', 'completed'));
+$$;
+
 -- Crew: add a note to their job, from the job's photo link (p_token) or their crew login (p_job).
 create function public.crew_add_note(p_token text, p_job uuid, p_text text) returns void
 language plpgsql security definer set search_path = '' as $$
@@ -694,7 +743,8 @@ grant execute on function public.is_staff(), public.owns_job(text), public.custo
   public.create_job(text, text, text, text, text, text), public.add_customer_file(uuid, text, text, text, bigint),
   public.my_jobs(), public.my_documents(), public.respond_estimate(uuid, boolean),
   public.staff_invite_crew(uuid), public.staff_revoke_crew(uuid), public.claim_crew_invite(text),
-  public.crew_my_jobs(), public.crew_set_progress(uuid, text, text) to authenticated;
+  public.crew_my_jobs(), public.crew_set_progress(uuid, text, text), public.crew_respond(uuid, text, text),
+  public.crew_can_read_customer(text) to authenticated;
 grant execute on function public.crew_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_add_note(text, uuid, text) to anon, authenticated;
 grant execute on function public.crew_token_active(text), public.crew_job(text),
@@ -711,6 +761,7 @@ drop policy if exists "th customer upload request photos" on storage.objects;
 drop policy if exists "th customer read shared" on storage.objects;
 drop policy if exists "th crew upload" on storage.objects;
 drop policy if exists "th crew read own" on storage.objects;
+drop policy if exists "th crew read customer photos" on storage.objects;
 
 create policy "th staff all files" on storage.objects for all to authenticated
   using (bucket_id = 'job-files' and public.is_staff())
@@ -730,3 +781,5 @@ create policy "th crew upload" on storage.objects for insert to anon, authentica
   with check (bucket_id = 'job-files' and (storage.foldername(name))[1] = 'crew' and public.crew_token_active((storage.foldername(name))[2]));
 create policy "th crew read own" on storage.objects for select to anon, authenticated
   using (bucket_id = 'job-files' and (storage.foldername(name))[1] = 'crew' and public.crew_token_active((storage.foldername(name))[2]));
+create policy "th crew read customer photos" on storage.objects for select to authenticated
+  using (bucket_id = 'job-files' and public.crew_can_read_customer(name));

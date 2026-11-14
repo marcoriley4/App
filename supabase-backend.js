@@ -178,6 +178,8 @@
             buyer: peopleBy[j.buyer_id] || { name: j.contact_name || 'Unknown', email: j.contact_email || '', phone: j.contact_phone || '' },
             hasAccount: !!j.buyer_id,
             stage: j.stage || null, progressAt: ms(j.progress_at), progressBy: j.progress_by || '', progressByCrew: !!j.progress_by_crew,
+            crewResponse: j.crew_response || null, crewResponseNote: j.crew_response_note || '',
+            startedAt: ms(j.started_at), finishedAt: ms(j.finished_at),
           };
         });
       },
@@ -423,7 +425,11 @@
       },
       async jobs() {
         const list = must(await sb.rpc('crew_my_jobs')) || [];
+        const photoUrls = await signedUrls(list.flatMap((j) => j.customer_photos || []));
         return list.map((j) => ({
+          crewResponse: j.crew_response || null, crewResponseNote: j.crew_response_note || '',
+          startedAt: ms(j.started_at), finishedAt: ms(j.finished_at),
+          customerPhotos: (j.customer_photos || []).map((pth) => photoUrls[pth]).filter(Boolean),
           id: j.id, number: j.number, trade: j.trade, status: j.status, scheduledFor: local16(j.scheduled_for),
           address: j.address, zip: j.zip, description: j.description,
           customerName: j.customer_name || '', customerPhone: j.customer_phone || '',
@@ -439,6 +445,9 @@
         must(await sb.rpc('crew_set_progress', { p_job: jobId, p_status: status || null, p_stage: stage === undefined ? null : stage }));
       },
       async setStatus(jobId, status) { return api.crewPortal.setProgress(jobId, { status }); },
+      async respond(jobId, response, note = '') {
+        must(await sb.rpc('crew_respond', { p_job: jobId, p_response: response, p_note: note || '' }));
+      },
     },
 
     async resetPreview() { /* preview only */ },
