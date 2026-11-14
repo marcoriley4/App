@@ -257,9 +257,31 @@
     return d;
   }
 
+  // Preview data saved before a feature existed may lack its sample login. Add it, without touching anything else.
+  async function addMissingSamples(d) {
+    const now = Date.now();
+    const has = (email) => d.users.some((u) => u.email === email);
+    if (!has('maria@tophat.demo')) {
+      let sp = d.team.find((x) => x.name === 'Maria Lopez' && !x.userId);
+      if (!sp) { sp = { id: uid(), name: 'Maria Lopez', phone: '(555) 444-1212', active: true, userId: null, inviteCode: null }; d.team.push(sp); }
+      const u = { id: uid(), role: 'sales', salesId: sp.id, name: 'Maria Lopez', email: 'maria@tophat.demo', phone: sp.phone, password: await hash('sales1234'), created: now };
+      d.users.push(u); sp.userId = u.id;
+      // Give her a client to work with: an open job nobody is assigned to.
+      const lead = d.jobs.find((j) => !j.salesId && ['new', 'qualifying'].includes(j.status) && j.number !== 1001) || d.jobs.find((j) => !j.salesId && ['new', 'qualifying'].includes(j.status));
+      if (lead) { lead.salesId = sp.id; lead.log.push({ at: now, text: 'Salesperson → Maria Lopez' }); }
+    }
+    if (!has('ray@tophat.demo')) {
+      const c = d.contractors.find((x) => x.name === 'Ray Johnson' && !x.userId);
+      if (c) {
+        const u = { id: uid(), role: 'crew', contractorId: c.id, name: c.name, email: 'ray@tophat.demo', phone: c.phone, password: await hash('crew1234'), created: now };
+        d.users.push(u); c.userId = u.id;
+      }
+    }
+  }
+
   let dbPromise = null;
   function db() {
-    if (!dbPromise) dbPromise = (async () => { let d = readDb(); if (!d) { d = await seed(); } migrate(d); writeDb(d); return d; })();
+    if (!dbPromise) dbPromise = (async () => { let d = readDb(); if (!d) { d = await seed(); } migrate(d); await addMissingSamples(d); writeDb(d); return d; })();
     return dbPromise;
   }
   function validateSignUp({ name, email, phone, password }) {
@@ -990,10 +1012,16 @@
   ];
   function loginForm({ title = 'Log in', note = '', onCustomer } = {}) {
     const errorBox = el('div', { class: 'error', hidden: !note, role: 'alert' }, note);
-    const signIn = async (email, password, btn) => {
+    const demoError = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const signIn = async (email, password, btn, isDemo) => {
       if (btn) btn.disabled = true;
       try { goHome(await window.TH.api.auth.signIn(email, password), onCustomer); }
-      catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; if (btn) btn.disabled = false; }
+      catch (err) {
+        const box = isDemo ? demoError : errorBox;
+        box.textContent = isDemo ? `${err.message} Tap “Reset preview data” at the bottom of the staff area, then try again.` : err.message;
+        box.hidden = false; box.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        if (btn) btn.disabled = false;
+      }
     };
     const form = el('form', { class: 'card stack login-box', onsubmit: (e) => {
       e.preventDefault();
@@ -1013,7 +1041,8 @@
       el('section', { class: 'card stack login-box' },
         el('h3', {}, 'Preview: try it as…'),
         el('p', { class: 'muted small' }, 'Sample accounts so you can see every side of the app.'),
-        ...DEMO_ACCOUNTS.map((a) => el('button', { type: 'button', class: 'demo-acct', onclick: (e) => signIn(a.email, a.password, e.currentTarget) },
+        demoError,
+        ...DEMO_ACCOUNTS.map((a) => el('button', { type: 'button', class: 'demo-acct', onclick: (e) => signIn(a.email, a.password, e.currentTarget, true) },
           el('span', { class: 'ic' }, a.icon),
           el('span', { class: 'body' }, el('b', {}, a.label), el('span', { class: 'muted small' }, a.sub)),
           el('span', { class: 'muted' }, '→')))));
