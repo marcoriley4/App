@@ -512,3 +512,9 @@ button.ghost, .btn.ghost { border-width: 1.5px; }
 .trust div { color: var(--text); font-weight: 600; }
 .demo-acct { border-width: 2px; }
 .demo-acct:hover { border-color: var(--ink); }
+
+/* Home: the pitch stands out in the logo's black, with yellow highlights */
+.hero .hero-pitch { background: var(--ink); color: #fff; font-size: 1.12rem; font-weight: 600; line-height: 1.5; text-align: left;
+  padding: 16px 18px; margin-top: 16px; border-radius: 14px; border-left: 6px solid var(--gold); box-shadow: var(--shadow); }
+.hero-pitch .hl { display: block; color: var(--gold); font-size: 1.35rem; font-weight: 800; margin-bottom: 6px; letter-spacing: -.01em; }
+.hero-pitch .brand-hl { color: var(--gold); font-weight: 800; }
