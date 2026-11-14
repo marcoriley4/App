@@ -39,7 +39,7 @@ drop function if exists public.handle_new_user, public.is_staff, public.new_crew
   public.jobs_before_update, public.stage_label, public.crew_respond, public.crew_can_read_customer,
   public.my_sales, public.can_access_job, public.office_can_see_profile, public.office_can_access_path, public.sales_guard,
   public.private_guard, public.costs_after_update, public.log_call, public.staff_invite_sales, public.staff_revoke_sales,
-  public.sales_invite_info, public.claim_sales_invite cascade;
+  public.sales_invite_info, public.claim_sales_invite, public.office_crew_list cascade;
 
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
@@ -274,22 +274,16 @@ language sql stable security definer set search_path = '' as $$
   select exists (select 1 from public.jobs x where x.buyer_id = pid and public.can_access_job(x.id));
 $$;
 
--- Salespeople can't schedule crews, set dates, reassign, or move jobs past Qualifying.
+-- Salespeople run their own jobs (crew, date, progress) but can't hand a job to another salesperson.
 create function public.sales_guard() returns trigger
 language plpgsql set search_path = '' as $$
 begin
   if public.is_staff() or public.my_sales() is null then return new; end if;
-  if tg_op = 'INSERT' then
-    if new.sales_id is distinct from public.my_sales() or new.contractor_id is not null or new.scheduled_for is not null
-       or new.status not in ('new', 'qualifying') then
-      raise exception 'Salespeople add jobs for themselves; the office assigns crews and dates.';
-    end if;
-    return new;
+  if tg_op = 'INSERT' and new.sales_id is distinct from public.my_sales() then
+    raise exception 'Salespeople add jobs for themselves.';
   end if;
-  if new.contractor_id is distinct from old.contractor_id or new.scheduled_for is distinct from old.scheduled_for
-     or new.sales_id is distinct from old.sales_id or new.stage is distinct from old.stage
-     or (new.status is distinct from old.status and new.status not in ('new', 'qualifying', 'lost')) then
-    raise exception 'Only the office can assign crews, dates or salespeople, or move a job past Qualifying.';
+  if tg_op = 'UPDATE' and new.sales_id is distinct from old.sales_id then
+    raise exception 'Only the office can change the salesperson.';
   end if;
   return new;
 end $$;
@@ -299,6 +293,7 @@ create trigger jobs_sales_guard before insert or update on public.jobs
 create function public.private_guard() returns trigger
 language plpgsql set search_path = '' as $$
 begin
+  if pg_trigger_depth() > 1 then return new; end if; -- changes made by the app's own triggers (e.g. a new crew link)
   if not public.is_staff() and auth.uid() is not null and public.my_sales() is not null
      and (new.crew_token is distinct from old.crew_token or new.crew_notes_seen_at is distinct from old.crew_notes_seen_at) then
     raise exception 'Only the office can change that.';
@@ -894,6 +889,15 @@ begin
   update public.salespeople set user_id = auth.uid(), invite_code = null where id = x.id;
 end $$;
 
+-- Crew list for picking a crew: names, phones and trades only (no logins or invite links).
+create function public.office_crew_list() returns jsonb
+language sql stable security definer set search_path = '' as $$
+  select case when public.is_staff() or public.my_sales() is not null then
+    (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'name', name, 'phone', phone, 'trades', trades, 'active', active) order by name), '[]'::jsonb)
+       from public.contractors)
+  else '[]'::jsonb end;
+$$;
+
 -- Files: a salesperson reaches files on their own clients' jobs.
 create function public.office_can_access_path(p text) returns boolean
 language sql stable security definer set search_path = '' as $$
@@ -911,7 +915,7 @@ grant execute on function public.is_staff(), public.owns_job(text), public.custo
   public.crew_my_jobs(), public.crew_set_progress(uuid, text, text), public.crew_respond(uuid, text, text),
   public.crew_can_read_customer(text), public.my_sales(), public.can_access_job(uuid), public.office_can_see_profile(uuid),
   public.office_can_access_path(text), public.log_call(uuid, text, text), public.staff_invite_sales(uuid), public.staff_revoke_sales(uuid),
-  public.claim_sales_invite(text) to authenticated;
+  public.claim_sales_invite(text), public.office_crew_list() to authenticated;
 grant execute on function public.sales_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_add_note(text, uuid, text) to anon, authenticated;

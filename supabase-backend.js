@@ -387,7 +387,9 @@
 
     contractors: {
       async list() {
-        await requireOffice();
+        const u = await requireOffice();
+        // Salespeople pick crews from a safe list: names, phones and trades (no logins or invite links).
+        if (u.role !== 'staff') return (must(await sb.rpc('office_crew_list')) || []).map((c) => ({ id: c.id, name: c.name, phone: c.phone, trades: c.trades || [], active: c.active }));
         const rows = await fetchAll(() => sb.from('contractors').select('*').order('name'));
         const ids = rows.map((c) => c.user_id).filter(Boolean);
         const emails = ids.length ? Object.fromEntries(must(await sb.from('profiles').select('id, email').in('id', ids)).map((p) => [p.id, p.email])) : {};

@@ -307,7 +307,6 @@
     if (!j || (!ctx.isStaff && j.salesId !== ctx.salesId)) throw new Error('Job not found.');
     return { ...ctx, j };
   }
-  const SALES_STATUSES = ['new', 'qualifying', 'lost'];
 
   async function withUrl(f) {
     const blob = await blobs.get(f.id).catch(() => null);
@@ -387,7 +386,7 @@
         if (!String(input.address || '').trim()) throw new Error('Enter the job address.');
         const existing = input.customerId ? d.users.find((u) => u.id === input.customerId && u.role === 'buyer') : null;
         const now = Date.now();
-        const crewOk = isStaff && input.contractorId && d.contractors.some((c) => c.id === input.contractorId);
+        const crewOk = input.contractorId && d.contractors.some((c) => c.id === input.contractorId);
         const owner = isStaff ? ((d.team || []).some((x) => x.id === input.salesId) ? input.salesId : null) : salesId;
         const rec = {
           id: uid(), number: d.nextNumber++, buyerId: existing ? existing.id : null, salesId: owner,
@@ -451,10 +450,8 @@
         const d = await db();
         const j = d.jobs.find((x) => x.id === id);
         if (!j) throw new Error('Job not found.');
-        if (!isStaff) {
-          if (['contractorId', 'scheduledFor', 'crewPay', 'salesId', 'stage'].some((k) => k in patch)) throw new Error('Only the office can assign crews, dates, crew pay or salespeople.');
-          if ('status' in patch && !SALES_STATUSES.includes(patch.status)) throw new Error('The office moves jobs to Scheduled and beyond.');
-        }
+        // Salespeople run their own jobs (crew, date, progress); crew pay and reassigning stay with the owner/office.
+        if (!isStaff && ['crewPay', 'salesId'].some((k) => k in patch)) throw new Error('Only the office can set crew pay or change the salesperson.');
         if ('salesId' in patch && patch.salesId !== (j.salesId || null)) {
           const sp = (d.team || []).find((x) => x.id === patch.salesId);
           j.log.push({ at: Date.now(), text: `Salesperson → ${sp ? sp.name : 'nobody'}` });
@@ -714,7 +711,8 @@
     contractors: {
       async list() {
         const ctx = await requireOffice();
-        if (!ctx.isStaff) return [];
+        // Salespeople pick crews too, but only see names, phones and trades (no logins or invite links).
+        if (!ctx.isStaff) return ctx.d.contractors.map(({ id, name, phone, trades, active }) => ({ id, name, phone, trades, active }));
         const d = await db();
         return d.contractors.map((c) => {
           const u = c.userId && d.users.find((x) => x.id === c.userId);

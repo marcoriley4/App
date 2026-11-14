@@ -26,9 +26,9 @@ A job-request app for Top Hat Contracting. Customers post a job and create an ac
 - **Business tab:** company name, phone, email, address, license #, default tax rate, invoice due days, "how customers can pay" (Zelle, Venmo and so on), and default terms. All of these print on every estimate and invoice.
 - **Sales team:** the owner adds salespeople under **Sales** and sends each one a one-time invite link (`sales.html?invite=…`). Salespeople log in on the same login page and land in the office area, but see **only their own clients**:
   - **+ New job** for each call, and **📝 Log call** on any client with an outcome (talked, left voicemail, no answer, booked a visit, not interested) and a note. Calls are recorded with their name.
-  - Notes, files, moving leads from New to Qualifying (or Not a fit), and creating and sending estimates.
-  - They never see crew pay or profit, can't assign crews or dates or move jobs past Qualifying, can't record payments or void invoices, and have no access to Business settings, the crew list or other salespeople's clients.
-  - When a customer approves, the job goes to the owner's Today as "Approved: needs a crew & date."
+  - Notes, files, estimates, and running their own jobs: **assign the crew and date**, text the job to the crew, and move it through Scheduled → Working → Done. They pick crews from a list of names, phones and trades only, with no crew logins or invites.
+  - They never see crew pay or profit, can't record payments, void invoices, change a job's salesperson, or open Business settings, the Sales/Crew tabs or other salespeople's clients.
+  - When a salesperson schedules a job without crew pay, the owner's Today shows **"Set crew pay"**.
   - The owner's **Sales** tab shows each salesperson's clients, open leads, estimates, sold total and close rate. Tapping one shows **everything they're doing** (calls, new clients, estimates and updates, newest first) and their client list. Every job has a **Salesperson** the owner can assign or change, and the Jobs list can be filtered by salesperson.
 - **Contractor job page, start to finish:** contractors see **My jobs** grouped as Today / Upcoming / Finished. Each job opens to one big **Next step** button: **✓ I'll be there** (or **Can't make it** with a reason, which alerts the office) → **🚚 On my way** (then offers to text the customer) → **▶ Start work** → **✓ Finish job** (reminds them to add After photos) → **Done**, with their pay and time on the job. One-tap buttons are always there: **🧭 Directions, 📞 Call customer, 💬 Text customer** (ready-made texts: on my way, running late, I'm here, all done), **☎️ Call office, 📅 Add to calendar**. The page also has the customer's request photos, Before/During/After photo upload, notes with one-tap starters (need more materials, customer not home, found extra work, running late), Waiting on materials / Needs another visit / Undo, and start and finish times. The office sees who confirmed, **"Crew can't make it"** on Today, and the time on the job.
 - **Shared job progress (office ↔ crew):** both sides update the same progress, and changes show on the other side automatically, labeled with who made them and when. The crew get a progress bar (Scheduled → On the way → Working → Done) and buttons that match where the job is: **🚚 On my way**, **▶ Start work**, **⏸ Waiting on materials**, **🔁 Needs another visit**, **✓ Finished**, plus **↩ Undo** to step back. The office has the same options on the job's progress card. Crew updates show on **Today** ("New updates from your crew") and as a flag on the job card. The customer sees a friendly line ("Your crew is on the way", "We'll be back to finish").
@@ -44,7 +44,7 @@ A job-request app for Top Hat Contracting. Customers post a job and create an ac
 | Customer price | ✓ | only in documents you share | **never** |
 | Crew pay | ✓ | **never** | their own only (can be switched off) |
 | Profit | ✓ (owner/office) | **never** | **never** |
-| Salespeople | everything on **their own** clients except crew pay, profit, payments and crew/date assignment | | |
+| Salespeople | everything on **their own** clients, including crews and dates, except crew pay, profit and payments | | |
 | Internal (office) notes and activity | ✓ | never | never |
 | Crew notes | ✓ | never | their own only |
 | Estimates & invoices | ✓ (incl. drafts) | the ones you send (never drafts) | **never** |
@@ -86,7 +86,7 @@ Who-sees-what is enforced by the database (row-level security and storage polici
 - Prices, crew pay and notes live in the staff-only `job_private` table.
 - Crew reach a job only through its private upload code.
 
-`supabase/` also holds the security test that runs the schema against Postgres and checks each rule (165 checks).
+`supabase/` also holds the security test that runs the schema against Postgres and checks each rule (166 checks).
 
 ## Run it locally
 

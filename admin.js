@@ -106,6 +106,9 @@
       { id: 'declined', icon: '🙅', title: 'Crew can’t make it', why: 'Pick another crew or a new date.',
         list: open.filter((j) => j.status === 'scheduled' && j.crewResponse === 'declined'),
         line: (j) => `${crewName(j) || 'Crew'}: “${j.crewResponseNote || 'no reason given'}”` },
+      { id: 'crewpay', icon: '💵', title: 'Set crew pay', why: 'Jobs a salesperson scheduled with no crew pay yet. Your crew sees their pay.', info: true,
+        list: isStaff ? open.filter((j) => j.contractorId && ['scheduled', 'in_progress', 'completed'].includes(j.status) && j.crewPay == null && j.salesId) : [],
+        line: (j) => `${salesName(j.salesId) || 'Sales'} scheduled ${crewName(j) || 'a crew'}` },
       { id: 'notes', icon: '👷', title: 'New updates from your crew', why: 'Progress updates and notes from the job.',
         list: jobs.filter(hasCrewNews).sort((a, b) => Math.max(crewUpdatedAt(b), 0) - Math.max(crewUpdatedAt(a), 0)),
         line: (j) => [crewUpdatedAt(j) ? `${j.progressBy}: ${progressText(j)}` : null, hasNewNote(j) ? 'new note' : null].filter(Boolean).join(' · ') },
@@ -125,7 +128,7 @@
     ];
   }
   // Salespeople only see what's theirs to act on: calls to make and estimates waiting.
-  const SALES_BUCKETS = ['new', 'waiting'];
+  const SALES_BUCKETS = ['new', 'declined', 'schedule', 'waiting', 'soon'];
   const myBuckets = () => buckets().filter((b) => isStaff || SALES_BUCKETS.includes(b.id));
   const attentionCount = () => myBuckets().filter((b) => !b.info).reduce((t, b) => t + b.list.length, 0);
 
@@ -318,9 +321,9 @@
     const progress = el('section', { class: 'card stack' },
       el('div', { class: 'row' }, el('h3', {}, 'Progress'), el('span', { class: 'spacer' }), savedNote),
       el('div', { class: 'stepper', role: 'group', 'aria-label': 'Job status' }, ...FLOW.map(([s, label], i) =>
-        el('button', { type: 'button', class: i < at ? 'done' : i === at ? 'on' : '', 'aria-pressed': String(i === at), 'aria-label': `Status: ${label}`, disabled: !isStaff && !['new', 'qualifying'].includes(s), onclick: () => j.status !== s && update({ status: s }) },
+        el('button', { type: 'button', class: i < at ? 'done' : i === at ? 'on' : '', 'aria-pressed': String(i === at), 'aria-label': `Status: ${label}`, onclick: () => j.status !== s && update({ status: s }) },
           el('span', { class: 'dot' }, i < at ? '✓' : String(i + 1)), el('span', { class: 'lbl' }, label)))),
-      isStaff && (TH.STAGES || []).some((x) => x.status === j.status) ? el('div', { class: 'stage-chips' },
+      (TH.STAGES || []).some((x) => x.status === j.status) ? el('div', { class: 'stage-chips' },
         ...TH.STAGES.filter((x) => x.status === j.status).map((x) => el('button', { type: 'button', class: 'chip', 'aria-pressed': String(j.stage === x.id),
           onclick: () => update({ stage: j.stage === x.id ? null : x.id }) }, `${x.icon} ${x.label}`))) : null,
       j.progressAt ? el('p', { class: 'small last-update' + (j.progressByCrew ? ' crew' : '') },
@@ -488,10 +491,6 @@
     const draftInv = invs.find((d) => d.status === 'draft');
     const owedInv = invs.find((d) => docs.owed(d) > 0);
     const crewFirst = assigned ? assigned.name.split(' ')[0] : '';
-    const salesHandoff = el('section', { class: 'card stack' },
-      el('h3', {}, '👷 Crew & schedule'),
-      el('p', { class: 'small' }, assigned ? `${assigned.name}${j.scheduledFor ? ' · ' + fmtWhen(j.scheduledFor) : ''}` : j.scheduledFor ? `Scheduled ${fmtWhen(j.scheduledFor)}` : 'Not scheduled yet.'),
-      el('p', { class: 'muted small' }, 'The office picks the crew and date once the customer approves the estimate.'));
     let step;
     if (j.status === 'lost') {
       step = { icon: '🚫', title: 'This job is closed (Not a fit).', act: ['Reopen as a new lead', () => update({ status: 'new' })], ghost: true };
@@ -529,12 +528,6 @@
       else if (!invs.length) step = { icon: '🧾', title: 'Job finished: send the invoice', why: invoiceBase ? `It starts from approved estimate ${invoiceBase.number}.` : 'Add the work and the total.', act: ['+ Create invoice', () => openDoc(j.id, null, 'invoice', invoiceBase)] };
       else step = { icon: '🎉', title: 'All done: paid in full', why: 'Nice work.' };
     }
-    // Salespeople hand off once it's approved; the office takes it from there.
-    if (!isStaff && (approvedEst || !['new', 'qualifying', 'lost'].includes(j.status))) {
-      step = ['new', 'qualifying'].includes(j.status)
-        ? { icon: '✅', title: 'Sold! The office will schedule it', why: `${first} approved ${approvedEst.number}. It’s on the office’s list to pick a crew and date.` }
-        : { icon: '👷', title: `With the office: ${statusOf(j.status).label}`, why: j.scheduledFor ? `Scheduled ${fmtWhen(j.scheduledFor)}` : 'The office is handling scheduling and the work.' };
-    }
     const nextCard = step ? el('section', { class: 'card next-step' },
       el('span', { class: 'eyebrow' }, 'Next step'),
       el('div', { class: 'row', style: 'align-items:flex-start' }, el('span', { class: 'next-ic' }, step.icon),
@@ -551,7 +544,7 @@
     function renderTab() {
       tabsBar.replaceChildren(...TABS.map(([id, label]) => el('button', { role: 'tab', 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } }, label)));
       const content = {
-        overview: [nextCard, progress, crewNotes.length ? crewNotesCard() : null, isStaff ? setup : salesHandoff, details],
+        overview: [nextCard, progress, crewNotes.length ? crewNotesCard() : null, setup, details],
         money: [moneyCard, docsCard],
         files: [filesCard],
         history: [notesCard, crewNotesCard(), log],
@@ -637,7 +630,7 @@
       isStaff && team.length ? el('section', { class: 'card stack' },
         el('h3', {}, 'Salesperson ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(optional)')),
         el('select', { name: 'salesId' }, el('option', { value: '' }, '— None —'), ...team.filter((x) => x.active !== false).map((x) => el('option', { value: x.id }, x.name)))) : null,
-      !isStaff ? null : el('section', { class: 'card stack' },
+      el('section', { class: 'card stack' },
         el('h3', {}, '3. Crew & date ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(optional)')),
         el('p', { class: 'muted small' }, 'Pick both and the job is scheduled right away. It shows up in that contractor’s crew login, and you can text them the details.'),
         el('label', { class: 'field' }, 'Crew', el('span', { class: 'hint' }, '★ = does this kind of work'), crewSel),

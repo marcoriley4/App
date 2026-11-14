@@ -496,7 +496,8 @@ select set_config('request.jwt.claim.sub', :'E', false);
 set role authenticated;
 select t.ok((select count(*) from public.jobs) = 1, 'salesperson sees only her assigned job');
 select t.ok((select count(*) from public.job_costs) = 0, 'salesperson never sees crew pay');
-select t.ok((select count(*) from public.contractors) = 0, 'salesperson cannot read the crew list');
+select t.ok((select count(*) from public.contractors) = 0, 'salesperson cannot read the crew table directly');
+select t.ok(jsonb_array_length(public.office_crew_list()) = 2 and public.office_crew_list()::text !~ 'invite_code|user_id', 'salesperson gets crew names to pick from, without logins or invites');
 select t.ok((select count(*) from public.profiles where id = :'A') = 1 and (select count(*) from public.profiles where id = :'B') = 0, 'salesperson sees her client''s profile, not other customers');
 select t.ok((select count(*) from public.job_events) > 0 and (select count(*) from public.documents) > 0, 'salesperson sees her client''s history and estimates');
 update public.job_private set notes = 'Maria: follow up Monday';
@@ -504,10 +505,6 @@ select t.ok((select notes from public.job_private) = 'Maria: follow up Monday', 
 do $$ begin
   begin update public.job_private set crew_token = 'x' || crew_token; perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'salesperson cannot change the crew link'); end;
-  begin update public.jobs set status = 'completed'; perform t.ok(false, 'x');
-  exception when raise_exception then perform t.ok(true, 'salesperson cannot move a job past Qualifying'); end;
-  begin update public.jobs set contractor_id = null; perform t.ok(false, 'x');
-  exception when raise_exception then perform t.ok(true, 'salesperson cannot assign crews'); end;
   begin update public.jobs set sales_id = current_setting('t.sam')::uuid; perform t.ok(false, 'x');
   exception when raise_exception or check_violation or insufficient_privilege then perform t.ok(true, 'salesperson cannot hand her job to someone else'); end;
   begin update public.documents set status = 'void' where type = 'invoice'; perform t.ok(false, 'x');
@@ -520,6 +517,12 @@ end $$;
 insert into public.jobs (sales_id, contact_name, contact_phone, entered_by, trade, description, address, status)
   values (current_setting('t.maria')::uuid, 'Kim Caller', '(555) 909-1010', 'Maria L', 'painting', 'Repaint exterior trim', '7 Pine Ct', 'qualifying');
 select t.ok((select count(*) from public.jobs) = 2, 'salesperson adds her own clients');
+-- she schedules her client with a crew and a date
+update public.jobs set contractor_id = (select (x->>'id')::uuid from jsonb_array_elements(public.office_crew_list()) x where x->>'name' = 'Mike Alvarez'),
+       scheduled_for = '2026-11-21T09:00', status = 'scheduled' where contact_name = 'Kim Caller';
+select t.ok((select status from public.jobs where contact_name = 'Kim Caller') = 'scheduled', 'salesperson can assign a crew and date');
+select t.ok((select crew_token from public.job_private p join public.jobs j on j.id = p.job_id where j.contact_name = 'Kim Caller') is not null, 'assigning creates the crew photo link');
+select t.ok((select count(*) from public.job_costs) = 0, 'still no crew pay for the salesperson');
 select public.log_call((select id from public.jobs where contact_name = 'Kim Caller'), 'Left voicemail', 'Try Monday');
 select t.ok(exists (select 1 from public.job_events where text = '📞 Call (Maria L): Left voicemail. Try Monday'), 'calls are logged with her name');
 insert into public.documents (job_id, type, items) select id, 'estimate', '[{"desc":"Trim","qty":1,"price":900}]' from public.jobs where contact_name = 'Kim Caller';
@@ -530,9 +533,6 @@ insert into public.job_files (job_id, path, name, source, by_name) select id, id
 select t.ok((select count(*) from storage.objects where name like '%/staff/site.jpg') = 1, 'salesperson can upload and open files on her clients');
 select t.ok((select count(*) from storage.objects where name like '%estimate.pdf') = 1, 'salesperson can open files on her assigned job');
 do $$ begin
-  begin insert into public.jobs (sales_id, contact_name, trade, description, address, contractor_id) values (current_setting('t.maria')::uuid, 'X', 'x', 'xxxxx', 'y', (select id from public.contractors limit 1));
-    perform t.ok(false, 'x');
-  exception when raise_exception or foreign_key_violation then perform t.ok(true, 'salesperson cannot add a job with a crew'); end;
   begin insert into public.jobs (sales_id, contact_name, trade, description, address) values (current_setting('t.sam')::uuid, 'X', 'x', 'xxxxx', 'y'); perform t.ok(false, 'x');
   exception when raise_exception or insufficient_privilege or check_violation then perform t.ok(true, 'salesperson cannot add jobs for someone else'); end;
   begin perform public.log_call(current_setting('t.pjob')::uuid, 'Talked', ''); perform t.ok(false, 'x');
