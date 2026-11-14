@@ -520,6 +520,7 @@ create table public.settings (
 insert into public.settings (id, data) values (1, jsonb_build_object(
   'name', 'Top Hat Contracting', 'phone', '', 'email', '', 'address', '', 'license', '',
   'taxRate', 0, 'dueDays', 14, 'showCrewPay', true,
+  'estimatePaymentInstructions', 'We accept Zelle, check, cash and card.',
   'paymentInstructions', E'We accept cash, check, Zelle, card, Venmo and Cash App.\nMake checks payable to Top Hat Contracting.',
   'estimateTerms', 'This estimate is valid for 30 days. Work begins once the estimate is approved.',
   'invoiceTerms', 'Thank you for choosing Top Hat Contracting!'));

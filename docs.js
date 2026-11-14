@@ -83,8 +83,9 @@
           isInv ? el('dt', { class: 'big' }, 'Balance due') : null, isInv ? el('dd', { class: 'big' }, usd(Math.max(0, t.balance))) : null)),
       doc.notes ? el('section', { class: 'doc-notes' }, el('h4', {}, isInv ? 'Notes' : 'Terms'), ...lines(doc.notes)) : null,
       // Payment terms & how to pay: on every estimate and invoice (not once an invoice is paid or void).
-      st !== 'void' && st !== 'paid' && company.paymentInstructions
-        ? el('section', { class: 'doc-notes' }, el('h4', {}, 'Payment terms & how to pay'), ...lines(company.paymentInstructions),
+      // Estimates print only the estimate text (e.g. Zelle); bank/ACH details stay on invoices.
+      st !== 'void' && st !== 'paid' && (isInv ? company.paymentInstructions : company.estimatePaymentInstructions)
+        ? el('section', { class: 'doc-notes' }, el('h4', {}, 'Payment terms & how to pay'), ...lines(isInv ? company.paymentInstructions : company.estimatePaymentInstructions),
           isInv && doc.payLink ? el('div', {}, 'Pay by card: ', el('a', { href: doc.payLink, target: '_blank', rel: 'noopener' }, 'secure payment link')) : null)
         : null,
       isInv && (doc.payments || []).length ? el('section', { class: 'doc-notes' }, el('h4', {}, 'Payments received'),
