@@ -1019,6 +1019,32 @@
       );
     }
 
+    // Job history: every job this contractor finished, by month, with crew pay (for paying them).
+    let historyCard = null;
+    if (editing) {
+      const doneAt = (j) => j.finishedAt || (j.scheduledFor ? Date.parse(j.scheduledFor) : j.created);
+      const done = jobs.filter((j) => j.contractorId === c.id && j.status === 'completed').sort((a, b) => doneAt(b) - doneAt(a));
+      const upcoming = jobs.filter((j) => j.contractorId === c.id && ['scheduled', 'in_progress'].includes(j.status));
+      const groups = [];
+      done.forEach((j) => { const x = new Date(doneAt(j)); const k = `${x.getFullYear()}-${x.getMonth()}`; let g = groups.find((y) => y.k === k); if (!g) { g = { k, d: x, jobs: [] }; groups.push(g); } g.jobs.push(j); });
+      const payOf = (list) => list.reduce((t, j) => t + (Number(j.crewPay) || 0), 0);
+      historyCard = el('section', { class: 'card stack' },
+        el('h3', {}, '🧾 Job history'),
+        el('div', { class: 'kpis three' },
+          el('div', { class: 'kpi' }, el('b', {}, String(done.length)), el('span', {}, 'Completed')),
+          el('div', { class: 'kpi' }, el('b', {}, String(upcoming.length)), el('span', {}, 'Upcoming')),
+          el('div', { class: 'kpi' }, el('b', {}, money(payOf(done))), el('span', {}, 'Total crew pay'))),
+        done.length ? null : el('p', { class: 'muted small' }, 'No completed jobs yet.'),
+        ...groups.map((g) => el('div', { class: 'stack', style: 'gap:6px' },
+          el('div', { class: 'month-head' }, el('b', {}, g.d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })),
+            el('span', {}, `${g.jobs.length} job${g.jobs.length === 1 ? '' : 's'} · ${money(payOf(g.jobs))}`)),
+          ...g.jobs.map((j) => el('button', { type: 'button', class: 'doc-row', onclick: () => openLead(j.id, 'overview') },
+            el('span', { class: 'ic' }, tradeOf(j.trade).icon),
+            el('span', { class: 'body' }, el('b', {}, `${jobNo(j)} · ${j.buyer.name}`),
+              el('span', { class: 'muted small' }, `${new Date(doneAt(j)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${j.address}`)),
+            el('span', { class: 'pill' + (j.crewPay == null ? ' s-new' : '') }, j.crewPay == null ? 'No pay set' : money(j.crewPay)))))));
+    }
+
     const form = el('form', { class: 'panel-body', onsubmit: async (e) => {
       e.preventDefault();
       const f = new FormData(form);
@@ -1036,6 +1062,7 @@
       el('label', { class: 'row', style: 'font-weight:600' }, el('input', { type: 'checkbox', name: 'active', checked: c.active, style: 'width:22px;height:22px' }), 'Active (can be assigned jobs)'),
       el('button', { type: 'submit' }, editing ? 'Save' : 'Add to crew'),
       loginCard,
+      historyCard,
       editing ? el('button', { type: 'button', class: 'link', style: 'color:var(--bad)', onclick: async () => {
         if (!confirm(`Remove ${c.name} from your crew? Their jobs will become unassigned.`)) return;
         await api.contractors.remove(c.id); await load(); close();

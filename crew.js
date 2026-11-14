@@ -179,7 +179,7 @@
     }
   }
 
-  async function renderPortal(message) {
+  async function renderPortal(message, which = 'active') {
     const { me, jobs, error } = await loadCrew();
     if (!me) return renderLogin(error);
     const tk = todayKey();
@@ -187,7 +187,9 @@
       .sort((a, b) => String(a.scheduledFor || '9999').localeCompare(String(b.scheduledFor || '9999')));
     const today = notDone.filter((j) => j.status === 'in_progress' || (j.scheduledFor || '').slice(0, 10) === tk || (j.scheduledFor && j.scheduledFor.slice(0, 10) < tk));
     const upcoming = notDone.filter((j) => !today.includes(j));
-    const finished = jobs.filter((j) => j.status === 'completed').sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0)).slice(0, 20);
+    // Every finished job is kept here, newest first.
+    const doneAt = (j) => j.finishedAt || (j.scheduledFor ? Date.parse(j.scheduledFor) : 0);
+    const finished = jobs.filter((j) => j.status === 'completed').sort((a, b) => doneAt(b) - doneAt(a));
     const pay = (list) => list.reduce((t, j) => t + (Number(j.crewPay) || 0), 0);
     const showPay = jobs.some((j) => j.crewPay != null);
     const toConfirm = notDone.filter((j) => j.status === 'scheduled' && !j.crewResponse).length;
@@ -201,29 +203,71 @@
         : st ? [`${st.icon} ${st.label}`, 'hot']
         : j.status === 'in_progress' ? ['🔨 Working', 'hot']
         : j.status === 'completed' ? ['✓ Done', ''] : ['✓ Confirmed', ''];
+      const fin = j.status === 'completed' && doneAt(j) ? new Date(doneAt(j)) : null;
       return el('a', { class: 'crew-job', href: `#/job/${j.id}` },
-        el('span', { class: 'when' }, d ? el('b', {}, d.toLocaleDateString(undefined, { weekday: 'short' })) : el('b', {}, '—'),
-          d ? el('span', {}, d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })) : null,
-          d ? el('span', { class: 'muted' }, timeOf(j.scheduledFor)) : null),
+        fin ? el('span', { class: 'when done' }, el('b', {}, fin.toLocaleDateString(undefined, { month: 'short' })), el('span', { class: 'big' }, String(fin.getDate())), el('span', { class: 'muted' }, String(fin.getFullYear())))
+          : el('span', { class: 'when' }, d ? el('b', {}, d.toLocaleDateString(undefined, { weekday: 'short' })) : el('b', {}, '—'),
+            d ? el('span', {}, d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })) : null,
+            d ? el('span', { class: 'muted' }, timeOf(j.scheduledFor)) : null),
         el('span', { class: 'body' },
           el('b', {}, `${t.icon} ${t.label} · TH-${j.number}`),
-          el('span', { class: 'muted small' }, `${j.address}${j.zip ? ' ' + j.zip : ''}`),
-          el('span', { class: 'flag ' + chip[1] }, chip[0])),
+          el('span', { class: 'muted small' }, `${j.customerName ? j.customerName + ' · ' : ''}${j.address}${j.zip ? ' ' + j.zip : ''}`),
+          el('span', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, el('span', { class: 'flag ' + chip[1] }, chip[0]),
+            fin && j.crewPay != null ? el('span', { class: 'flag' }, usd(j.crewPay)) : null)),
         el('span', { class: 'chev', 'aria-hidden': 'true' }, '›'));
     };
     const section = (title, list, empty) => [el('h2', { style: 'margin-top:6px' }, title),
       list.length ? el('div', { class: 'crew-jobs' }, ...list.map(card)) : el('div', { class: 'card muted' }, empty)];
 
+    const tabs = el('div', { class: 'tabs-bar main-tabs', role: 'tablist' },
+      el('button', { role: 'tab', 'aria-current': String(which === 'active'), onclick: () => { location.hash = '#/'; } }, 'My jobs',
+        notDone.length ? el('span', { class: 'count' }, String(notDone.length)) : null),
+      el('button', { role: 'tab', 'aria-current': String(which === 'done'), onclick: () => { location.hash = '#/done'; } }, 'Completed',
+        finished.length ? el('span', { class: 'count' }, String(finished.length)) : null));
+    const head = el('div', {}, el('h1', {}, `Hi ${me.name.split(' ')[0]}`), el('p', { class: 'muted' }, 'Your Top Hat jobs'));
+
+    if (which === 'done') {
+      // Completed jobs: everything they've finished, grouped by month, with pay.
+      const monthKey = (j) => { const x = new Date(doneAt(j) || Date.now()); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`; };
+      const now = new Date();
+      const thisMonth = finished.filter((j) => monthKey(j) === `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+      const search = el('input', { type: 'search', placeholder: 'Search customer, address, job #…', 'aria-label': 'Search completed jobs' });
+      const listWrap = el('div', { class: 'stack' });
+      const draw = () => {
+        const q = search.value.trim().toLowerCase();
+        const list = finished.filter((j) => !q || [`TH-${j.number}`, j.customerName, j.address, j.zip, j.description, tradeOf(j.trade).label].join(' ').toLowerCase().includes(q));
+        const groups = [];
+        list.forEach((j) => { const k = monthKey(j); let g = groups.find((x) => x.k === k); if (!g) { g = { k, jobs: [] }; groups.push(g); } g.jobs.push(j); });
+        listWrap.replaceChildren(...(groups.length ? groups.map((g) => {
+          const [y, mo] = g.k.split('-').map(Number);
+          return el('section', { class: 'stack', style: 'gap:8px' },
+            el('div', { class: 'month-head' }, el('b', {}, new Date(y, mo - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })),
+              el('span', {}, `${g.jobs.length} job${g.jobs.length === 1 ? '' : 's'}${showPay ? ' · ' + usd(pay(g.jobs)) : ''}`)),
+            el('div', { class: 'crew-jobs' }, ...g.jobs.map(card)));
+        }) : [el('div', { class: 'card muted' }, q ? 'No completed jobs match your search.' : 'No completed jobs yet. When you finish a job it’s saved here.')]));
+      };
+      search.addEventListener('input', draw);
+      draw();
+      view.replaceChildren(el('div', { class: 'stack', style: 'margin:20px 0' }, head, tabs,
+        el('div', { class: 'kpis three' },
+          el('div', { class: 'kpi' }, el('b', {}, String(finished.length)), el('span', {}, 'Jobs completed')),
+          showPay ? el('div', { class: 'kpi' }, el('b', {}, usd(pay(thisMonth))), el('span', {}, 'Pay this month')) : el('div', { class: 'kpi' }, el('b', {}, String(thisMonth.length)), el('span', {}, 'This month')),
+          showPay ? el('div', { class: 'kpi' }, el('b', {}, usd(pay(finished))), el('span', {}, 'Total pay')) : null),
+        message ? el('div', { class: 'callout' }, message) : null,
+        search, listWrap));
+      return;
+    }
+
     view.replaceChildren(el('div', { class: 'stack', style: 'margin:20px 0' },
-      el('div', {}, el('h1', {}, `Hi ${me.name.split(' ')[0]}`), el('p', { class: 'muted' }, 'Your Top Hat jobs')),
+      head, tabs,
       showPay ? el('div', { class: 'kpis', style: 'grid-template-columns:1fr 1fr' },
         el('div', { class: 'kpi' }, el('b', {}, usd(pay(notDone))), el('span', {}, `Upcoming pay · ${notDone.length} job${notDone.length === 1 ? '' : 's'}`)),
-        el('div', { class: 'kpi' }, el('b', {}, usd(pay(finished))), el('span', {}, 'Finished jobs'))) : null,
+        el('div', { class: 'kpi' }, el('b', {}, usd(pay(finished))), el('span', {}, `Earned · ${finished.length} completed`))) : null,
       message ? el('div', { class: 'callout' }, message) : null,
       toConfirm ? el('div', { class: 'callout stage' }, `👋 ${toConfirm} new job${toConfirm === 1 ? '' : 's'} to confirm. Tap to open.`) : null,
       ...section('Today', today, 'Nothing scheduled for today.'),
       ...section('Upcoming', upcoming, 'No upcoming jobs. The office will text you when you’re assigned one.'),
-      ...(finished.length ? section('Finished', finished, '') : []),
+      finished.length ? el('a', { class: 'btn ghost block', href: '#/done' }, `✓ See all ${finished.length} completed job${finished.length === 1 ? '' : 's'} →`) : null,
     ));
   }
 
@@ -413,7 +457,7 @@
         el('button', { type: 'button', class: 'chip', onclick: () => { ta.value = txt; ta.focus(); ta.setSelectionRange(txt.length, txt.length); } }, txt.replace(/[:.]?\s*(ETA\s*)?$/, '')))), ta);
 
     view.replaceChildren(el('div', { class: 'stack', style: 'margin:14px 0 20px' },
-      el('div', { class: 'row' }, el('a', { class: 'btn ghost small', href: '#/' }, '← My jobs'), el('span', { class: 'spacer' }), el('span', { class: `pill s-${j.status}` }, find(STATUSES, j.status).label)),
+      el('div', { class: 'row' }, el('a', { class: 'btn ghost small', href: j.status === 'completed' ? '#/done' : '#/' }, j.status === 'completed' ? '← Completed' : '← My jobs'), el('span', { class: 'spacer' }), el('span', { class: `pill s-${j.status}` }, find(STATUSES, j.status).label)),
       el('div', {}, el('h1', { style: 'font-size:1.45rem' }, `${t.icon} ${t.label}`), el('p', { class: 'muted' }, `${n} · ${j.customerName}`)),
       message && !onWayMsg ? el('div', { class: 'callout' }, message) : null,
       errorBox, nextCard, onWayMsg ? textsBox : null, quick, progress, details, photosCard, notesCard,
@@ -426,7 +470,8 @@
     if (token) return renderUpload();
     if (invite) return renderInvite();
     const m = location.hash.match(/^#\/job\/(.+)$/);
-    return m ? renderJob(decodeURIComponent(m[1])) : renderPortal();
+    if (m) return renderJob(decodeURIComponent(m[1]));
+    return renderPortal(null, location.hash === '#/done' ? 'done' : 'active');
   }
   window.addEventListener('hashchange', () => { if (!token && !invite) route(); });
   route();

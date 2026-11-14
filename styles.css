@@ -518,3 +518,12 @@ button.ghost, .btn.ghost { border-width: 1.5px; }
   padding: 16px 18px; margin-top: 16px; border-radius: 14px; border-left: 6px solid var(--gold); box-shadow: var(--shadow); }
 .hero-pitch .hl { display: block; color: var(--gold); font-size: 1.35rem; font-weight: 800; margin-bottom: 6px; letter-spacing: -.01em; }
 .hero-pitch .brand-hl { color: var(--gold); font-weight: 800; }
+
+/* Completed jobs history */
+.month-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 6px 2px; border-bottom: 2px solid var(--brand); margin-top: 6px; }
+.month-head b { font-size: 1rem; }
+.month-head span { font-size: .85rem; color: var(--muted); font-weight: 700; }
+.crew-job .when.done { background: var(--ink); color: #fff; }
+.crew-job .when.done b { color: var(--gold); text-transform: uppercase; font-size: .75rem; }
+.crew-job .when.done .big { font-size: 1.3rem; font-weight: 800; line-height: 1.1; }
+.crew-job .when.done .muted { color: #c4c4cc; }
