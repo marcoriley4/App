@@ -178,7 +178,7 @@
         el('div', { style: 'flex:1;min-width:0' }, el('h1', {}, h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'),
           el('p', { class: 'muted' }, new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }))),
         el('button', { class: 'gold', onclick: () => newJobForm() }, '+ New job')),
-      isStaff ? el('div', { class: 'kpis three' }, kpi(bs[0].list.length, 'New leads'), kpi(thisWeek, 'Jobs this week'), kpi(docs.usd(jobs.reduce((t, j) => t + owedOn(j), 0)), 'Owed to you'))
+      isStaff ? el('div', { class: 'kpis three' }, kpi(bs[0].list.length, 'New leads'), kpi(thisWeek, 'Jobs this week'), kpi(money(jobs.reduce((t, j) => t + owedOn(j), 0)), 'Owed to you'))
         : el('div', { class: 'kpis three' }, kpi(jobs.filter((j) => ['new', 'qualifying'].includes(j.status)).length, 'Open leads'),
           kpi(jobs.filter((j) => estWith(j, 'sent')).length, 'Estimates out'), kpi(money(soldTotal(jobs)), 'Sold')),
       ...(sections.length ? sections : [el('div', { class: 'card caught-up' },

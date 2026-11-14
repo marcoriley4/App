@@ -77,7 +77,7 @@ In preview mode the login page has **"Try it as…"** buttons for three sample a
 - **Customer**: **dana@example.com** / **demo1234**
 - **Contractor**: **ray@tophat.demo** / **crew1234**
 
-Sample leads and crew are included. Use **Reset preview data** at the bottom of the staff area to start over.
+The preview opens as a **busy week**: about 20 jobs at every stage (new leads, customers thinking it over, hot leads, rep visits, a crew that can't make it, jobs on the way and waiting on materials, unpaid and overdue invoices, paid jobs and a closed lead), 7 contractors and 3 salespeople. Dates are relative to today, so it always looks current. Use **Reset preview data** at the bottom of the staff area to start over with a fresh busy week. (Automated tests set `localStorage['tophat.demo.quiet']` to get the small 3-job sample instead.)
 
 ## Going live (Supabase)
 

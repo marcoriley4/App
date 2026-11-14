@@ -191,7 +191,8 @@
     const s1 = uid(), su1 = uid();
     const salesPw = await hash('sales1234');
     const b1 = uid(), b2 = uid();
-    return {
+    const data = {
+      demoVersion: DEMO_VERSION,
       users: [
         { id: uid(), role: 'staff', name: 'Top Hat Office', email: 'office@tophat.demo', phone: '', password: pw, created: now },
         { id: b1, role: 'buyer', name: 'Dana Whitfield', email: 'dana@example.com', phone: '(555) 201-3344', password: buyerPw, created: now - 30 * H },
@@ -244,6 +245,181 @@
       team: [{ id: s1, name: 'Maria Lopez', phone: '(555) 444-1212', active: true, userId: su1, inviteCode: null }],
       settings: { ...DEFAULT_SETTINGS },
     };
+    if (!quietDemo()) addBusyDemo(data, { c1, c2, c3, s1 });
+    return data;
+  }
+
+  // A busy week, so the preview shows every stage without setting anything up.
+  // Tests can ask for the small sample by setting localStorage 'tophat.demo.quiet'.
+  const quietDemo = () => { try { return !!localStorage.getItem('tophat.demo.quiet'); } catch (e) { return false; } };
+  const DEMO_VERSION = 2;
+  function addBusyDemo(d, ids) {
+    const now = Date.now();
+    const H = 3600e3, DAY = 24 * H;
+    const when = (days, h, m = 0) => { const t = new Date(now + days * DAY); t.setHours(h, m, 0, 0); return t; };
+    const local = (t) => new Date(t - t.getTimezoneOffset() * 60e3).toISOString().slice(0, 16);
+    const dayKey = (t) => local(t).slice(0, 10);
+    const fmt = (t) => t.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+
+    const crew = {
+      ray: ids.c3, mike: ids.c1, sarah: ids.c2,
+      derek: uid(), andre: uid(), jasmine: uid(), lou: uid(),
+    };
+    d.contractors.push(
+      { id: crew.derek, name: 'Derek Coleman', phone: '(555) 300-2211', trades: ['roofing', 'remodel'], active: true },
+      { id: crew.andre, name: 'Andre Mitchell', phone: '(555) 300-6633', trades: ['electrical', 'hvac'], active: true },
+      { id: crew.jasmine, name: 'Jasmine Ortiz', phone: '(555) 300-9044', trades: ['painting', 'drywall'], active: true },
+      { id: crew.lou, name: 'Lou Bianchi', phone: '(555) 300-5170', trades: ['flooring', 'landscaping'], active: true },
+    );
+    const crewName = (cid) => d.contractors.find((c) => c.id === cid).name;
+    const sales = { maria: ids.s1, jake: uid(), tasha: uid() };
+    d.team.push(
+      { id: sales.jake, name: 'Jake Thornton', phone: '(555) 444-3090', active: true, userId: null, inviteCode: null },
+      { id: sales.tasha, name: 'Tasha Green', phone: '(555) 444-7781', active: true, userId: null, inviteCode: null },
+    );
+    const salesName = (sid) => d.team.find((x) => x.id === sid).name;
+
+    const estimate = (price, lines, status, createdMs) => ({
+      id: uid(), type: 'estimate', number: '', status, taxRate: 0, payments: [], dueDate: null, payLink: '',
+      items: lines.map(([desc, share]) => ({ desc, qty: 1, price: Math.round(price * share) })),
+      notes: DEFAULT_SETTINGS.estimateTerms, created: createdMs, sentAt: createdMs + H,
+      respondedAt: status === 'approved' ? createdMs + 5 * H : null, respondedBy: status === 'approved' ? 'Customer (by phone)' : null,
+    });
+    const invoice = (est, sentMs, dueDays, payments) => ({
+      id: uid(), type: 'invoice', number: '', status: 'sent', taxRate: 0, fromEstimateId: est.id,
+      items: est.items.map((i) => ({ ...i })), notes: DEFAULT_SETTINGS.invoiceTerms, payLink: '',
+      created: sentMs, sentAt: sentMs, dueDate: dayKey(new Date(sentMs + dueDays * DAY)),
+      payments: payments.map(([amount, method, ms]) => ({ id: uid(), amount, method, date: dayKey(new Date(ms)), note: '' })),
+    });
+
+    // One job, with a believable history for wherever it is now.
+    function job(o) {
+      const created = now - o.ago * H;
+      const log = [{ at: created, text: o.salesId && o.phoneIn ? `Job entered by ${salesName(o.salesId)} (sales)` : 'Lead received' }];
+      let t = created + 0.5 * H;
+      const add = (text) => { t = Math.min(t + 2 * H, now - 60e3); log.push({ at: t, text }); };
+      const reached = (st) => ['qualifying', 'hot', 'scheduled', 'in_progress', 'completed'].indexOf(st) <= ['qualifying', 'hot', 'scheduled', 'in_progress', 'completed'].indexOf(o.status);
+      if (o.salesId && !o.phoneIn) add(`Salesperson → ${salesName(o.salesId)}`);
+      if (o.status !== 'new' && o.status !== 'lost' && o.price != null) {
+        add(`📞 Call (${o.salesId ? salesName(o.salesId) : 'Top Hat Office'}): ${reached('hot') ? 'Agreed to the price' : 'Thinking it over'}. Phone estimate $${o.price.toLocaleString()}`);
+        add('Status → Phone estimate');
+        if (reached('hot')) add('Status → Hot lead');
+      }
+      if (o.visitAt) add(`🤝 Rep visit booked for ${fmt(o.visitAt)}`);
+      if (o.contractorId) { add(`Assigned to ${crewName(o.contractorId)}`); add(`Scheduled for ${fmt(o.when)}`); add('Status → Scheduled'); }
+      if (o.crewResponse) log.push({ at: o.crewResponseAt, text: o.crewResponse === 'confirmed' ? `Confirmed by ${crewName(o.contractorId)} (crew)` : `${crewName(o.contractorId)} can’t make it: “${o.crewResponseNote}” (crew)` });
+      if (o.startedAt) log.push({ at: o.startedAt, text: `Status → In progress (by ${crewName(o.contractorId)}, crew)` });
+      if (o.finishedAt) log.push({ at: o.finishedAt, text: `Status → Completed (by ${crewName(o.contractorId)}, crew)` });
+      (o.extraLog || []).forEach((x) => log.push(x));
+      if (o.status === 'lost') log.push({ at: created + 4 * H, text: '📞 Call (Top Hat Office): Not interested. Went with a cheaper quote.' }, { at: created + 4 * H, text: 'Status → Not a fit' });
+      log.sort((a, b) => a.at - b.at);
+      const [name, phone, email] = o.who;
+      return {
+        id: uid(), number: 0, buyerId: o.buyerId || null, salesId: o.salesId || null,
+        contact: o.buyerId ? null : { name, phone, email: email || '' },
+        status: o.status, created, files: [], docs: o.docs || [],
+        trade: o.trade, description: o.desc, address: o.address, zip: o.zip || '62704',
+        timeframe: o.timeframe || '', budget: o.budget || '', photos: [],
+        contractorId: o.contractorId || null, crewToken: o.contractorId ? newToken() : null,
+        scheduledFor: o.when ? local(o.when) : null, visitAt: o.visitAt ? local(o.visitAt) : null,
+        price: o.price ?? null, crewPay: o.crewPay ?? null, notes: o.notes || '',
+        log, crewNotes: (o.crewNotes || []).map(([text, ms]) => ({ id: uid(), at: ms, contractorId: o.contractorId, by: crewName(o.contractorId), text })),
+        crewNotesSeenAt: o.unseen ? 0 : now,
+        stage: o.stage || null, progressAt: o.progressAt || (o.contractorId ? t : null), progressBy: o.progressBy || '', progressByCrew: !!o.progressByCrew,
+        crewResponse: o.crewResponse || null, crewResponseNote: o.crewResponseNote || '', crewResponseAt: o.crewResponseAt || null,
+        startedAt: o.startedAt || null, finishedAt: o.finishedAt || null,
+      };
+    }
+
+    const kitchenEst = estimate(2450, [['Remove old tile and backer board', 0.3], ['New porcelain tile floor, 5 x 8 ft bathroom', 0.55], ['Materials and haul-away', 0.15]], 'sent', now - 30 * H);
+    const hvacEst = estimate(7900, [['Remove old furnace and AC unit', 0.15], ['New 3-ton high-efficiency system, installed', 0.75], ['Permit and thermostat', 0.1]], 'approved', now - 50 * H);
+    const roofEst = estimate(9200, [['Tear off 2 layers, 24 squares', 0.3], ['Architectural shingles, installed', 0.6], ['Dumpster and cleanup', 0.1]], 'approved', now - 20 * DAY);
+    const floorEst = estimate(5100, [['Luxury vinyl plank, 620 sq ft installed', 0.8], ['Baseboard and transitions', 0.2]], 'approved', now - 22 * DAY);
+    const panelEst = estimate(2900, [['200 amp panel upgrade', 0.85], ['Permit and inspection', 0.15]], 'approved', now - 40 * DAY);
+    const bathEst = estimate(14500, [['Demo master bathroom', 0.1], ['Walk-in shower, tile and glass', 0.5], ['Vanity, toilet and fixtures', 0.3], ['Plumbing and electrical', 0.1]], 'approved', now - 75 * DAY);
+
+    d.jobs.push(
+      // New leads: call them with a phone estimate
+      job({ who: ['Brenda Holt', '(555) 212-8890', 'brenda.holt@example.com'], ago: 0.4, status: 'new', trade: 'roofing',
+        desc: 'Water stain on the bedroom ceiling after the last storm. Think the roof is leaking near the chimney.\n\nMeasurements: Two-story colonial, about 2,200 sq ft', address: '77 Chestnut St, Springfield', timeframe: dayKey(when(5, 9)), budget: '1-5k' }),
+      job({ who: ['Kevin Osei', '(555) 318-4402', 'kosei@example.com'], ago: 5, status: 'new', trade: 'electrical',
+        desc: 'Breakers keep tripping when the AC and microwave run together. Old fuse-style panel in the basement.', address: '310 Walnut Ave, Springfield', timeframe: 'flexible', budget: '1-5k' }),
+      // Thinking it over / estimate waiting
+      job({ who: ['Rachel Simmons', '(555) 671-2290', 'rsimmons@example.com'], ago: 52, status: 'qualifying', trade: 'remodel', salesId: sales.jake, price: 6800,
+        desc: 'Refresh the kitchen: new countertops, backsplash and paint the cabinets.\n\nMeasurements: Kitchen about 12 x 14 ft, 22 ft of counter', address: '15 Birchwood Ct, Springfield', budget: '5-15k',
+        notes: 'Liked the number. Wants to talk it over with her husband this weekend.' }),
+      job({ who: ['Tom Becker', '(555) 433-1187', 'tbecker@example.com'], ago: 34, status: 'qualifying', trade: 'flooring', salesId: sales.tasha, price: 2450, docs: [kitchenEst],
+        desc: 'Replace cracked bathroom floor tile.\n\nMeasurements: Bathroom 5 x 8 ft', address: '902 Lakeview Dr, Springfield', budget: '1-5k',
+        notes: 'Wanted it in writing before saying yes. Estimate sent.' }),
+      // Hot leads
+      job({ who: ['Angela Price', '(555) 780-3345', 'aprice@example.com'], ago: 7, status: 'hot', trade: 'landscaping', salesId: sales.jake, price: 4200,
+        desc: 'New paver patio off the back door, about 16 x 20 ft, with a small fire pit.', address: '48 Meadow Ln, Springfield', budget: '1-5k',
+        notes: 'Agreed to $4,200 on the phone. Needs a visit to confirm grade and drainage.' }),
+      job({ who: ['Marcus Hill', '(555) 290-6618', 'mhill@example.com'], ago: 28, status: 'hot', trade: 'flooring', salesId: sales.tasha, price: 5600, visitAt: new Date(now + 3 * H),
+        desc: 'Hardwood throughout the first floor. Carpet comes out.\n\nMeasurements: Living 15 x 20, dining 12 x 12, hall 4 x 18', address: '1220 Summit Rd, Springfield', budget: '5-15k' }),
+      job({ who: ['Linda Park', '(555) 365-9021', 'lindapark@example.com'], ago: 75, status: 'hot', trade: 'hvac', salesId: sales.maria, price: 7900, visitAt: when(-1, 15), docs: [hvacEst],
+        desc: 'Furnace is 22 years old and the AC barely cools. Want both replaced before winter.', address: '64 Orchard Way, Springfield', budget: '5-15k',
+        notes: 'Maria visited yesterday. Ready to go, wants it done next week.' }),
+      // Scheduled
+      job({ who: ['Frank Delgado', '(555) 520-7734', 'fdelgado@example.com'], ago: 6 * 24, status: 'scheduled', trade: 'roofing', salesId: sales.maria, price: 1350, crewPay: 850,
+        contractorId: crew.ray, when: when(0, 8), crewResponse: 'confirmed', crewResponseAt: now - 30 * H,
+        stage: 'on_the_way', progressAt: now - 0.3 * H, progressBy: 'Ray Johnson', progressByCrew: true, unseen: true,
+        desc: 'Gutters pulling away from the fascia on the front of the house. Replace 40 ft of gutter and two downspouts.', address: '5 Elm Pl, Springfield' }),
+      job({ who: ['Nicole Brooks', '(555) 847-2093', 'nbrooks@example.com'], ago: 5 * 24, status: 'scheduled', trade: 'painting', salesId: sales.tasha, price: 3100, crewPay: 1900,
+        contractorId: crew.sarah, when: when(1, 9), crewResponse: 'declined', crewResponseNote: 'Truck is in the shop until Monday', crewResponseAt: now - 3 * H,
+        progressAt: now - 3 * H, progressBy: 'Sarah Kim', progressByCrew: true,
+        desc: 'Paint the exterior trim, front door and shutters.', address: '233 Hawthorne St, Springfield' }),
+      job({ who: ['Omar Haddad', '(555) 614-5530', 'ohaddad@example.com'], ago: 4 * 24, status: 'scheduled', trade: 'electrical', salesId: sales.jake, price: 1850,
+        contractorId: crew.andre, when: when(3, 10),
+        desc: 'Add 6 recessed lights in the living room and a ceiling fan in the bedroom.', address: '19 Ridge Ct, Springfield' }),
+      // Working
+      job({ who: ['Sharon Whitley', '(555) 902-3317', 'swhitley@example.com'], ago: 16 * 24, status: 'in_progress', trade: 'remodel', salesId: sales.maria, price: 11800, crewPay: 7400,
+        contractorId: crew.ray, when: when(-3, 8), crewResponse: 'confirmed', crewResponseAt: now - 8 * DAY, startedAt: msAt(-3, 8, 20),
+        stage: 'waiting_parts', progressAt: now - 2 * H, progressBy: 'Ray Johnson', progressByCrew: true, unseen: true,
+        crewNotes: [['Demo done. Subfloor under the tub was rotted, replaced a 4 x 5 section.', now - 2 * DAY], ['Vanity on backorder from the supplier, ETA Thursday. Tile is going in meanwhile.', now - 2 * H]],
+        desc: 'Hall bathroom remodel: new tub surround, tile floor, vanity and lighting.', address: '88 Sycamore Dr, Springfield' }),
+      job({ who: ['Paul Jensen', '(555) 248-6609', 'pjensen@example.com'], ago: 9 * 24, status: 'in_progress', trade: 'plumbing', price: 3400, crewPay: 2100,
+        contractorId: crew.mike, when: when(-1, 7, 30), crewResponse: 'confirmed', crewResponseAt: now - 4 * DAY, startedAt: msAt(-1, 7, 45),
+        progressAt: msAt(-1, 7, 45), progressBy: 'Mike Alvarez', progressByCrew: true,
+        desc: 'Replace galvanized supply lines with PEX from the meter to the kitchen and both bathrooms.', address: '410 Cedar Ave, Springfield' }),
+      // Done: invoice and payments
+      job({ who: ['Diane Morales', '(555) 733-0912', 'dmorales@example.com'], ago: 12 * 24, status: 'completed', trade: 'drywall', salesId: sales.tasha, price: 980, crewPay: 560,
+        contractorId: crew.jasmine, when: when(-1, 9), crewResponse: 'confirmed', crewResponseAt: now - 6 * DAY, startedAt: msAt(-1, 9, 10), finishedAt: msAt(-1, 14, 40),
+        desc: 'Patch and texture a water-damaged ceiling in the living room, about 4 x 6 ft.', address: '27 Poplar St, Springfield' }),
+      job({ who: ['Gregory Shaw', '(555) 456-2280', 'gshaw@example.com'], ago: 26 * 24, status: 'completed', trade: 'roofing', salesId: sales.jake, price: 9200, crewPay: 5900,
+        contractorId: crew.derek, when: when(-13, 7), crewResponse: 'confirmed', crewResponseAt: now - 18 * DAY, startedAt: msAt(-13, 7, 15), finishedAt: msAt(-12, 16, 30),
+        docs: [roofEst, invoice(roofEst, msAt(-12, 18), 7, [])],
+        desc: 'Full roof replacement after hail damage. Insurance job.', address: '1504 Prairie Rd, Springfield', notes: 'Insurance check expected. Follow up on payment.' }),
+      job({ who: ['Yvonne Carter', '(555) 389-7710', 'ycarter@example.com'], ago: 28 * 24, status: 'completed', trade: 'flooring', salesId: sales.tasha, price: 5100, crewPay: 3300,
+        contractorId: crew.lou, when: when(-16, 8), crewResponse: 'confirmed', crewResponseAt: now - 20 * DAY, startedAt: msAt(-16, 8, 5), finishedAt: msAt(-14, 15),
+        docs: [floorEst, invoice(floorEst, msAt(-14, 17), 30, [[2500, 'Zelle', msAt(-13, 11)]])],
+        desc: 'Luxury vinyl plank in the living room, dining room and hallway.', address: '61 Willow Bend, Springfield' }),
+      job({ who: ['Henry Walsh', '(555) 502-6644', 'hwalsh@example.com'], ago: 45 * 24, status: 'completed', trade: 'electrical', salesId: sales.maria, price: 2900, crewPay: 1750,
+        contractorId: crew.ray, when: when(-36, 8), crewResponse: 'confirmed', crewResponseAt: now - 38 * DAY, startedAt: msAt(-36, 8, 10), finishedAt: msAt(-36, 15, 30),
+        docs: [panelEst, invoice(panelEst, msAt(-36, 17), 14, [[2900, 'Check', msAt(-30, 10)]])],
+        desc: 'Upgrade the 100 amp panel to 200 amp.', address: '8 Fox Run, Springfield' }),
+      job({ who: ['Carla Nguyen', '(555) 677-4129', 'cnguyen@example.com'], ago: 80 * 24, status: 'completed', trade: 'remodel', salesId: sales.maria, price: 14500, crewPay: 9200,
+        contractorId: crew.ray, when: when(-68, 8), crewResponse: 'confirmed', crewResponseAt: now - 70 * DAY, startedAt: msAt(-68, 8), finishedAt: msAt(-61, 16),
+        docs: [bathEst, invoice(bathEst, msAt(-61, 17), 14, [[7250, 'ACH', msAt(-68, 9)], [7250, 'ACH', msAt(-58, 9)]])],
+        desc: 'Master bathroom remodel with a walk-in shower.', address: '300 Highland Ave, Springfield' }),
+      // Closed
+      job({ who: ['Gary Fields', '(555) 118-5523', 'gfields@example.com'], ago: 8 * 24, status: 'lost', trade: 'hvac', price: 6200,
+        desc: 'Want a quote for central air in a house that has none.', address: '72 Brookside Dr, Springfield' }),
+    );
+    function msAt(days, h, m = 0) { return when(days, h, m).getTime(); }
+
+    // Number jobs oldest first, so job numbers read like a real history.
+    d.jobs.sort((a, b) => a.created - b.created).forEach((j, i) => {
+      j.number = 1001 + i;
+      j.docs = j.docs || [];
+      const count = {};
+      j.docs.forEach((doc) => {
+        count[doc.type] = (count[doc.type] || 0) + 1;
+        doc.number = `${doc.type === 'invoice' ? 'INV' : 'E'}-${j.number}${count[doc.type] > 1 ? '-' + count[doc.type] : ''}`;
+      });
+    });
+    d.jobs.reverse();
+    d.nextNumber = 1001 + d.jobs.length;
   }
 
   // Bring older preview data up to date.
@@ -286,7 +462,12 @@
 
   let dbPromise = null;
   function db() {
-    if (!dbPromise) dbPromise = (async () => { let d = readDb(); if (!d) { d = await seed(); } migrate(d); await addMissingSamples(d); writeDb(d); return d; })();
+    if (!dbPromise) dbPromise = (async () => {
+      let d = readDb();
+      if (d && (d.demoVersion || 1) < DEMO_VERSION && !quietDemo()) { d = null; setSession(null); } // old preview sample → the busy one
+      if (!d) { d = await seed(); }
+      migrate(d); await addMissingSamples(d); writeDb(d); return d;
+    })();
     return dbPromise;
   }
   function validateSignUp({ name, email, phone, password }) {
