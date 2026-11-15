@@ -337,6 +337,7 @@
           onSign: async (sig) => {
             await api.docs.reportPayment(dc.id, { amount: amount.value, method: method.value, note: note.value, signature: sig });
             area.replaceChildren(el('div', { class: 'callout good' }, el('b', {}, '✓ Thank you! '), `Your ${D.usd(Number(amount.value))} payment by ${method.value} is signed and on its way to Top Hat. We’ll confirm it as soon as it arrives.`));
+            route(); // the job card behind the invoice drops its Pay now button right away
           } });
         const sent = el('div', { class: 'stack', hidden: true },
           el('div', { class: 'two' }, el('label', { class: 'field' }, 'Amount ($)', amount), el('label', { class: 'field' }, 'How you’re paying', method)), note, err, pad);
@@ -351,10 +352,9 @@
       };
       area.replaceChildren(...[
         pending.length ? el('div', { class: 'callout' }, `⏳ You paid ${pending.map((r) => `${D.usd(r.amount)} by ${r.method}`).join(', ')}. We’ll confirm it when it arrives.`) : null,
-        pendingSum(dc) >= owed ? el('button', { type: 'button', class: 'link', onclick: showOptions }, 'Pay a different amount')
-          : el('button', { type: 'button', class: 'gold block big', onclick: showOptions }, `💳 Pay now · ${D.usd(owed - pendingSum(dc))}`),
+        pendingSum(dc) >= owed ? null : el('button', { type: 'button', class: 'gold block big', onclick: showOptions }, `💳 Pay now · ${D.usd(owed - pendingSum(dc))}`),
       ].filter(Boolean));
-      if (open) showOptions();
+      if (open && pendingSum(dc) < owed) showOptions();
       return area;
     };
     const openPaper = (j, dc, opts = {}) => {
@@ -408,7 +408,7 @@
             el('button', { type: 'button', class: 'gold block', onclick: () => openPaper(j, dc, { sign: true }) }, `✍️ Review & sign estimate · ${D.usd(D.totals(dc).total)}`)),
           ...(paper[j.id] || []).filter((dc) => D.owed(dc) > 0).map((dc) =>
             pendingSum(dc) >= D.owed(dc)
-              ? el('button', { type: 'button', class: 'ghost block', onclick: () => openPaper(j, dc) }, `⏳ ${D.usd(pendingSum(dc))} payment sent · waiting for Top Hat to confirm`)
+              ? el('div', { class: 'callout paid-sent' }, `⏳ ${D.usd(pendingSum(dc))} payment sent for ${dc.number} · waiting for Top Hat to confirm`)
               : el('button', { type: 'button', class: 'gold block', onclick: () => openPaper(j, dc, { pay: true }) }, `💳 Pay now · ${D.usd(D.owed(dc) - pendingSum(dc))}`,
               el('span', { class: 'btn-sub' }, `${dc.number}${dc.dueDate ? ' · due ' + D.fmtDate(dc.dueDate) : ''}${(dc.reports || []).some((r) => r.status === 'pending') ? ' · payment reported' : ''}`))),
           j.status !== 'lost' ? el('a', { class: 'btn studio-btn', href: `#/design?job=${j.id}` },
