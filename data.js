@@ -1345,9 +1345,17 @@
             })),
             crewPaid: showPay && j.crewPaid ? { date: j.crewPaid.date, method: j.crewPaid.method } : null,
             crewBills: showPay ? (j.crewBills || []).filter((x) => x.contractorId === c.id).map((x) => ({ ...x })) : [],
+            halfwayAt: j.halfwayAt || null,
             notes: ownNotes(j),
           };
         }));
+      },
+      // Crew: "I'm halfway done." Unlocks the halfway bill and tells the office.
+      async halfway(jobId) {
+        const { d, c, u } = await requireCrew();
+        const j = d.jobs.find((x) => x.id === jobId && x.contractorId === c.id && x.status === 'in_progress');
+        if (!j) throw new Error('Start the job first.');
+        if (!j.halfwayAt) { j.halfwayAt = Date.now(); j.log.push({ at: Date.now(), text: `½ Halfway done (by ${u.name}, crew)` }); writeDb(d); }
       },
       // Crew bills Top Hat for a step on the crew pay schedule, or for extra work/materials.
       async bill(jobId, { step = null, amount, note = '' } = {}) {
@@ -1368,9 +1376,11 @@
           const steps = (d.settings.crewPaySchedule && d.settings.crewPaySchedule.length ? d.settings.crewPaySchedule : DEFAULT_SETTINGS.crewPaySchedule);
           const s = steps[step];
           if (!s) throw new Error('That payment isn’t on the schedule.');
-          const reached = { start: ['in_progress', 'completed'], mid: ['in_progress', 'completed'], done: ['completed'] }[s.when] || ['completed'];
-          if (!reached.includes(j.status)) throw new Error(s.when === 'done' ? 'Finish the job first, then bill for it.' : 'Start the job first, then bill for it.');
+          const reached = { start: ['in_progress', 'completed'], mid: j.halfwayAt ? ['in_progress', 'completed'] : ['completed'], done: ['completed'] }[s.when] || ['completed'];
+          if (!reached.includes(j.status)) throw new Error(s.when === 'done' ? 'Finish the job first, then bill for it.' : s.when === 'mid' ? 'Tap “I’m halfway done” first, then bill for it.' : 'Start the job first, then bill for it.');
           if (bills.some((x) => x.step === step && x.status !== 'declined')) throw new Error('You’ve already billed for that.');
+          // One at a time: the step before has to be approved or paid first.
+          if (step > 0 && !bills.some((x) => x.step === step - 1 && ['approved', 'paid'].includes(x.status))) throw new Error(`Wait until Top Hat approves “${steps[step - 1].label}”, then bill for this one.`);
           let left = Math.round(j.crewPay * 100) / 100; let amt = 0;
           steps.forEach((x, i) => { const a = i === steps.length - 1 ? left : Math.round(j.crewPay * (Number(x.pct) || 0)) / 100; left = Math.round((left - a) * 100) / 100; if (i === step) amt = a; });
           rec = { label: s.label, step, amount: amt };

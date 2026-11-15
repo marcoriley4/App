@@ -314,6 +314,16 @@ do $$ begin
   begin perform public.crew_bill(current_setting('t.job')::uuid, null, 0, 'x'); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'extra bill needs an amount'); end;
 end $$;
+do $$ begin
+  begin perform public.crew_bill(current_setting('t.job')::uuid, 1, null, ''); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'halfway bill locked until they tap halfway done'); end;
+end $$;
+select public.crew_halfway(current_setting('t.job')::uuid);
+select t.ok((public.crew_my_jobs()->0->>'halfway_at') is not null, 'crew marks halfway done');
+do $$ begin
+  begin perform public.crew_bill(current_setting('t.job')::uuid, 1, null, ''); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'halfway bill locked until the first bill is approved'); end;
+end $$;
 select public.crew_bill(current_setting('t.job')::uuid, null, 120, 'Two extra bundles of shingles');
 select t.ok(jsonb_array_length(public.crew_my_jobs()->0->'bills') = 2, 'crew sees their bills');
 select t.ok((select count(*) from public.crew_bills) = 0, 'crew cannot read the bills table directly');
@@ -335,6 +345,11 @@ reset role;
 select set_config('request.jwt.claim.sub', :'C', false);
 set role authenticated;
 select t.ok((select x->>'reason' from jsonb_array_elements(public.crew_my_jobs()->0->'bills') x where x->>'step' is null) = 'Not approved ahead of time', 'crew sees why a bill was declined');
+select t.ok((public.crew_bill(current_setting('t.job')::uuid, 1, null, 'Halfway')->>'amount')::numeric = 345.15, 'halfway bill opens once the first is paid');
+do $$ begin
+  begin perform public.crew_bill(current_setting('t.job')::uuid, 2, null, ''); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'finish bill still locked while working'); end;
+end $$;
 reset role;
 select set_config('request.jwt.claim.sub', :'S', false);
 set role authenticated;

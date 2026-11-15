@@ -40,7 +40,7 @@ drop function if exists public.handle_new_user, public.is_staff, public.new_crew
   public.my_sales, public.can_access_job, public.office_can_see_profile, public.office_can_access_path, public.sales_guard,
   public.private_guard, public.costs_after_update, public.log_call, public.staff_invite_sales, public.staff_revoke_sales,
   public.sales_invite_info, public.claim_sales_invite, public.office_crew_list,
-  public.authorize_permit, public.can_design, public.permit_label, public.report_payment, public.resolve_payment_report, public.crew_bill, public.staff_crew_bill cascade;
+  public.authorize_permit, public.can_design, public.permit_label, public.report_payment, public.resolve_payment_report, public.crew_bill, public.staff_crew_bill, public.crew_halfway cascade;
 
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
@@ -157,6 +157,7 @@ create table public.jobs (
   crew_response_note text not null default '',
   crew_response_at timestamptz,
   started_at timestamptz,
+  halfway_at timestamptz,            -- contractor tapped "I'm halfway done" (unlocks the halfway crew bill)
   finished_at timestamptz,
   created_at timestamptz not null default now(),
   check (buyer_id is not null or length(trim(contact_name)) > 0)
@@ -823,7 +824,7 @@ declare cid uuid := public.my_crew(); j record; pay numeric; steps jsonb; n int;
   who text; lbl text; nt text := left(trim(coalesce(p_note, '')), 500); rec public.crew_bills;
 begin
   if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
-  select x.id, x.status into j from public.jobs x where x.id = p_job and x.contractor_id = cid and x.status in ('scheduled', 'in_progress', 'completed');
+  select x.id, x.status, x.halfway_at into j from public.jobs x where x.id = p_job and x.contractor_id = cid and x.status in ('scheduled', 'in_progress', 'completed');
   if j.id is null then raise exception 'That job isn’t assigned to you.'; end if;
   select coalesce((data->>'showCrewPay')::boolean, true), coalesce(data->'crewPaySchedule', '[]'::jsonb) into show_pay, steps from public.settings where id = 1;
   if not coalesce(show_pay, true) then raise exception 'Ask the office about billing for this job.'; end if;
@@ -842,10 +843,17 @@ begin
     n := jsonb_array_length(steps);
     if p_step < 0 or p_step >= n then raise exception 'That payment isn’t on the schedule.'; end if;
     s := steps -> p_step;
-    if not ((s->>'when') in ('start', 'mid') and j.status in ('in_progress', 'completed')) and not (j.status = 'completed') then
-      raise exception '%', case when s->>'when' = 'done' then 'Finish the job first, then bill for it.' else 'Start the job first, then bill for it.' end;
+    if not (j.status = 'completed'
+            or ((s->>'when') = 'start' and j.status = 'in_progress')
+            or ((s->>'when') = 'mid' and j.status = 'in_progress' and j.halfway_at is not null)) then
+      raise exception '%', case when s->>'when' = 'done' then 'Finish the job first, then bill for it.'
+        when s->>'when' = 'mid' then 'Tap “I’m halfway done” first, then bill for it.' else 'Start the job first, then bill for it.' end;
     end if;
     if exists (select 1 from public.crew_bills where job_id = p_job and step = p_step and status <> 'declined') then raise exception 'You’ve already billed for that.'; end if;
+    -- One at a time: the step before has to be approved or paid first.
+    if p_step > 0 and not exists (select 1 from public.crew_bills where job_id = p_job and step = p_step - 1 and status in ('approved', 'paid')) then
+      raise exception 'Wait until Top Hat approves “%”, then bill for this one.', coalesce(steps -> (p_step - 1) ->> 'label', 'the one before');
+    end if;
     left_amt := pay;
     for i in 0 .. n - 1 loop
       amt := case when i = n - 1 then left_amt else round(pay * coalesce((steps -> i ->> 'pct')::numeric, 0) / 100, 2) end;
@@ -857,6 +865,18 @@ begin
   insert into public.crew_bills (job_id, contractor_id, step, label, amount, note, by_name) values (p_job, cid, p_step, lbl, amt, nt, coalesce(who, 'Crew')) returning * into rec;
   perform public.log_event(p_job, '🧾 ' || coalesce(who, 'Crew') || ' billed ' || public.usd(amt) || ' for “' || lbl || '”' || case when nt <> '' then ': ' || nt else '' end);
   return jsonb_build_object('id', rec.id, 'label', rec.label, 'amount', rec.amount, 'step', rec.step, 'status', rec.status);
+end $$;
+
+-- Crew: "I'm halfway done." Unlocks the halfway bill and tells the office.
+create function public.crew_halfway(p_job uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+declare cid uuid := public.my_crew(); who text;
+begin
+  if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
+  if not exists (select 1 from public.jobs where id = p_job and contractor_id = cid and status = 'in_progress') then raise exception 'Start the job first.'; end if;
+  select name into who from public.contractors where id = cid;
+  update public.jobs set halfway_at = now() where id = p_job and halfway_at is null;
+  if found then perform public.log_event(p_job, '½ Halfway done (by ' || coalesce(who, 'crew') || ', crew)'); end if;
 end $$;
 
 -- Office: approve, decline or pay a crew bill. When the crew pay is all paid, the job is marked crew paid.
@@ -977,7 +997,7 @@ begin
       'id', j.id, 'number', j.number, 'trade', j.trade, 'status', j.status, 'scheduled_for', j.scheduled_for,
       'stage', j.stage, 'progress_at', j.progress_at, 'progress_by', j.progress_by,
       'crew_response', j.crew_response, 'crew_response_note', j.crew_response_note,
-      'started_at', j.started_at, 'finished_at', j.finished_at,
+      'started_at', j.started_at, 'finished_at', j.finished_at, 'halfway_at', j.halfway_at,
       'customer_photos', (select coalesce(jsonb_agg(f.path order by f.uploaded_at), '[]'::jsonb) from public.job_files f
                            where f.job_id = j.id and f.source = 'customer' and f.mime like 'image/%'),
       'address', j.address, 'zip', j.zip, 'description', j.description,
@@ -1187,7 +1207,7 @@ grant execute on function public.is_staff(), public.owns_job(text), public.custo
   public.office_can_access_path(text), public.log_call(uuid, text, text), public.staff_invite_sales(uuid), public.staff_revoke_sales(uuid),
   public.claim_sales_invite(text), public.office_crew_list(), public.authorize_permit(uuid, text), public.can_design(uuid),
   public.report_payment(uuid, numeric, text, text, text, text), public.resolve_payment_report(uuid, boolean),
-  public.crew_bill(uuid, int, numeric, text), public.staff_crew_bill(uuid, text, text, date, text) to authenticated;
+  public.crew_bill(uuid, int, numeric, text), public.staff_crew_bill(uuid, text, text, date, text), public.crew_halfway(uuid) to authenticated;
 grant execute on function public.sales_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_add_note(text, uuid, text) to anon, authenticated;

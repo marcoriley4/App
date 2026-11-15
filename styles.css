@@ -724,3 +724,5 @@ button.gold.block:has(.btn-sub) { flex-direction: column; height: auto; padding-
 /* iPhone date boxes stay inside their card */
 input[type="date"], input[type="datetime-local"], input[type="time"] { -webkit-appearance: none; appearance: none; display: block; min-width: 0; max-width: 100%; box-sizing: border-box; text-align: left; }
 input[type="date"]::-webkit-date-and-time-value, input[type="datetime-local"]::-webkit-date-and-time-value { text-align: left; }
+.sched-list .wait { text-align: right; max-width: 42%; line-height: 1.25; }
+.sched-list li.locked { opacity: .7; }

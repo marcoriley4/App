@@ -548,10 +548,11 @@
           crewToken: j.crew_token || null, crewPay: num(j.crew_pay), photos: Number(j.photos) || 0,
           uploads: (j.uploads || []).map((f) => ({ name: f.name, stage: f.stage || '', mime: f.mime || '', uploaded: ms(f.uploaded_at), url: photoUrls[f.path] || null })),
           crewPaid: j.crew_paid_date ? { date: j.crew_paid_date, method: j.crew_paid_method || 'Other' } : null,
-          crewBills: (j.bills || []).map(mapBill),
+          crewBills: (j.bills || []).map(mapBill), halfwayAt: ms(j.halfway_at),
           notes: (j.notes || []).map((n) => ({ id: n.id, at: ms(n.created_at), text: n.text })),
         }));
       },
+      async halfway(jobId) { must(await sb.rpc('crew_halfway', { p_job: jobId })); },
       async bill(jobId, { step = null, amount = null, note = '' } = {}) {
         const r = must(await sb.rpc('crew_bill', { p_job: jobId, p_step: step, p_amount: amount == null || amount === '' ? null : Number(amount), p_note: note || '' }));
         return { ...r, amount: Number(r.amount) };

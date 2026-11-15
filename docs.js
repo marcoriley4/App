@@ -64,9 +64,10 @@
   ];
   const crewScheduleOf = (company) => (Array.isArray(company?.crewPaySchedule) && company.crewPaySchedule.length ? company.crewPaySchedule : DEFAULT_CREW_SCHEDULE);
   // Each crew payment: amount from the crew pay, and whether the job has reached it.
-  function crewSchedule(company, crewPay, status) {
+  // Halfway counts once the contractor taps "I'm halfway done" (or the job is finished).
+  function crewSchedule(company, crewPay, status, halfway) {
     const steps = crewScheduleOf(company);
-    const reached = { start: ['in_progress', 'completed'], mid: ['in_progress', 'completed'], done: ['completed'] };
+    const reached = { start: ['in_progress', 'completed'], mid: halfway ? ['in_progress', 'completed'] : ['completed'], done: ['completed'] };
     let left = round2(crewPay);
     return steps.map((s, i) => {
       const amount = i === steps.length - 1 ? left : round2(crewPay * (Number(s.pct) || 0) / 100);

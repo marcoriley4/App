@@ -26,8 +26,10 @@
     return j.crewPaid ? Math.max(billsPaid, (Number(j.crewPay) || 0) + extrasOf(j, ['paid'])) : billsPaid;
   };
   // Steps on the crew pay schedule they've reached but not billed yet.
-  const readyToBill = (j, company) => j.crewPay == null ? [] : TH.docs.crewSchedule(company, j.crewPay, j.status)
-    .filter((p) => p.reached && !(j.crewBills || []).some((b) => b.step === p.index && b.status !== 'declined'));
+  // A step can be billed once it's reached and the step before it has been approved or paid.
+  const prevHandled = (j, i) => i === 0 || (j.crewBills || []).some((b) => b.step === i - 1 && ['approved', 'paid'].includes(b.status));
+  const readyToBill = (j, company) => j.crewPay == null ? [] : TH.docs.crewSchedule(company, j.crewPay, j.status, !!j.halfwayAt)
+    .filter((p) => p.reached && prevHandled(j, p.index) && !(j.crewBills || []).some((b) => b.step === p.index && b.status !== 'declined'));
   const sessionStorageGet = (k) => { try { return sessionStorage.getItem(k); } catch (e) { return null; } };
   const sessionStorageSet = (k, v) => { try { sessionStorage.setItem(k, String(v)); } catch (e) { /* fine */ } };
   const tradeOf = (id) => find(TRADES, id) || TRADES.at(-1);
@@ -449,8 +451,12 @@
       step = { icon: st.icon, title: st.label, why: 'Add a note so the office knows what’s needed.', btn: ['▶ Back to work', (e) => go({ stage: null }, `▶ ${n}: back to work.`, e.currentTarget)],
         second: ['✓ Finish job', () => finish()] };
     } else if (j.status === 'in_progress') {
-      step = { icon: '🔨', title: 'Working on it', why: j.startedAt ? `Started ${timeOf(new Date(j.startedAt).toISOString())} · ${dur(j.startedAt, Date.now())} so far` : '',
+      const hasMid = j.crewPay != null && company.showCrewPay !== false && TH.docs.crewScheduleOf(company).some((s) => s.when === 'mid');
+      step = { icon: '🔨', title: j.halfwayAt ? 'Halfway there' : 'Working on it', why: j.startedAt ? `Started ${timeOf(new Date(j.startedAt).toISOString())} · ${dur(j.startedAt, Date.now())} so far` : '',
         btn: ['✓ Finish job', () => finish()],
+        second: hasMid && !j.halfwayAt ? ['½ I’m halfway done', async () => {
+          try { await api.crewPortal.halfway(j.id); renderJob(j.id, `½ ${n}: halfway done. You can bill the halfway payment once the first one is approved.`); }
+          catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; } }] : null,
         back: ['Undo start', () => { if (confirm('Undo start? The job goes back to Scheduled.')) go({ status: 'scheduled' }, `↩ ${n}: back to scheduled.`); }] };
     } else {
       step = { icon: '🎉', title: 'Job done. Thanks!', why: [j.crewPay != null ? `Your pay: ${usd(j.crewPay)}` : null, j.startedAt && j.finishedAt ? `Time on job: ${dur(j.startedAt, j.finishedAt)}` : null].filter(Boolean).join(' · '),
@@ -564,7 +570,7 @@
       if (company.showCrewPay === false) return null;
       const bills = j.crewBills || [];
       if (j.crewPay == null && !bills.length) return el('section', { class: 'card stack' }, el('h3', {}, '💵 Bill Top Hat'), el('p', { class: 'muted small' }, 'The office hasn’t set your pay for this job yet. Once they do, you can bill for each part as you finish it.'));
-      const steps = j.crewPay != null ? TH.docs.crewSchedule(company, j.crewPay, j.status) : [];
+      const steps = j.crewPay != null ? TH.docs.crewSchedule(company, j.crewPay, j.status, !!j.halfwayAt) : [];
       const PILL = { submitted: ['Sent · waiting', ''], approved: ['Approved', 's-scheduled'], paid: ['Paid ✓', 's-completed'], declined: ['Declined', 's-lost'] };
       const billOf = (i) => bills.filter((b) => b.step === i).at(-1);
       const formWrap = el('div');
@@ -583,7 +589,7 @@
           el('button', { type: 'button', class: 'link', onclick: () => formWrap.replaceChildren() }, 'Cancel')));
         (amt || note).focus();
       };
-      const row = (num, label, sub, amount, b, action) => el('li', { class: b?.status === 'paid' ? 'paid' : action ? 'due' : '' },
+      const row = (num, label, sub, amount, b, action) => el('li', { class: b?.status === 'paid' ? 'paid' : action?.tagName === 'BUTTON' ? 'due' : action ? 'locked' : '' },
         el('span', { class: 'n' }, b?.status === 'paid' ? '✓' : num),
         el('span', { class: 'body' }, el('b', {}, label), el('span', { class: 'amt' }, usd(amount)), el('span', { class: 'muted small' }, sub),
           b?.status === 'declined' && b.reason ? el('span', { class: 'small bad-text' }, `Declined: ${b.reason}`) : null),
@@ -593,8 +599,13 @@
         el('div', { class: 'row' }, el('h3', {}, '💵 Bill Top Hat'), el('span', { class: 'spacer' }), el('span', { class: 'muted small' }, `${usd(paidSoFar)} of ${usd(earnedOf(j))} paid`)),
         el('p', { class: 'muted small' }, 'Bill for each part as you finish it. The office approves it and pays you.'),
         el('ol', { class: 'sched-list' },
-          ...steps.map((p) => { const b = billOf(p.index); const can = p.reached && (!b || b.status === 'declined');
-            return row(String(p.index + 1), p.label, `${Number(p.pct)}% · ${p.whenLabel}`, p.amount, b, can ? el('button', { type: 'button', class: 'gold small', onclick: () => openForm(p.index, p.label, p.amount) }, 'Bill now') : null); }),
+          ...steps.map((p) => { const b = billOf(p.index); const open = !b || b.status === 'declined';
+            const can = open && p.reached && prevHandled(j, p.index);
+            // Why it isn't open yet, in plain words.
+            const wait = !open ? null : !prevHandled(j, p.index) ? `After “${steps[p.index - 1].label}” is approved`
+              : !p.reached ? (p.when === 'mid' ? 'Tap “I’m halfway done” first' : p.when === 'done' ? 'When you finish the job' : 'When you start work') : null;
+            return row(String(p.index + 1), p.label, `${Number(p.pct)}% · ${p.whenLabel}`, p.amount, b,
+              can ? el('button', { type: 'button', class: 'gold small', onclick: () => openForm(p.index, p.label, p.amount) }, 'Bill now') : wait ? el('span', { class: 'muted small wait' }, wait) : null); }),
           ...bills.filter((b) => b.step == null).map((b) => row('+', 'Extra work / materials', b.note || '', b.amount, b, null))),
         formWrap,
         el('button', { type: 'button', class: 'ghost small', onclick: () => openForm(null, '', 0) }, '+ Bill for extra work or materials'));
