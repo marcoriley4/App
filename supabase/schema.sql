@@ -621,6 +621,8 @@ create table public.payment_reports (
   note text not null default '' check (length(note) <= 300),
   reported_by text not null default '',
   status text not null default 'pending' check (status in ('pending', 'confirmed', 'not_received')),
+  -- The customer's signature authorizing the payment: { name, image (PNG data URL), at }.
+  signature jsonb check (signature is null or (jsonb_typeof(signature) = 'object' and length(signature->>'name') between 3 and 120 and (signature->>'image') ~ '^data:image/png;base64,[A-Za-z0-9+/=]+$' and length(signature->>'image') <= 300000)),
   created_at timestamptz not null default now(),
   resolved_at timestamptz,
   resolved_by text not null default ''
@@ -745,7 +747,7 @@ language sql stable security definer set search_path = '' as $$
       'notes', d.notes, 'due_date', d.due_date, 'pay_link', d.pay_link, 'payments', d.payments,
       'created_at', d.created_at, 'sent_at', d.sent_at, 'responded_at', d.responded_at,
       'schedule_step', d.schedule_step, 'schedule_base', d.schedule_base, 'signature', d.signature,
-      'reports', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'amount', r.amount, 'method', r.method, 'created_at', r.created_at, 'status', r.status) order by r.created_at), '[]'::jsonb)
+      'reports', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'amount', r.amount, 'method', r.method, 'created_at', r.created_at, 'status', r.status, 'signature', r.signature) order by r.created_at), '[]'::jsonb)
                     from public.payment_reports r where r.doc_id = d.id)) order by d.created_at) as docs
     from public.documents d join public.jobs j on j.id = d.job_id
     where j.buyer_id = auth.uid() and d.status <> 'draft'
@@ -772,7 +774,7 @@ begin
 end $$;
 
 -- Customer: "I've sent my payment." Waits for the office to confirm it arrived.
-create function public.report_payment(p_doc uuid, p_amount numeric, p_method text, p_note text) returns void
+create function public.report_payment(p_doc uuid, p_amount numeric, p_method text, p_note text, p_sig_name text default null, p_sig_image text default null) returns void
 language plpgsql security definer set search_path = '' as $$
 declare d record; who text; amt numeric := round(coalesce(p_amount, 0), 2);
 begin
@@ -782,10 +784,12 @@ begin
   if amt <= 0 then raise exception 'Enter how much you paid.'; end if;
   if amt > d.total * 2 then raise exception 'That’s more than this invoice. Check the amount.'; end if;
   select name into who from public.profiles where id = auth.uid();
-  insert into public.payment_reports (doc_id, job_id, amount, method, note, reported_by)
+  insert into public.payment_reports (doc_id, job_id, amount, method, note, reported_by, signature)
   values (d.id, d.job_id, amt, case when p_method in ('Zelle', 'Bank transfer (ACH)', 'Check', 'Cash', 'Card', 'Venmo', 'Cash App') then p_method else 'Other' end,
-          left(trim(coalesce(p_note, '')), 300), coalesce(who, 'Customer'));
-  perform public.log_event(d.job_id, '💵 ' || coalesce(who, 'Customer') || ' says they paid ' || public.usd(amt) || ' on ' || d.number || '. Confirm it when it arrives.');
+          left(trim(coalesce(p_note, '')), 300), coalesce(who, 'Customer'),
+          case when p_sig_image is not null then jsonb_build_object('name', left(trim(coalesce(p_sig_name, '')), 120), 'image', p_sig_image, 'at', now()) end);
+  perform public.log_event(d.job_id, '💵 ' || coalesce(who, 'Customer') || ' paid ' || public.usd(amt) || ' on ' || d.number
+    || case when p_sig_image is not null then ' (signed “' || left(trim(coalesce(p_sig_name, '')), 120) || '”)' else '' end || '. Confirm it when it arrives.');
 end $$;
 
 -- Office: the money arrived (record it as a payment) or it didn't.
@@ -1081,7 +1085,7 @@ grant execute on function public.is_staff(), public.owns_job(text), public.custo
   public.crew_can_read_customer(text), public.my_sales(), public.can_access_job(uuid), public.office_can_see_profile(uuid),
   public.office_can_access_path(text), public.log_call(uuid, text, text), public.staff_invite_sales(uuid), public.staff_revoke_sales(uuid),
   public.claim_sales_invite(text), public.office_crew_list(), public.authorize_permit(uuid, text), public.can_design(uuid),
-  public.report_payment(uuid, numeric, text, text), public.resolve_payment_report(uuid, boolean) to authenticated;
+  public.report_payment(uuid, numeric, text, text, text, text), public.resolve_payment_report(uuid, boolean) to authenticated;
 grant execute on function public.sales_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_add_note(text, uuid, text) to anon, authenticated;

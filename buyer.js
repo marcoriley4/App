@@ -319,7 +319,8 @@
     const docs = Object.fromEntries(await Promise.all(jobs.map(async (j) => [j.id, j.sharedFiles ? await api.files.forCustomer(j.id) : []])));
     const [paper, company] = await Promise.all([api.docs.mine(), api.settings.get()]);
     const D = TH.docs;
-    // Pay an invoice: by card (if Top Hat has a card link), or Zelle/bank, then "I've sent my payment".
+    // Pay an invoice: how to pay, then "Pay now": amount, how, and the customer signs to authorize it.
+    const pendingSum = (dc) => (dc.reports || []).filter((r) => r.status === 'pending').reduce((t, r) => t + Number(r.amount || 0), 0);
     const payArea = (j, dc, open) => {
       const owed = D.owed(dc);
       const area = el('div', { class: 'pay-area stack' });
@@ -330,27 +331,28 @@
         const method = el('select', { 'aria-label': 'How you paid' }, ...(TH.PAY_METHODS || ['Zelle', 'Check', 'Cash', 'Card', 'Other']).map((m) => el('option', {}, m)));
         const note = el('input', { placeholder: 'Note (optional), e.g. Zelle confirmation #', 'aria-label': 'Note' });
         const err = el('div', { class: 'error', hidden: true, role: 'alert' });
+        const pad = D.signaturePad({ name: me?.name || '', title: 'Sign to pay',
+          agree: `By signing, you authorize this payment for invoice ${dc.number} and agree to its payment terms.`,
+          submitLabel: 'Pay now',
+          onSign: async (sig) => {
+            await api.docs.reportPayment(dc.id, { amount: amount.value, method: method.value, note: note.value, signature: sig });
+            area.replaceChildren(el('div', { class: 'callout good' }, el('b', {}, '✓ Thank you! '), `Your ${D.usd(Number(amount.value))} payment by ${method.value} is signed and on its way to Top Hat. We’ll confirm it as soon as it arrives.`));
+          } });
         const sent = el('div', { class: 'stack', hidden: true },
-          el('b', {}, 'Tell us what you sent'), el('div', { class: 'two' }, el('label', { class: 'field' }, 'Amount ($)', amount), el('label', { class: 'field' }, 'How you paid', method)), note, err,
-          el('button', { type: 'button', class: 'gold block', onclick: async (e) => {
-            e.currentTarget.disabled = true;
-            try {
-              await api.docs.reportPayment(dc.id, { amount: amount.value, method: method.value, note: note.value });
-              area.replaceChildren(el('div', { class: 'callout good' }, el('b', {}, '✓ Thanks! '), `We’ll confirm your ${D.usd(Number(amount.value))} payment as soon as it arrives.`));
-            } catch (ex) { err.textContent = ex.message; err.hidden = false; e.currentTarget.disabled = false; }
-          } }, 'Send'));
+          el('div', { class: 'two' }, el('label', { class: 'field' }, 'Amount ($)', amount), el('label', { class: 'field' }, 'How you’re paying', method)), note, err, pad);
         area.replaceChildren(...[
           el('h3', {}, `Pay ${D.usd(owed)}`),
           cardLink ? el('a', { class: 'btn gold block big', href: cardLink, target: '_blank', rel: 'noopener' }, '💳 Pay by card') : null,
           company.paymentInstructions ? el('div', { class: 'pay-how' }, el('b', {}, cardLink ? 'Or pay by Zelle or bank transfer' : 'How to pay'),
             ...String(company.paymentInstructions).split('\n').filter((x) => x.trim()).map((x) => el('div', {}, x))) : null,
-          el('button', { type: 'button', class: (cardLink ? 'ghost' : 'gold') + ' block', onclick: (e) => { sent.hidden = false; e.currentTarget.remove(); amount.focus(); } }, '✓ I’ve sent my payment'),
+          el('button', { type: 'button', class: 'gold block big', onclick: (e) => { sent.hidden = false; e.currentTarget.remove(); setTimeout(() => sent.scrollIntoView({ block: 'start' }), 30); } }, `Pay now · ${D.usd(owed)}`),
           sent,
         ].filter(Boolean));
       };
       area.replaceChildren(...[
-        pending.length ? el('div', { class: 'callout' }, `⏳ You told us you paid ${pending.map((r) => `${D.usd(r.amount)} by ${r.method}`).join(', ')}. We’ll confirm it when it arrives.`) : null,
-        el('button', { type: 'button', class: 'gold block big', onclick: showOptions }, `💳 Make a payment · ${D.usd(owed)}`),
+        pending.length ? el('div', { class: 'callout' }, `⏳ You paid ${pending.map((r) => `${D.usd(r.amount)} by ${r.method}`).join(', ')}. We’ll confirm it when it arrives.`) : null,
+        pendingSum(dc) >= owed ? el('button', { type: 'button', class: 'link', onclick: showOptions }, 'Pay a different amount')
+          : el('button', { type: 'button', class: 'gold block big', onclick: showOptions }, `💳 Pay now · ${D.usd(owed - pendingSum(dc))}`),
       ].filter(Boolean));
       if (open) showOptions();
       return area;
@@ -405,7 +407,9 @@
           ...(paper[j.id] || []).filter((dc) => dc.type === 'estimate' && dc.status === 'sent').map((dc) =>
             el('button', { type: 'button', class: 'gold block', onclick: () => openPaper(j, dc, { sign: true }) }, `✍️ Review & sign estimate · ${D.usd(D.totals(dc).total)}`)),
           ...(paper[j.id] || []).filter((dc) => D.owed(dc) > 0).map((dc) =>
-            el('button', { type: 'button', class: 'gold block', onclick: () => openPaper(j, dc, { pay: true }) }, `💳 Make a payment · ${D.usd(D.owed(dc))}`,
+            pendingSum(dc) >= D.owed(dc)
+              ? el('button', { type: 'button', class: 'ghost block', onclick: () => openPaper(j, dc) }, `⏳ ${D.usd(pendingSum(dc))} payment sent · waiting for Top Hat to confirm`)
+              : el('button', { type: 'button', class: 'gold block', onclick: () => openPaper(j, dc, { pay: true }) }, `💳 Pay now · ${D.usd(D.owed(dc) - pendingSum(dc))}`,
               el('span', { class: 'btn-sub' }, `${dc.number}${dc.dueDate ? ' · due ' + D.fmtDate(dc.dueDate) : ''}${(dc.reports || []).some((r) => r.status === 'pending') ? ' · payment reported' : ''}`))),
           j.status !== 'lost' ? el('a', { class: 'btn studio-btn', href: `#/design?job=${j.id}` },
             el('span', {}, '🎨 Design studio'),

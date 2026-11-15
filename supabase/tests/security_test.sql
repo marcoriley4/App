@@ -601,7 +601,8 @@ select set_config('request.jwt.claim.sub', :'A', false);
 set role authenticated;
 select t.ok(public.my_documents()::text ~ '"schedule_step": 0', 'customer sees which payment the invoice is for');
 -- "I've sent my payment"
-select public.report_payment(current_setting('t.dep')::uuid, 100, 'Zelle', 'conf 123');
+select public.report_payment(current_setting('t.dep')::uuid, 100, 'Zelle', 'conf 123', 'Ann Buyer', 'data:image/png;base64,iVBORw0KGgo=');
+select t.ok(public.my_documents()::text ~ '"name": "Ann Buyer"', 'customer''s signature saved with the payment');
 select t.ok(public.my_documents()::text ~ '"status": "pending"', 'customer sees their reported payment as pending');
 select t.ok((select count(*) from public.payment_reports) = 0, 'customer cannot read the reports table directly');
 do $$ begin

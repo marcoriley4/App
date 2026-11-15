@@ -994,7 +994,7 @@
         d.jobs.filter((j) => j.buyerId === u.id).forEach((j) => {
           out[j.id] = j.docs.filter((x) => x.status !== 'draft').map((x) => {
             const { id, type, number, status, items, taxRate, notes, dueDate, payLink, payments, created, sentAt, respondedAt, signature, scheduleStep, scheduleBase } = x;
-            const reports = (x.reports || []).map(({ id: rid, amount, method, at, status: rs }) => ({ id: rid, amount, method, at, status: rs }));
+            const reports = (x.reports || []).map(({ id: rid, amount, method, at, status: rs, signature: sg }) => ({ id: rid, amount, method, at, status: rs, signature: sg || null }));
             return JSON.parse(JSON.stringify({ id, type, number, status, items, taxRate, notes, dueDate, payLink, payments, created, sentAt, respondedAt, signature, scheduleStep, scheduleBase, reports }));
           });
         });
@@ -1011,8 +1011,9 @@
         if (!(amount > 0)) throw new Error('Enter how much you paid.');
         if (amount > docTotal(rec) * 2) throw new Error('That’s more than this invoice. Check the amount.');
         const method = PAY_METHODS.includes(p.method) ? p.method : 'Other';
-        (rec.reports ||= []).push({ id: uid(), amount, method, note: String(p.note || '').trim().slice(0, 300), at: Date.now(), by: u.name, status: 'pending' });
-        j.log.push({ at: Date.now(), text: `💵 ${u.name} says they paid ${usd(amount)} by ${method} on ${rec.number}. Confirm it when it arrives.` });
+        const signature = checkSignature(p.signature);
+        (rec.reports ||= []).push({ id: uid(), amount, method, note: String(p.note || '').trim().slice(0, 300), at: Date.now(), by: u.name, status: 'pending', signature });
+        j.log.push({ at: Date.now(), text: `💵 ${u.name} paid ${usd(amount)} by ${method} on ${rec.number}${signature ? ` (signed “${signature.name}”)` : ''}. Confirm it when it arrives.` });
         writeDb(d);
       },
       async resolveReport(jobId, docId, reportId, received) {

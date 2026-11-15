@@ -78,7 +78,8 @@
     fromEstimateId: r.from_estimate || null,
     scheduleStep: r.schedule_step ?? null, scheduleBase: r.schedule_base == null ? null : Number(r.schedule_base),
     signature: r.signature ? { name: r.signature.name, image: r.signature.image, at: Date.parse(r.signature.at) || null, inPerson: !!r.signature.in_person, witness: r.signature.witness || '' } : null,
-    reports: (r.reports || []).map((x) => ({ id: x.id, amount: Number(x.amount), method: x.method, note: x.note || '', by: x.reported_by || '', at: Date.parse(x.created_at) || null, status: x.status })),
+    reports: (r.reports || []).map((x) => ({ id: x.id, amount: Number(x.amount), method: x.method, note: x.note || '', by: x.reported_by || '', at: Date.parse(x.created_at) || null, status: x.status,
+      signature: x.signature ? { name: x.signature.name, image: x.signature.image, at: Date.parse(x.signature.at) || null } : null })),
   });
   async function getDoc(docId) {
     const r = must(await sb.from('documents').select('*').eq('id', docId).maybeSingle());
@@ -179,7 +180,7 @@
           fetchAll(() => sb.from('job_private').select('*')),
           fetchAll(() => sb.from('job_files').select('id, job_id, kind')),
           fetchAll(() => sb.from('profiles').select('id, name, email, phone')),
-          fetchAll(() => sb.from('documents').select('id, job_id, type, number, status, items, tax_rate, due_date, payments, schedule_step, schedule_base, reports:payment_reports(id, amount, method, note, reported_by, created_at, status)')),
+          fetchAll(() => sb.from('documents').select('id, job_id, type, number, status, items, tax_rate, due_date, payments, schedule_step, schedule_base, reports:payment_reports(id, amount, method, note, reported_by, created_at, status, signature)')),
           fetchAll(() => sb.from('crew_notes').select('id, job_id, created_at')),
           u.role === 'staff' ? fetchAll(() => sb.from('job_costs').select('job_id, crew_pay, crew_paid_date, crew_paid_method, crew_paid_note')) : Promise.resolve([]),
         ]);
@@ -360,7 +361,7 @@
     docs: {
       async list(jobId) {
         await requireOffice();
-        return must(await sb.from('documents').select('*, reports:payment_reports(id, amount, method, note, reported_by, created_at, status)').eq('job_id', jobId).order('created_at')).map(mapDoc);
+        return must(await sb.from('documents').select('*, reports:payment_reports(id, amount, method, note, reported_by, created_at, status, signature)').eq('job_id', jobId).order('created_at')).map(mapDoc);
       },
       async save(jobId, doc) {
         await requireOffice();
@@ -391,7 +392,8 @@
       },
       async reportPayment(docId, p) {
         if (!(await me())) throw new Error('Please log in.');
-        must(await sb.rpc('report_payment', { p_doc: docId, p_amount: Number(p.amount) || 0, p_method: p.method || 'Other', p_note: p.note || '' }));
+        must(await sb.rpc('report_payment', { p_doc: docId, p_amount: Number(p.amount) || 0, p_method: p.method || 'Other', p_note: p.note || '',
+          p_sig_name: p.signature?.name || null, p_sig_image: p.signature?.image || null }));
       },
       async resolveReport(jobId, docId, reportId, received) {
         await requireStaff();

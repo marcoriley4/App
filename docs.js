@@ -123,6 +123,17 @@
         ? el('section', { class: 'doc-notes' }, el('h4', {}, 'Payment terms & how to pay'), ...lines(isInv ? company.paymentInstructions : company.estimatePaymentInstructions),
           isInv && doc.payLink ? el('div', {}, 'Pay by card: ', el('a', { href: doc.payLink, target: '_blank', rel: 'noopener' }, 'secure payment link')) : null)
         : null,
+      // Invoices: the customer's signature when they paid (newest), or lines to sign on paper.
+      isInv && st !== 'void' ? (() => {
+        const signed = (doc.reports || []).filter((r) => r.signature?.image && r.status !== 'not_received').at(-1);
+        return signed ? el('section', { class: 'doc-notes doc-signed' }, el('h4', {}, 'Customer signature'),
+          el('img', { class: 'doc-sig', src: signed.signature.image, alt: `Signature of ${signed.signature.name}` }),
+          el('div', {}, el('b', {}, signed.signature.name), ` · ${new Date(signed.signature.at || signed.at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`),
+          el('div', { class: 'muted' }, `Authorized a payment of ${usd(signed.amount)} by ${signed.method} in the Top Hat app`))
+          : el('section', { class: 'doc-notes' }, el('h4', {}, 'Customer signature'),
+            el('div', {}, `I authorize payment of this invoice (${usd(Math.max(0, t.balance))} due) and agree to the payment terms above.`),
+            el('div', { class: 'sign-lines' }, el('div', {}, 'Signature'), el('div', {}, 'Printed name'), el('div', {}, 'Date')));
+      })() : null,
       !isInv && doc.signature?.image ? el('section', { class: 'doc-notes doc-signed' }, el('h4', {}, 'Approved and signed'),
         el('img', { class: 'doc-sig', src: doc.signature.image, alt: `Signature of ${doc.signature.name}` }),
         el('div', {}, el('b', {}, doc.signature.name), ` · ${new Date(doc.signature.at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`),
@@ -155,7 +166,7 @@
   }
 
   // Sign with a finger (or mouse). onSign gets { name, image } where image is a PNG data URL.
-  function signaturePad({ total, name = '', submitLabel = 'Sign & approve', onSign, onCancel }) {
+  function signaturePad({ total, name = '', submitLabel = 'Sign & approve', agree, title = 'Sign to approve', onSign, onCancel }) {
     const canvas = el('canvas', { class: 'sig-canvas', 'aria-label': 'Sign here with your finger' });
     const nameIn = el('input', { value: name, autocomplete: 'name', placeholder: 'Type your full name', 'aria-label': 'Your full name' });
     const err = el('div', { class: 'error', hidden: true, role: 'alert' });
@@ -169,7 +180,7 @@
       ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, r.width, r.height);
     };
     const pos = (e) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
-    canvas.addEventListener('pointerdown', (e) => { if (!ctx || canvas.width !== Math.round(canvas.getBoundingClientRect().width * (window.devicePixelRatio || 1))) setup(); drawing = true; last = pos(e); canvas.setPointerCapture(e.pointerId); e.preventDefault(); });
+    canvas.addEventListener('pointerdown', (e) => { err.hidden = true; if (!ctx || canvas.width !== Math.round(canvas.getBoundingClientRect().width * (window.devicePixelRatio || 1))) setup(); drawing = true; last = pos(e); canvas.setPointerCapture(e.pointerId); e.preventDefault(); });
     canvas.addEventListener('pointermove', (e) => {
       if (!drawing) return; const p = pos(e);
       ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p; drawn = true; e.preventDefault();
@@ -177,8 +188,8 @@
     const stop = () => { drawing = false; };
     canvas.addEventListener('pointerup', stop); canvas.addEventListener('pointercancel', stop);
     const box = el('div', { class: 'sig-box stack' },
-      el('b', {}, 'Sign to approve'),
-      total != null ? el('p', { class: 'small' }, `By signing, you approve this estimate for ${usd(total)} and its payment schedule.`) : null,
+      el('b', {}, title),
+      agree ? el('p', { class: 'small' }, agree) : total != null ? el('p', { class: 'small' }, `By signing, you approve this estimate for ${usd(total)} and its payment schedule.`) : null,
       el('div', { class: 'sig-wrap' }, canvas, el('span', { class: 'sig-x', 'aria-hidden': 'true' }, '✕'), el('span', { class: 'sig-hint', 'aria-hidden': 'true' }, 'Sign here')),
       el('button', { type: 'button', class: 'link small', onclick: () => { if (ctx) setup(); drawn = false; } }, 'Clear signature'),
       nameIn, err,
