@@ -194,7 +194,11 @@ create index on public.design_versions (job_id, created_at);
 -- Owner/office only: what the crew is paid. Kept apart so salespeople can work with prices but never see it.
 create table public.job_costs (
   job_id uuid primary key references public.jobs(id) on delete cascade,
-  crew_pay numeric(12, 2) check (crew_pay >= 0)
+  crew_pay numeric(12, 2) check (crew_pay >= 0),
+  -- When the office paid the contractor (for both sets of books).
+  crew_paid_date date,
+  crew_paid_method text not null default '' check (length(crew_paid_method) <= 40),
+  crew_paid_note text not null default '' check (length(crew_paid_note) <= 200)
 );
 
 create table public.job_events (
@@ -393,6 +397,10 @@ language plpgsql security definer set search_path = '' as $$
 begin
   if new.crew_pay is distinct from old.crew_pay then
     perform public.log_event(new.job_id, 'Crew pay → ' || public.usd(new.crew_pay));
+  end if;
+  if new.crew_paid_date is distinct from old.crew_paid_date then
+    perform public.log_event(new.job_id, case when new.crew_paid_date is null then '💸 Crew payment cleared'
+      else '💸 Crew paid ' || coalesce(public.usd(new.crew_pay) || ' ', '') || '(' || new.crew_paid_method || ') on ' || to_char(new.crew_paid_date, 'Mon FMDD, YYYY') end);
   end if;
   return new;
 end $$;
@@ -874,6 +882,10 @@ begin
       'customer_name', coalesce(b.name, j.contact_name), 'customer_phone', coalesce(b.phone, j.contact_phone), 'crew_token', p.crew_token,
       'crew_pay', case when coalesce(show_pay, true) then (select k.crew_pay from public.job_costs k where k.job_id = j.id) end,
       'photos', (select count(*) from public.job_files f where f.job_id = j.id and f.source = 'crew' and f.contractor_id = cid),
+      'uploads', (select coalesce(jsonb_agg(jsonb_build_object('path', f.path, 'name', f.name, 'stage', f.stage, 'mime', f.mime, 'uploaded_at', f.uploaded_at) order by f.uploaded_at), '[]'::jsonb)
+                    from public.job_files f where f.job_id = j.id and f.source = 'crew' and f.contractor_id = cid),
+      'crew_paid_date', case when coalesce(show_pay, true) then (select k.crew_paid_date from public.job_costs k where k.job_id = j.id) end,
+      'crew_paid_method', case when coalesce(show_pay, true) then (select k.crew_paid_method from public.job_costs k where k.job_id = j.id) end,
       'notes', (select coalesce(jsonb_agg(jsonb_build_object('id', n.id, 'text', n.text, 'created_at', n.created_at) order by n.created_at), '[]'::jsonb)
                   from public.crew_notes n where n.job_id = j.id and n.contractor_id = cid)
     ) order by j.scheduled_for nulls last), '[]'::jsonb)

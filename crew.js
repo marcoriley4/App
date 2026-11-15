@@ -18,6 +18,8 @@
 
   if (api.mode === 'preview') document.getElementById('previewBanner').hidden = false;
   const usd = (n) => '$' + Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const sessionStorageGet = (k) => { try { return sessionStorage.getItem(k); } catch (e) { return null; } };
+  const sessionStorageSet = (k, v) => { try { sessionStorage.setItem(k, String(v)); } catch (e) { /* fine */ } };
   const tradeOf = (id) => find(TRADES, id) || TRADES.at(-1);
   const tel = (p) => 'tel:' + String(p).replace(/[^\d+]/g, '');
   const maps = (a) => 'https://maps.google.com/?q=' + encodeURIComponent(a);
@@ -213,7 +215,7 @@
           el('b', {}, `${t.icon} ${t.label} · TH-${j.number}`),
           el('span', { class: 'muted small' }, `${j.customerName ? j.customerName + ' · ' : ''}${j.address}${j.zip ? ' ' + j.zip : ''}`),
           el('span', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, el('span', { class: 'flag ' + chip[1] }, chip[0]),
-            fin && j.crewPay != null ? el('span', { class: 'flag' }, usd(j.crewPay)) : null)),
+            fin && j.crewPay != null ? el('span', { class: 'flag' + (j.crewPaid ? ' paid' : '') }, `${usd(j.crewPay)}${j.crewPaid ? ' · paid ✓' : ' · not paid yet'}`) : null)),
         el('span', { class: 'chev', 'aria-hidden': 'true' }, '›'));
     };
     const section = (title, list, empty) => [el('h2', { style: 'margin-top:6px' }, title),
@@ -223,8 +225,92 @@
       el('button', { role: 'tab', 'aria-current': String(which === 'active'), onclick: () => { location.hash = '#/'; } }, 'My jobs',
         notDone.length ? el('span', { class: 'count' }, String(notDone.length)) : null),
       el('button', { role: 'tab', 'aria-current': String(which === 'done'), onclick: () => { location.hash = '#/done'; } }, 'Completed',
-        finished.length ? el('span', { class: 'count' }, String(finished.length)) : null));
+        finished.length ? el('span', { class: 'count' }, String(finished.length)) : null),
+      el('button', { role: 'tab', 'aria-current': String(which === 'records'), onclick: () => { location.hash = '#/records'; } }, '📒 Records'));
     const head = el('div', {}, el('h1', {}, `Hi ${me.name.split(' ')[0]}`), el('p', { class: 'muted' }, 'Your Top Hat jobs'));
+
+    if (which === 'records') {
+      // Records for taxes and books: pick a year, see the totals, take it all with you.
+      const yearOf = (j) => new Date(doneAt(j) || Date.now()).getFullYear();
+      const years = [...new Set(finished.map(yearOf))].sort((a, b) => b - a);
+      const thisYear = new Date().getFullYear();
+      if (!years.includes(thisYear)) years.unshift(thisYear);
+      let year = Number(sessionStorageGet('crew.year')) || years[0];
+      if (!years.includes(year)) year = years[0];
+      const body = el('div', { class: 'stack' });
+      const note = el('div', { class: 'callout', hidden: true });
+      const say = (t) => { note.textContent = t; note.hidden = !t; };
+      const fileSafe = (s) => String(s || '').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-');
+      const dateStr = (ms) => (ms ? new Date(ms).toISOString().slice(0, 10) : '');
+      const rowsFor = (list) => [
+        ['Job #', 'Finished', 'Customer', 'Address', 'ZIP', 'Type of work', ...(showPay ? ['Pay', 'Paid on', 'Paid by'] : []), 'Photos'],
+        ...list.map((j) => [`TH-${j.number}`, dateStr(doneAt(j)), j.customerName, j.address, j.zip, tradeOf(j.trade).label,
+          ...(showPay ? [j.crewPay ?? '', j.crewPaid?.date || '', j.crewPaid?.method || ''] : []), (j.uploads || []).length]),
+      ];
+      const draw = () => {
+        const list = finished.filter((j) => yearOf(j) === year);
+        const paid = list.filter((j) => j.crewPaid);
+        const photos = list.reduce((t, j) => t + (j.uploads || []).filter((f) => f.url).length, 0);
+        const statement = () => {
+          const sheet = el('article', { class: 'doc-sheet permit-sheet' },
+            el('header', { class: 'doc-head' },
+              el('div', { class: 'doc-co' }, el('img', { class: 'doc-logo-img', src: 'img/logo.jpg', alt: '' }), el('div', { class: 'doc-logo' }, el('b', {}, 'Top Hat Contracting'))),
+              el('div', { class: 'doc-title' }, el('h1', {}, `${year} statement`), el('dl', {}, el('dt', {}, 'Contractor'), el('dd', {}, me.name), el('dt', {}, 'Printed'), el('dd', {}, new Date().toLocaleDateString())))),
+            el('table', { class: 'doc-items' },
+              el('thead', {}, el('tr', {}, ...['Job', 'Finished', 'Customer & address', ...(showPay ? ['Pay', 'Paid'] : [])].map((h, i) => el('th', { class: i > 2 ? 'num' : '' }, h)))),
+              el('tbody', {}, ...list.map((j) => el('tr', {}, el('td', {}, `TH-${j.number}`), el('td', {}, new Date(doneAt(j)).toLocaleDateString()),
+                el('td', {}, `${j.customerName}, ${j.address}`), ...(showPay ? [el('td', { class: 'num' }, j.crewPay != null ? usd(j.crewPay) : '—'),
+                  el('td', { class: 'num' }, j.crewPaid ? `${j.crewPaid.date} · ${j.crewPaid.method}` : 'Not yet')] : []))))),
+            showPay ? el('div', { class: 'doc-totals' }, el('dl', {},
+              el('dt', {}, 'Earned'), el('dd', {}, usd(pay(list))),
+              el('dt', { class: 'big' }, 'Paid to you'), el('dd', { class: 'big' }, usd(pay(paid))),
+              el('dt', {}, 'Not paid yet'), el('dd', {}, usd(pay(list.filter((j) => !j.crewPaid)))))) : null,
+            el('footer', { class: 'doc-foot' }, `Jobs ${me.name} completed for Top Hat Contracting in ${year}`));
+          TH.docs.viewSheet(sheet, `${year} statement`);
+        };
+        const zipAll = async (btn) => {
+          btn.disabled = true; say('Getting your files ready…');
+          try {
+            const JSZip = await TH.loadZip();
+            const zip = new JSZip();
+            zip.file(`${year}-jobs.csv`, TH.csv(rowsFor(list)));
+            let n = 0;
+            for (const j of list) {
+              const folder = zip.folder(fileSafe(`TH-${j.number} ${j.customerName} ${j.address}`));
+              for (const [i, f] of (j.uploads || []).entries()) {
+                if (!f.url) continue;
+                try { const blob = await (await fetch(f.url)).blob(); folder.file(`${f.stage ? f.stage + '-' : ''}${i + 1}-${fileSafe(f.name.replace(/\.[^.]+$/, ''))}${(f.name.match(/\.[^.]+$/) || ['.jpg'])[0]}`, blob); n++; }
+                catch (e) { /* skip a file that won't load */ }
+              }
+              say(`Getting your files ready… ${n} photo${n === 1 ? '' : 's'}`);
+            }
+            TH.download(`top-hat-${fileSafe(me.name)}-${year}.zip`, await zip.generateAsync({ type: 'blob' }));
+            say(`✓ Downloaded ${list.length} job${list.length === 1 ? '' : 's'} and ${n} photo${n === 1 ? '' : 's'}.`);
+          } catch (e) { say(e.message); }
+          btn.disabled = false;
+        };
+        body.replaceChildren(...[
+          el('div', { class: 'row', style: 'flex-wrap:wrap' }, el('b', {}, 'Year'),
+            ...years.map((y) => el('button', { type: 'button', class: 'chip', 'aria-pressed': String(y === year), onclick: () => { year = y; sessionStorageSet('crew.year', y); draw(); } }, String(y)))),
+          el('div', { class: 'kpis three' },
+            el('div', { class: 'kpi' }, el('b', {}, String(list.length)), el('span', {}, 'Jobs done')),
+            showPay ? el('div', { class: 'kpi' }, el('b', {}, usd(pay(list))), el('span', {}, 'Earned')) : el('div', { class: 'kpi' }, el('b', {}, String(photos)), el('span', {}, 'Photos')),
+            showPay ? el('div', { class: 'kpi' }, el('b', {}, usd(pay(paid))), el('span', {}, 'Paid to you')) : null),
+          showPay && list.some((j) => !j.crewPaid && j.crewPay != null) ? el('p', { class: 'muted small' }, `${usd(pay(list.filter((j) => !j.crewPaid)))} not paid yet. The office marks each job paid when they pay you.`) : null,
+          el('section', { class: 'card stack' },
+            el('h3', {}, '📒 Take your records with you'),
+            el('p', { class: 'muted small' }, 'For your taxes or your books. Works with Excel, Numbers, Google Sheets, or just hand it to your accountant.'),
+            el('button', { type: 'button', class: 'gold block', disabled: !list.length, onclick: () => TH.download(`top-hat-${fileSafe(me.name)}-${year}.csv`, TH.csv(rowsFor(list))) }, `⬇ Spreadsheet of ${year} jobs${showPay ? ' & pay' : ''}`),
+            el('button', { type: 'button', class: 'ghost block', disabled: !list.length, onclick: statement }, `🖨 ${year} statement (print or PDF)`),
+            el('button', { type: 'button', class: 'ghost block', disabled: !list.length, onclick: (e) => zipAll(e.currentTarget) }, `📦 Download everything (${photos} photo${photos === 1 ? '' : 's'} + spreadsheet)`),
+            note),
+          el('h2', {}, `${year} jobs`),
+          list.length ? el('div', { class: 'crew-jobs' }, ...list.map(card)) : el('div', { class: 'card muted' }, `No finished jobs in ${year} yet.`)].filter(Boolean));
+      };
+      draw();
+      view.replaceChildren(el('div', { class: 'stack', style: 'margin:20px 0' }, head, tabs, message ? el('div', { class: 'callout' }, message) : null, body));
+      return;
+    }
 
     if (which === 'done') {
       // Completed jobs: everything they've finished, grouped by month, with pay.
@@ -474,7 +560,7 @@
     if (invite) return renderInvite();
     const m = location.hash.match(/^#\/job\/(.+)$/);
     if (m) return renderJob(decodeURIComponent(m[1]));
-    return renderPortal(null, location.hash === '#/done' ? 'done' : 'active');
+    return renderPortal(null, location.hash === '#/done' ? 'done' : location.hash === '#/records' ? 'records' : 'active');
   }
   window.addEventListener('hashchange', () => { if (!token && !invite) route(); });
   route();

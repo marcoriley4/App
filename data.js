@@ -258,7 +258,7 @@
   // A busy week, so the preview shows every stage without setting anything up.
   // Tests can ask for the small sample by setting localStorage 'tophat.demo.quiet'.
   const quietDemo = () => { try { return !!localStorage.getItem('tophat.demo.quiet'); } catch (e) { return false; } };
-  const DEMO_VERSION = 3;
+  const DEMO_VERSION = 4;
   function addBusyDemo(d, ids) {
     const now = Date.now();
     const H = 3600e3, DAY = 24 * H;
@@ -339,7 +339,7 @@
         crewNotesSeenAt: o.unseen ? 0 : now,
         stage: o.stage || null, progressAt: o.progressAt || (o.contractorId ? t : null), progressBy: o.progressBy || '', progressByCrew: !!o.progressByCrew,
         crewResponse: o.crewResponse || null, crewResponseNote: o.crewResponseNote || '', crewResponseAt: o.crewResponseAt || null,
-        startedAt: o.startedAt || null, finishedAt: o.finishedAt || null,
+        startedAt: o.startedAt || null, finishedAt: o.finishedAt || null, crewPaid: o.crewPaid || null,
       };
     }
 
@@ -403,7 +403,7 @@
         contractorId: crew.jasmine, when: when(-1, 9), crewResponse: 'confirmed', crewResponseAt: now - 6 * DAY, startedAt: msAt(-1, 9, 10), finishedAt: msAt(-1, 14, 40),
         docs: [pay(980, null, 0, now - 10 * DAY, 7, [['all', 'Cash', now - 9 * DAY]]), pay(980, null, 1, msAt(-1, 9, 30), 7, [['all', 'Zelle', msAt(-1, 12)]])],
         desc: 'Patch and texture a water-damaged ceiling in the living room, about 4 x 6 ft.', address: '27 Poplar St, Springfield' }),
-      job({ who: ['Gregory Shaw', '(555) 456-2280', 'gshaw@example.com'], ago: 26 * 24, status: 'completed', trade: 'roofing', salesId: sales.jake, price: 9200, crewPay: 5900,
+      job({ crewPaid: { date: dayKey(new Date(now - 11 * DAY)), method: 'Zelle', note: '' }, who: ['Gregory Shaw', '(555) 456-2280', 'gshaw@example.com'], ago: 26 * 24, status: 'completed', trade: 'roofing', salesId: sales.jake, price: 9200, crewPay: 5900,
         contractorId: crew.derek, when: when(-13, 7), crewResponse: 'confirmed', crewResponseAt: now - 18 * DAY, startedAt: msAt(-13, 7, 15), finishedAt: msAt(-12, 16, 30),
         docs: [roofEst, pay(9200, roofEst, 0, now - 19 * DAY, 7, [['all', 'Check', now - 18 * DAY]]), pay(9200, roofEst, 1, msAt(-13, 9), 7, [['all', 'ACH', msAt(-13, 16)]]), pay(9200, roofEst, 2, msAt(-12, 18), 7)],
         desc: 'Full roof replacement after hail damage. Insurance job.', address: '1504 Prairie Rd, Springfield', notes: 'Insurance check expected. Follow up on payment.' }),
@@ -411,11 +411,11 @@
         contractorId: crew.lou, when: when(-16, 8), crewResponse: 'confirmed', crewResponseAt: now - 20 * DAY, startedAt: msAt(-16, 8, 5), finishedAt: msAt(-14, 15),
         docs: [floorEst, pay(5100, floorEst, 0, now - 21 * DAY, 7, [['all', 'Zelle', now - 21 * DAY]]), pay(5100, floorEst, 1, msAt(-16, 9), 7, [['all', 'Zelle', msAt(-15, 10)]]), pay(5100, floorEst, 2, msAt(-14, 17), 30, [[600, 'Zelle', msAt(-13, 11)]])],
         desc: 'Luxury vinyl plank in the living room, dining room and hallway.', address: '61 Willow Bend, Springfield' }),
-      job({ who: ['Henry Walsh', '(555) 502-6644', 'hwalsh@example.com'], ago: 45 * 24, status: 'completed', trade: 'electrical', salesId: sales.maria, price: 2900, crewPay: 1750,
+      job({ crewPaid: { date: dayKey(new Date(now - 33 * DAY)), method: 'Zelle', note: '' }, who: ['Henry Walsh', '(555) 502-6644', 'hwalsh@example.com'], ago: 45 * 24, status: 'completed', trade: 'electrical', salesId: sales.maria, price: 2900, crewPay: 1750,
         contractorId: crew.ray, when: when(-36, 8), crewResponse: 'confirmed', crewResponseAt: now - 38 * DAY, startedAt: msAt(-36, 8, 10), finishedAt: msAt(-36, 15, 30),
         docs: [panelEst, pay(2900, panelEst, 0, now - 39 * DAY, 7, [['all', 'Check', now - 38 * DAY]]), pay(2900, panelEst, 1, msAt(-36, 8, 30), 7, [['all', 'Check', msAt(-36, 12)]]), pay(2900, panelEst, 2, msAt(-36, 17), 14, [['all', 'Check', msAt(-30, 10)]])],
         desc: 'Upgrade the 100 amp panel to 200 amp.', address: '8 Fox Run, Springfield' }),
-      job({ who: ['Carla Nguyen', '(555) 677-4129', 'cnguyen@example.com'], ago: 80 * 24, status: 'completed', trade: 'remodel', salesId: sales.maria, price: 14500, crewPay: 9200,
+      job({ crewPaid: { date: dayKey(new Date(now - 58 * DAY)), method: 'Check', note: 'Check #2114' }, who: ['Carla Nguyen', '(555) 677-4129', 'cnguyen@example.com'], ago: 80 * 24, status: 'completed', trade: 'remodel', salesId: sales.maria, price: 14500, crewPay: 9200,
         contractorId: crew.ray, when: when(-68, 8), crewResponse: 'confirmed', crewResponseAt: now - 70 * DAY, startedAt: msAt(-68, 8), finishedAt: msAt(-61, 16),
         docs: [bathEst, pay(14500, bathEst, 0, now - 72 * DAY, 7, [['all', 'ACH', now - 71 * DAY]]), pay(14500, bathEst, 1, msAt(-68, 9), 7, [['all', 'ACH', msAt(-66, 9)]]), pay(14500, bathEst, 2, msAt(-61, 17), 14, [['all', 'ACH', msAt(-58, 9)]])],
         desc: 'Master bathroom remodel with a walk-in shower.', address: '300 Highland Ave, Springfield' }),
@@ -775,7 +775,13 @@
         const j = d.jobs.find((x) => x.id === id);
         if (!j) throw new Error('Job not found.');
         // Salespeople run their own jobs (crew, date, progress); crew pay and reassigning stay with the owner/office.
-        if (!isStaff && ['crewPay', 'salesId'].some((k) => k in patch)) throw new Error('Only the office can set crew pay or change the salesperson.');
+        if (!isStaff && ['crewPay', 'salesId', 'crewPaid'].some((k) => k in patch)) throw new Error('Only the office can set crew pay or change the salesperson.');
+        if ('crewPaid' in patch) {
+          const cp = patch.crewPaid;
+          if (cp && !/^\d{4}-\d{2}-\d{2}$/.test(cp.date || '')) throw new Error('Pick the date you paid the crew.');
+          j.crewPaid = cp ? { date: cp.date, method: String(cp.method || 'Other').slice(0, 40), note: String(cp.note || '').trim().slice(0, 200) } : null;
+          j.log.push({ at: Date.now(), text: cp ? `💸 Crew paid ${j.crewPay != null ? '$' + Number(j.crewPay).toLocaleString() + ' ' : ''}(${j.crewPaid.method}) on ${cp.date}` : '💸 Crew payment cleared' });
+        }
         if ('salesId' in patch && patch.salesId !== (j.salesId || null)) {
           const sp = (d.team || []).find((x) => x.id === patch.salesId);
           j.log.push({ at: Date.now(), text: `Salesperson → ${sp ? sp.name : 'nobody'}` });
@@ -1305,6 +1311,10 @@
             stage: j.stage || null, progressAt: j.progressAt || null, progressBy: j.progressBy || '',
             crewToken: j.crewToken, crewPay: showPay ? j.crewPay : null,
             photos: j.files.filter((f) => f.source === 'crew' && f.contractorId === c.id).length,
+            uploads: await Promise.all(j.files.filter((f) => f.source === 'crew' && f.contractorId === c.id).map(async (f) => {
+              const w = await withUrl(f); return { name: f.name, stage: f.stage || '', uploaded: f.uploaded, mime: f.mime, url: w.url };
+            })),
+            crewPaid: showPay && j.crewPaid ? { date: j.crewPaid.date, method: j.crewPaid.method } : null,
             notes: ownNotes(j),
           };
         }));
@@ -1475,5 +1485,23 @@
           el('span', { class: 'muted' }, '→')))));
   }
 
-  window.TH = { PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+  // Spreadsheets for taxes and books: rows of values → a CSV file that opens in Excel, Numbers or Google Sheets.
+  const csv = (rows) => '\ufeff' + rows.map((r) => r.map((v) => {
+    const t = v == null ? '' : String(v);
+    return /[",\n\r]/.test(t) || /^[=+\-@]/.test(t) ? `"${(/^[=+\-@]/.test(t) ? "'" : '') + t.replace(/"/g, '""')}"` : t;
+  }).join(',')).join('\r\n');
+  function download(name, data, type = 'text/csv;charset=utf-8') {
+    const blob = data instanceof Blob ? data : new Blob([data], { type });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+  // Load the zip library only when someone downloads their files.
+  let zipLib = null;
+  const loadZip = () => zipLib || (zipLib = new Promise((res, rej) => {
+    if (window.JSZip) return res(window.JSZip);
+    const sc = document.createElement('script'); sc.src = 'vendor/jszip-3.10.1.min.js'; sc.onload = () => res(window.JSZip); sc.onerror = () => { zipLib = null; rej(new Error('Couldn’t load the zip tool. Check your connection.')); };
+    document.head.append(sc);
+  }));
+
+  window.TH = { csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();

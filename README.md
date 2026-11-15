@@ -19,6 +19,13 @@ Reps and crews only go out to customers who have already agreed to the price, so
 
 **💳 Make a payment:** every unpaid invoice shows a big **Make a payment** button on the customer's job. It offers **Pay by card** (the card payment link from Business, or one pasted on that invoice), your Zelle/bank details, and **I've sent my payment**, where they enter the amount and how they paid. That shows on **Today → Payments to confirm** and on the invoice. Tap **Got it: record payment** once the money's in, or **Not received**. Fully automatic card payments (money in, invoice marked paid with no one tapping) need a Stripe account, which can be connected when the app goes live.
 
+**📁 Folders & records:**
+- **Customers:** tap a customer's name on any job (or **Jobs → 📁 Customers**) for their folder: every job they've had, sorted into Active / Done / Closed, with total work, paid and owed, call/text/email, **+ New job for them**, **Print record** and a spreadsheet.
+- **Salespeople** (Sales tab) and **contractors** (Crew tab) have the same: their jobs by status, totals, and a spreadsheet. Each finished job shows whether the contractor has been paid.
+- **Paying the crew:** on a job's Money tab, **💸 Mark crew paid** with the date and how (Zelle, check…). Today lists **Pay your crew** for finished jobs not marked paid.
+- **Business → Records for your books:** spreadsheets of every job, every payment received, and every crew payout.
+- **Contractors → 📒 Records:** pick a year to see jobs done, earned and paid. One tap for a **spreadsheet for taxes**, a **printable year statement**, or **Download everything** (a zip with every photo they took, one folder per job, plus the spreadsheet).
+
 **Payment schedule:** the job total is split into payments (default: **Deposit 50%** when the job is sold, **Progress payment 25%** when work starts, **Final payment 25%** when the job is finished). Change the names, percentages and timing in **Business → Payment schedule**; it has to add up to 100%. Every job's **Money** tab shows each payment with its invoice and status, and the job's **Next step** asks for each invoice as the job reaches that point (**Send the deposit invoice: $925**). One tap fills in the invoice for that payment. Estimates print the schedule, and each schedule invoice prints "Payment 1 of 3" with the full schedule. **Today → Invoices to send** lists every payment that's due.
 
 Today shows each stage: new leads to call, **🔥 hot leads that need a rep visit**, **🤝 rep visits today and tomorrow**, **🤔 customers thinking it over**, and **visits done that need a crew**.
@@ -135,5 +142,6 @@ python3 -m http.server 8000
 - `config.js`: Supabase project URL and publishable key (empty = preview mode)
 - `supabase/schema.sql`: database setup and security rules
 - `vendor/supabase-2.118.0.js`: Supabase JavaScript client (MIT license)
+- `vendor/jszip-3.10.1.min.js`: JSZip, for contractors' "Download everything" zip (MIT license; loaded only when used)
 - `docs.js`: estimate and invoice totals, statuses, and the printable document
 - `styles.css`: shared styling, including print styles for PDFs

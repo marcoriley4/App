@@ -181,12 +181,13 @@
           fetchAll(() => sb.from('profiles').select('id, name, email, phone')),
           fetchAll(() => sb.from('documents').select('id, job_id, type, number, status, items, tax_rate, due_date, payments, schedule_step, schedule_base, reports:payment_reports(id, amount, method, note, reported_by, created_at, status)')),
           fetchAll(() => sb.from('crew_notes').select('id, job_id, created_at')),
-          u.role === 'staff' ? fetchAll(() => sb.from('job_costs').select('job_id, crew_pay')) : Promise.resolve([]),
+          u.role === 'staff' ? fetchAll(() => sb.from('job_costs').select('job_id, crew_pay, crew_paid_date, crew_paid_method, crew_paid_note')) : Promise.resolve([]),
         ]);
         const designRows = await fetchAll(() => sb.from('design_versions').select('id, job_id, chosen, source'));
         const designsBy = {};
         designRows.forEach((v) => { (designsBy[v.job_id] ||= []).push({ id: v.id, chosen: v.chosen, source: v.source }); });
         const costBy = Object.fromEntries(costs.map((c) => [c.job_id, c.crew_pay]));
+        const paidBy = Object.fromEntries(costs.filter((c) => c.crew_paid_date).map((c) => [c.job_id, { date: c.crew_paid_date, method: c.crew_paid_method || 'Other', note: c.crew_paid_note || '' }]));
         const notesBy = {};
         cnotes.forEach((n) => { (notesBy[n.job_id] ||= []).push({ id: n.id, at: ms(n.created_at) }); });
         const docsBy = {};
@@ -205,7 +206,7 @@
               portalUrl: p.permit_portal || '', fee: p.permit_fee == null ? null : Number(p.permit_fee) },
             designs: designsBy[j.id] || [],
             salesId: j.sales_id || null,
-            price: num(p.price), crewPay: num(costBy[j.id]), notes: p.notes || '', crewToken: p.crew_token || null,
+            price: num(p.price), crewPay: num(costBy[j.id]), crewPaid: paidBy[j.id] || null, notes: p.notes || '', crewToken: p.crew_token || null,
             files: filesBy[j.id] || [], docs: docsBy[j.id] || [],
             crewNotes: notesBy[j.id] || [], crewNotesSeenAt: ms(p.crew_notes_seen_at) || 0,
             buyer: peopleBy[j.buyer_id] || { name: j.contact_name || 'Unknown', email: j.contact_email || '', phone: j.contact_phone || '' },
@@ -289,6 +290,12 @@
         }
         if ('price' in patch) privPatch.price = patch.price;
         if ('crewPay' in patch) must(await sb.from('job_costs').update({ crew_pay: patch.crewPay }).eq('job_id', id));
+        if ('crewPaid' in patch) {
+          const cp = patch.crewPaid;
+          if (cp && !/^\d{4}-\d{2}-\d{2}$/.test(cp.date || '')) throw new Error('Pick the date you paid the crew.');
+          must(await sb.from('job_costs').update(cp ? { crew_paid_date: cp.date, crew_paid_method: String(cp.method || 'Other').slice(0, 40), crew_paid_note: String(cp.note || '').trim().slice(0, 200) }
+            : { crew_paid_date: null, crew_paid_method: '', crew_paid_note: '' }).eq('job_id', id));
+        }
         if ('notes' in patch) privPatch.notes = patch.notes;
         if (Object.keys(jobPatch).length) must(await sb.from('jobs').update(jobPatch).eq('id', id));
         if (Object.keys(privPatch).length) must(await sb.from('job_private').update(privPatch).eq('job_id', id));
@@ -518,7 +525,7 @@
       },
       async jobs() {
         const list = must(await sb.rpc('crew_my_jobs')) || [];
-        const photoUrls = await signedUrls(list.flatMap((j) => j.customer_photos || []));
+        const photoUrls = await signedUrls(list.flatMap((j) => [...(j.customer_photos || []), ...(j.uploads || []).map((f) => f.path)]));
         return list.map((j) => ({
           crewResponse: j.crew_response || null, crewResponseNote: j.crew_response_note || '',
           startedAt: ms(j.started_at), finishedAt: ms(j.finished_at),
@@ -528,6 +535,8 @@
           customerName: j.customer_name || '', customerPhone: j.customer_phone || '',
           stage: j.stage || null, progressAt: ms(j.progress_at), progressBy: j.progress_by || '',
           crewToken: j.crew_token || null, crewPay: num(j.crew_pay), photos: Number(j.photos) || 0,
+          uploads: (j.uploads || []).map((f) => ({ name: f.name, stage: f.stage || '', mime: f.mime || '', uploaded: ms(f.uploaded_at), url: photoUrls[f.path] || null })),
+          crewPaid: j.crew_paid_date ? { date: j.crew_paid_date, method: j.crew_paid_method || 'Other' } : null,
           notes: (j.notes || []).map((n) => ({ id: n.id, at: ms(n.created_at), text: n.text })),
         }));
       },

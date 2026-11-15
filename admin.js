@@ -149,6 +149,9 @@
       { id: 'reported', icon: '💵', title: 'Payments to confirm', why: 'The customer says they paid. Check your account, then record it.',
         list: isStaff ? jobs.filter((j) => reportsOf(j).length) : [],
         line: (j) => reportsOf(j).map(({ r, d }) => `${docs.usd(r.amount)} by ${r.method} · ${d.number}`).join(' · ') },
+      { id: 'paycrew', icon: '💸', title: 'Pay your crew', why: 'Finished jobs where the contractor hasn’t been marked paid.', info: true,
+        list: isStaff ? jobs.filter((j) => j.status === 'completed' && j.contractorId && j.crewPay != null && !j.crewPaid) : [],
+        line: (j) => `${crewName(j) || 'Crew'} · ${money(j.crewPay)}` },
       { id: 'unpaid', icon: '💵', title: 'Waiting for payment', why: 'Invoices with money still owed.',
         list: jobs.filter((j) => owedOn(j) > 0).sort((a, b) => owedOn(b) - owedOn(a)),
         line: (j) => `${docs.usd(owedOn(j))} due${liveInvoices(j).some((d) => docs.state(d) === 'overdue') ? ' · OVERDUE' : ''}` },
@@ -238,7 +241,8 @@
     let listWrap = renderList();
     const searchBox = el('input', { type: 'search', placeholder: 'Search name, phone, address, job #…', value: search, 'aria-label': 'Search jobs',
       oninput: (e) => { search = e.target.value; const list = renderList(); listWrap.replaceWith(list); listWrap = list; } });
-    return [el('div', { class: 'row' }, el('h2', { style: 'flex:1' }, isStaff ? 'Jobs' : 'My clients'), el('button', { class: 'gold', onclick: () => newJobForm() }, '+ New job')), filterBar, salesSel, searchBox, listWrap];
+    return [el('div', { class: 'row' }, el('h2', { style: 'flex:1' }, isStaff ? 'Jobs' : 'My clients'),
+      el('button', { class: 'ghost', onclick: customersList }, '📁 Customers'), el('button', { class: 'gold', onclick: () => newJobForm() }, '+ New job')), filterBar, salesSel, searchBox, listWrap];
   }
 
   function leadCard(j) {
@@ -317,7 +321,10 @@
     const lastCall = history.slice().reverse().find((l) => l.text.startsWith('📞 Call'));
     const summary = el('section', { class: 'card stack summary' },
       el('div', { class: 'row' }, el('span', { class: 'avatar' }, initials(b.name)),
-        el('div', { style: 'flex:1;min-width:0' }, el('h2', {}, b.name), el('p', { class: 'muted small' }, `${t.icon} ${t.label} · ${jobNo(j)}`))),
+        el('div', { style: 'flex:1;min-width:0' },
+          el('h2', {}, el('button', { type: 'button', class: 'name-link', onclick: () => openCustomer(customerKey(j)) }, b.name)),
+          el('p', { class: 'muted small' }, `${t.icon} ${t.label} · ${jobNo(j)} · `,
+            el('button', { type: 'button', class: 'link small', onclick: () => openCustomer(customerKey(j)) }, (() => { const n = jobsOfCustomer(customerKey(j)).length; return `📁 ${n} job${n === 1 ? '' : 's'} with us`; })())))),
       el('div', { class: 'contact' },
         b.phone ? el('a', { class: 'btn ghost small', href: telHref(b.phone) }, '📞 Call') : null,
         el('button', { type: 'button', class: 'ghost small', onclick: () => { callBox.hidden = !callBox.hidden; } }, '📝 Log call'),
@@ -486,6 +493,15 @@
         el('label', { class: 'field' }, 'Customer price', el('span', { class: 'hint' }, 'What the customer pays'), priceInput),
         isStaff ? el('label', { class: 'field' }, 'Crew pay', el('span', { class: 'hint' }, 'What you pay the crew'), payInput) : el('span')),
       isStaff ? profitOut : null,
+      isStaff && j.contractorId ? (() => {
+        const paidDate = el('input', { type: 'date', value: j.crewPaid?.date || docs.todayKey(), 'aria-label': 'Date you paid the crew' });
+        const paidHow = el('select', { 'aria-label': 'How you paid the crew' }, ...['Zelle', 'Check', 'Cash', 'Bank transfer (ACH)', 'Venmo', 'Cash App', 'Other'].map((m) => el('option', { selected: m === j.crewPaid?.method }, m)));
+        return el('div', { class: 'crew-paid' + (j.crewPaid ? ' done' : '') },
+          j.crewPaid ? [el('span', {}, `💸 ${crewName(j) || 'Crew'} paid ${j.crewPay != null ? money(j.crewPay) + ' ' : ''}on ${docs.fmtDate(j.crewPaid.date)} · ${j.crewPaid.method}`),
+            el('button', { type: 'button', class: 'link small', onclick: () => update({ crewPaid: null }) }, 'Undo')]
+            : [el('b', { class: 'small' }, `Paid ${crewName(j) || 'the crew'}?`), el('div', { class: 'two' }, paidDate, paidHow),
+              el('button', { type: 'button', class: 'ghost', onclick: () => update({ crewPaid: { date: paidDate.value, method: paidHow.value } }) }, '💸 Mark crew paid')]);
+      })() : null,
       el('button', { type: 'submit' }, 'Save prices'),
       el('p', { class: 'muted small' }, 'The crew never sees the customer price or your profit. The customer never sees crew pay.'),
     );
@@ -720,6 +736,104 @@
     document.body.style.overflow = 'hidden';
   }
 
+
+  /* ---------- folders & records: everything for one customer, salesperson or contractor ---------- */
+  const digitsOnly = (v) => String(v || '').replace(/\D/g, '');
+  // Same person across jobs: their app account, or (for phone-in customers) their phone, then email, then name.
+  const customerKey = (j) => j.buyerId ? 'u:' + j.buyerId : digitsOnly(j.buyer.phone).length >= 10 ? 'p:' + digitsOnly(j.buyer.phone).slice(-10)
+    : j.buyer.email ? 'e:' + j.buyer.email.toLowerCase() : 'n:' + (j.buyer.name || '').trim().toLowerCase();
+  const jobsOfCustomer = (key) => jobs.filter((j) => customerKey(j) === key).sort((a, b) => b.created - a.created);
+  const paidOn = (j) => liveInvoices(j).reduce((t, d) => t + docs.totals(d).paid, 0);
+  const billedOn = (j) => liveInvoices(j).filter((d) => d.status !== 'draft').reduce((t, d) => t + docs.totals(d).total, 0);
+  const dateOf = (ms) => (ms ? new Date(ms).toISOString().slice(0, 10) : '');
+  const jobRows = (list, { pay = isStaff } = {}) => [
+    ['Job #', 'Created', 'Customer', 'Phone', 'Email', 'Address', 'ZIP', 'Type of work', 'Status', 'Salesperson', 'Contractor', 'Scheduled', 'Finished',
+      'Job total', 'Invoiced', 'Paid', 'Owed', ...(pay ? ['Crew pay', 'Crew paid on', 'Crew paid by'] : [])],
+    ...list.map((j) => [jobNo(j), dateOf(j.created), j.buyer.name, j.buyer.phone, j.buyer.email, j.address, j.zip, tradeOf(j.trade).label, statusOf(j.status).label,
+      salesName(j.salesId) || '', crewName(j) || '', (j.scheduledFor || '').replace('T', ' '), dateOf(j.finishedAt),
+      jobTotal(j) || '', billedOn(j) || '', paidOn(j) || '', owedOn(j) || '', ...(pay ? [j.crewPay ?? '', j.crewPaid?.date || '', j.crewPaid?.method || ''] : [])]),
+  ];
+  const fileSafe = (s) => String(s || '').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'records';
+  const downloadJobs = (list, name, opts) => TH.download(`${fileSafe(name)}-${docs.todayKey()}.csv`, TH.csv(jobRows(list, opts)));
+  const folderSection = (title, list, empty) => el('section', { class: 'card stack' },
+    el('div', { class: 'row' }, el('h3', {}, title), el('span', { class: 'spacer' }), el('span', { class: 'pill' }, String(list.length))),
+    list.length ? el('div', { class: 'leads' }, ...list.map(leadCard)) : el('p', { class: 'muted small' }, empty));
+  const kpiRow = (pairs) => el('div', { class: 'kpis three' }, ...pairs.map(([v, k]) => el('div', { class: 'kpi' }, el('b', {}, String(v)), el('span', {}, k))));
+  function drawer(title, body, back = closeDrawer) {
+    releaseUrls();
+    const panel = el('div', { class: 'panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+      el('div', { class: 'panel-head' }, el('button', { class: 'ghost small', onclick: back }, '← Back'), el('b', { style: 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, title)),
+      el('div', { class: 'panel-body' }, ...body.filter(Boolean)));
+    drawerRoot.replaceChildren(el('div', { class: 'drawer', onclick: (e) => { if (e.target === e.currentTarget) closeDrawer(); } }, panel));
+    document.body.style.overflow = 'hidden';
+  }
+
+  // One customer's folder: every job they've had, what they've paid, what they owe.
+  function openCustomer(key) {
+    const list = jobsOfCustomer(key);
+    if (!list.length) return;
+    const b = list[0].buyer;
+    const first = (b.name || '').split(' ')[0] || 'them';
+    const active = list.filter((j) => !['completed', 'lost'].includes(j.status));
+    const done = list.filter((j) => j.status === 'completed');
+    const closed = list.filter((j) => j.status === 'lost');
+    const sum = (f) => list.reduce((t, j) => t + f(j), 0);
+    const printRecord = () => docs.viewSheet(el('article', { class: 'doc-sheet permit-sheet' },
+      el('header', { class: 'doc-head' }, el('div', { class: 'doc-co' }, el('img', { class: 'doc-logo-img', src: 'img/logo.jpg', alt: '' }), el('div', { class: 'doc-logo' }, el('b', {}, settings.name || 'Top Hat Contracting'))),
+        el('div', { class: 'doc-title' }, el('h1', {}, 'Customer record'), el('dl', {}, el('dt', {}, 'Printed'), el('dd', {}, docs.fmtDate(Date.now()))))),
+      el('section', { class: 'doc-notes' }, el('h4', {}, 'Customer'), el('div', {}, b.name), ...[b.phone, b.email].filter(Boolean).map((x) => el('div', {}, x))),
+      el('table', { class: 'doc-items' }, el('thead', {}, el('tr', {}, ...['Job', 'Date', 'Work', 'Status', 'Total', 'Paid'].map((h, i) => el('th', { class: i > 3 ? 'num' : '' }, h)))),
+        el('tbody', {}, ...list.map((j) => el('tr', {}, el('td', {}, jobNo(j)), el('td', {}, docs.fmtDate(j.created)), el('td', {}, `${tradeOf(j.trade).label}, ${j.address}`),
+          el('td', {}, statusOf(j.status).label), el('td', { class: 'num' }, jobTotal(j) ? docs.usd(jobTotal(j)) : '—'), el('td', { class: 'num' }, paidOn(j) ? docs.usd(paidOn(j)) : '—'))))),
+      el('div', { class: 'doc-totals' }, el('dl', {}, el('dt', {}, 'Paid'), el('dd', {}, docs.usd(sum(paidOn))), el('dt', { class: 'big' }, 'Owed'), el('dd', { class: 'big' }, docs.usd(sum(owedOn))))),
+      el('footer', { class: 'doc-foot' }, `${settings.name || 'Top Hat Contracting'} · Customer record`)), `Customer record: ${b.name}`);
+    drawer(`📁 ${b.name}`, [
+      el('section', { class: 'card stack' },
+        el('div', { class: 'row' }, el('span', { class: 'avatar' }, initials(b.name || '?')),
+          el('div', { style: 'flex:1;min-width:0' }, el('h2', {}, b.name), el('p', { class: 'muted small' }, [b.phone, b.email].filter(Boolean).join(' · ') || 'No contact info'))),
+        el('div', { class: 'contact' },
+          b.phone ? el('a', { class: 'btn ghost small', href: telHref(b.phone) }, '📞 Call') : null,
+          b.phone ? el('a', { class: 'btn ghost small', href: smsHref(b.phone) }, '💬 Text') : null,
+          b.email ? el('a', { class: 'btn ghost small', href: `mailto:${b.email}` }, '✉️ Email') : null),
+        kpiRow([[list.length, `Job${list.length === 1 ? '' : 's'}`], [money(sum((j) => (j.status === 'lost' ? 0 : jobTotal(j)))), 'Total work'], [money(sum(paidOn)), 'Paid'],
+          [money(sum(owedOn)), 'Owed'], [active.length, 'Active'], [done.length, 'Done']]),
+        el('div', { class: 'row', style: 'flex-wrap:wrap' },
+          el('button', { type: 'button', class: 'ghost small', onclick: () => newJobForm({ name: b.name, phone: b.phone, email: b.email }) }, `+ New job for ${first}`),
+          el('button', { type: 'button', class: 'ghost small', onclick: printRecord }, '🖨 Print record'),
+          el('button', { type: 'button', class: 'ghost small', onclick: () => downloadJobs(list, b.name) }, '⬇ Spreadsheet'))),
+      folderSection('Active', active, 'Nothing in progress.'),
+      folderSection('Done', done, 'No finished jobs yet.'),
+      closed.length ? folderSection('Closed', closed, '') : null,
+    ]);
+  }
+
+  // Every customer, with their folder one tap away.
+  function customersList() {
+    const map = new Map();
+    jobs.forEach((j) => { const k = customerKey(j); const c = map.get(k) || { key: k, b: j.buyer, jobs: [], last: 0 }; c.jobs.push(j); c.last = Math.max(c.last, j.created); map.set(k, c); });
+    const all = [...map.values()].sort((a, b) => b.last - a.last);
+    const listWrap = el('div', { class: 'leads' });
+    const search = el('input', { type: 'search', placeholder: 'Search name, phone, email…', 'aria-label': 'Search customers', oninput: () => draw() });
+    const draw = () => {
+      const q = search.value.trim().toLowerCase();
+      const shown = all.filter((c) => !q || [c.b.name, c.b.phone, c.b.email].join(' ').toLowerCase().includes(q));
+      listWrap.replaceChildren(...(shown.length ? shown.map((c) => {
+        const owed = c.jobs.reduce((t, j) => t + owedOn(j), 0);
+        const open = c.jobs.filter((j) => !['completed', 'lost'].includes(j.status)).length;
+        return el('button', { class: 'lead', onclick: () => openCustomer(c.key) },
+          el('span', { class: 'ic' }, '📁'),
+          el('span', { class: 'body' },
+            el('span', { class: 'line1' }, el('b', {}, c.b.name || 'Unknown'), el('span', { class: 'spacer' }), el('span', { class: 'pill' }, `${c.jobs.length} job${c.jobs.length === 1 ? '' : 's'}`)),
+            el('span', { class: 'muted small' }, [c.b.phone, open ? `${open} active` : 'nothing active', `last ${ago(c.last)}`].filter(Boolean).join(' · ')),
+            owed > 0 ? el('span', { class: 'flags' }, el('span', { class: 'flag hot' }, `💵 ${docs.usd(owed)} owed`)) : null));
+      }) : [el('div', { class: 'card muted' }, 'No customers match.')]));
+    };
+    draw();
+    drawer(`📁 Customers (${all.length})`, [
+      el('p', { class: 'muted small' }, 'Every customer has a folder with all their jobs: active, done and closed, with what they’ve paid.'),
+      search, listWrap]);
+  }
+
   /* ---------- design studio for a job (office, or a rep with the customer) ---------- */
   function openStudio(j) {
     releaseUrls();
@@ -767,14 +881,14 @@
   }
 
   /* ---------- office enters a new job (phone call, walk-in…) ---------- */
-  function newJobForm() {
+  function newJobForm(pre = {}) {
     // Customers who already have an app account (so the job shows on their My jobs page).
     const accounts = [...new Map(jobs.filter((j) => j.hasAccount && j.buyerId).map((j) => [j.buyerId, { id: j.buyerId, ...j.buyer }])).values()];
     const digitsOf = (v) => String(v || '').replace(/\D/g, '');
     const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
-    const nameIn = el('input', { name: 'name', autocomplete: 'off', required: true });
-    const phoneIn = el('input', { name: 'phone', type: 'tel', inputmode: 'tel', autocomplete: 'off', placeholder: '(555) 123-4567' });
-    const emailIn = el('input', { name: 'email', type: 'email', inputmode: 'email', autocomplete: 'off', placeholder: 'Optional' });
+    const nameIn = el('input', { name: 'name', autocomplete: 'off', required: true, value: pre.name || '' });
+    const phoneIn = el('input', { name: 'phone', type: 'tel', inputmode: 'tel', autocomplete: 'off', placeholder: '(555) 123-4567', value: pre.phone || '' });
+    const emailIn = el('input', { name: 'email', type: 'email', inputmode: 'email', autocomplete: 'off', placeholder: 'Optional', value: pre.email || '' });
     const matchBox = el('div');
     let match = null;
     const findMatch = () => {
@@ -786,6 +900,7 @@
       if (match && !nameIn.value.trim()) nameIn.value = match.name;
     };
     phoneIn.addEventListener('input', findMatch);
+    if (pre.phone || pre.email) findMatch();
     emailIn.addEventListener('input', findMatch);
 
     const sortedCrew = crew.filter((c) => c.active).sort((a, b) => a.name.localeCompare(b.name));
@@ -1101,7 +1216,21 @@
           el('button', { type: 'button', onclick: () => { TH.ai.set({ key: aiKey.value, model: aiModel.value }); aiSaved.hidden = false; setTimeout(() => { aiSaved.hidden = true; }, 1600); } }, 'Save'))
         : el('p', { class: 'small' }, 'Live: the API key is set on the server (Supabase → Edge Functions → Secrets → GEMINI_API_KEY). Customers never see it.'),
     );
-    return [form, aiCard];
+    const records = el('section', { class: 'card stack' },
+      el('h2', {}, '📒 Records for your books'),
+      el('p', { class: 'muted small' }, 'Spreadsheets that open in Excel, Numbers or Google Sheets. Handy for your accountant and taxes.'),
+      el('button', { type: 'button', class: 'ghost block', onclick: () => downloadJobs(jobs, 'top-hat-all-jobs') }, `⬇ Every job (${jobs.length})`),
+      el('button', { type: 'button', class: 'ghost block', onclick: () => TH.download(`top-hat-payments-received-${docs.todayKey()}.csv`, TH.csv([
+        ['Date', 'Invoice', 'Job #', 'Customer', 'Amount', 'Method', 'Note'],
+        ...jobs.flatMap((j) => liveInvoices(j).flatMap((d) => (d.payments || []).map((p) => [p.date, d.number, jobNo(j), j.buyer.name, p.amount, p.method, p.note || ''])))
+          .sort((a, b) => String(a[0]).localeCompare(String(b[0])))])) }, '⬇ Payments received'),
+      el('button', { type: 'button', class: 'ghost block', onclick: () => TH.download(`top-hat-crew-payouts-${docs.todayKey()}.csv`, TH.csv([
+        ['Paid on', 'Contractor', 'Job #', 'Customer', 'Address', 'Amount', 'Method'],
+        ...jobs.filter((j) => j.crewPaid).map((j) => [j.crewPaid.date, crewName(j) || '', jobNo(j), j.buyer.name, j.address, j.crewPay ?? '', j.crewPaid.method])
+          .sort((a, b) => String(a[0]).localeCompare(String(b[0])))])) }, '⬇ Crew payouts'),
+      el('button', { type: 'button', class: 'ghost block', onclick: customersList }, '📁 Customer folders'),
+    );
+    return [form, records, aiCard];
   }
 
   /* ---------- sales team (owner/office) ---------- */
@@ -1157,9 +1286,10 @@
             el('span', {}, `${new Date(e.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`),
             el('button', { type: 'button', class: 'link small feed-item', onclick: () => openLead(e.jobId, 'overview') }, el('b', {}, `TH-${e.number} · ${e.customer}`), el('span', {}, e.text)))))
             : el('p', { class: 'muted small' }, 'Nothing yet. Their calls, new clients, estimates and updates will show here.')),
-        el('section', { class: 'card stack' },
-          el('h3', {}, `Their clients (${mine.length})`),
-          mine.length ? el('div', { class: 'leads' }, ...mine.map(leadCard)) : el('p', { class: 'muted small' }, 'No clients yet.')),
+        el('button', { type: 'button', class: 'ghost block', onclick: () => downloadJobs(mine, `${x.name}-clients`, { pay: false }) }, `⬇ Spreadsheet of ${x.name.split(' ')[0]}’s clients`),
+        folderSection('Active clients', mine.filter((j) => !['completed', 'lost'].includes(j.status)), 'Nothing active.'),
+        folderSection('Done', mine.filter((j) => j.status === 'completed'), 'No finished jobs yet.'),
+        folderSection('Closed', mine.filter((j) => j.status === 'lost'), 'None.'),
       ));
     releaseUrls();
     drawerRoot.replaceChildren(el('div', { class: 'drawer', onclick: (e) => { if (e.target === e.currentTarget) closeDrawer(); } }, panel));
@@ -1304,8 +1434,10 @@
         el('div', { class: 'kpis three' },
           el('div', { class: 'kpi' }, el('b', {}, String(done.length)), el('span', {}, 'Completed')),
           el('div', { class: 'kpi' }, el('b', {}, String(upcoming.length)), el('span', {}, 'Upcoming')),
-          el('div', { class: 'kpi' }, el('b', {}, money(payOf(done))), el('span', {}, 'Total crew pay'))),
-        done.length ? null : el('p', { class: 'muted small' }, 'No completed jobs yet.'),
+          el('div', { class: 'kpi' }, el('b', {}, money(payOf(done))), el('span', {}, 'Total crew pay')),
+          el('div', { class: 'kpi' }, el('b', {}, money(payOf(done.filter((j) => j.crewPaid)))), el('span', {}, 'Paid out')),
+          el('div', { class: 'kpi' }, el('b', {}, money(payOf(done.filter((j) => !j.crewPaid)))), el('span', {}, 'Still to pay'))),
+        done.length ? el('button', { type: 'button', class: 'ghost block', onclick: () => downloadJobs(done, `${c.name}-jobs`) }, `⬇ Spreadsheet of ${c.name.split(' ')[0]}’s jobs`) : el('p', { class: 'muted small' }, 'No completed jobs yet.'),
         ...groups.map((g) => el('div', { class: 'stack', style: 'gap:6px' },
           el('div', { class: 'month-head' }, el('b', {}, g.d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })),
             el('span', {}, `${g.jobs.length} job${g.jobs.length === 1 ? '' : 's'} · ${money(payOf(g.jobs))}`)),
@@ -1313,7 +1445,7 @@
             el('span', { class: 'ic' }, tradeOf(j.trade).icon),
             el('span', { class: 'body' }, el('b', {}, `${jobNo(j)} · ${j.buyer.name}`),
               el('span', { class: 'muted small' }, `${new Date(doneAt(j)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${j.address}`)),
-            el('span', { class: 'pill' + (j.crewPay == null ? ' s-new' : '') }, j.crewPay == null ? 'No pay set' : money(j.crewPay)))))));
+            el('span', { class: 'pill' + (j.crewPay == null ? ' s-new' : j.crewPaid ? ' s-completed' : '') }, j.crewPay == null ? 'No pay set' : `${money(j.crewPay)}${j.crewPaid ? ' ✓ paid' : ''}`))))));
     }
 
     const form = el('form', { class: 'panel-body', onsubmit: async (e) => {
