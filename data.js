@@ -169,6 +169,12 @@
     name: 'Top Hat Contracting', phone: '', email: '', address: '', license: '',
     taxRate: 0, dueDays: 14, showCrewPay: true,
     estimatePaymentInstructions: 'We accept Zelle, check, cash and card.',
+    // When each payment is due. Invoices are made from it during the job.
+    paymentSchedule: [
+      { label: 'Deposit', pct: 50, when: 'sold' },
+      { label: 'Progress payment', pct: 25, when: 'start' },
+      { label: 'Final payment', pct: 25, when: 'done' },
+    ],
     paymentInstructions: 'We accept cash, check, Zelle, card, Venmo and Cash App.\nMake checks payable to Top Hat Contracting.',
     estimateTerms: 'This estimate is valid for 30 days. Work begins once the estimate is approved.',
     invoiceTerms: 'Thank you for choosing Top Hat Contracting!',
@@ -252,7 +258,7 @@
   // A busy week, so the preview shows every stage without setting anything up.
   // Tests can ask for the small sample by setting localStorage 'tophat.demo.quiet'.
   const quietDemo = () => { try { return !!localStorage.getItem('tophat.demo.quiet'); } catch (e) { return false; } };
-  const DEMO_VERSION = 2;
+  const DEMO_VERSION = 3;
   function addBusyDemo(d, ids) {
     const now = Date.now();
     const H = 3600e3, DAY = 24 * H;
@@ -285,12 +291,18 @@
       notes: DEFAULT_SETTINGS.estimateTerms, created: createdMs, sentAt: createdMs + H,
       respondedAt: status === 'approved' ? createdMs + 5 * H : null, respondedBy: status === 'approved' ? 'Customer (by phone)' : null,
     });
-    const invoice = (est, sentMs, dueDays, payments) => ({
-      id: uid(), type: 'invoice', number: '', status: 'sent', taxRate: 0, fromEstimateId: est.id,
-      items: est.items.map((i) => ({ ...i })), notes: DEFAULT_SETTINGS.invoiceTerms, payLink: '',
-      created: sentMs, sentAt: sentMs, dueDate: dayKey(new Date(sentMs + dueDays * DAY)),
-      payments: payments.map(([amount, method, ms]) => ({ id: uid(), amount, method, date: dayKey(new Date(ms)), note: '' })),
-    });
+    const STEP = [['Deposit', 50], ['Progress payment', 25], ['Final payment', 25]];
+    const r2 = (n) => Math.round(n * 100) / 100;
+    // One payment on the schedule. pays: [[amount or 'all', method, ms]]
+    const pay = (base, est, step, sentMs, dueDays, pays = []) => {
+      const amts = [r2(base * 0.5), r2(base * 0.25)]; amts.push(r2(base - amts[0] - amts[1]));
+      return {
+        id: uid(), type: 'invoice', number: '', status: 'sent', taxRate: 0, fromEstimateId: est ? est.id : null, scheduleStep: step, scheduleBase: base,
+        items: [{ desc: `${STEP[step][0]}: ${STEP[step][1]}% of $${base.toLocaleString()}${est ? ' (estimate)' : ''}`, qty: 1, price: amts[step] }],
+        notes: DEFAULT_SETTINGS.invoiceTerms, payLink: '', created: sentMs, sentAt: sentMs, dueDate: dayKey(new Date(sentMs + dueDays * DAY)),
+        payments: pays.map(([amount, method, ms]) => ({ id: uid(), amount: amount === 'all' ? amts[step] : amount, method, date: dayKey(new Date(ms)), note: '' })),
+      };
+    };
 
     // One job, with a believable history for wherever it is now.
     function job(o) {
@@ -363,9 +375,11 @@
       // Scheduled
       job({ who: ['Frank Delgado', '(555) 520-7734', 'fdelgado@example.com'], ago: 6 * 24, status: 'scheduled', trade: 'roofing', salesId: sales.maria, price: 1350, crewPay: 850,
         contractorId: crew.ray, when: when(0, 8), crewResponse: 'confirmed', crewResponseAt: now - 30 * H,
+        docs: [pay(1350, null, 0, now - 5 * DAY, 7, [['all', 'Zelle', now - 5 * DAY + 3 * H]])],
         stage: 'on_the_way', progressAt: now - 0.3 * H, progressBy: 'Ray Johnson', progressByCrew: true, unseen: true,
         desc: 'Gutters pulling away from the fascia on the front of the house. Replace 40 ft of gutter and two downspouts.', address: '5 Elm Pl, Springfield' }),
       job({ who: ['Nicole Brooks', '(555) 847-2093', 'nbrooks@example.com'], ago: 5 * 24, status: 'scheduled', trade: 'painting', salesId: sales.tasha, price: 3100, crewPay: 1900,
+        docs: [pay(3100, null, 0, now - 2 * DAY, 7)],
         contractorId: crew.sarah, when: when(1, 9), crewResponse: 'declined', crewResponseNote: 'Truck is in the shop until Monday', crewResponseAt: now - 3 * H,
         progressAt: now - 3 * H, progressBy: 'Sarah Kim', progressByCrew: true,
         desc: 'Paint the exterior trim, front door and shutters.', address: '233 Hawthorne St, Springfield' }),
@@ -375,32 +389,35 @@
       // Working
       job({ who: ['Sharon Whitley', '(555) 902-3317', 'swhitley@example.com'], ago: 16 * 24, status: 'in_progress', trade: 'remodel', salesId: sales.maria, price: 11800, crewPay: 7400,
         contractorId: crew.ray, when: when(-3, 8), crewResponse: 'confirmed', crewResponseAt: now - 8 * DAY, startedAt: msAt(-3, 8, 20),
+        docs: [pay(11800, null, 0, now - 12 * DAY, 7, [['all', 'Check', now - 10 * DAY]]), pay(11800, null, 1, now - 1 * DAY, 7)],
         stage: 'waiting_parts', progressAt: now - 2 * H, progressBy: 'Ray Johnson', progressByCrew: true, unseen: true,
         crewNotes: [['Demo done. Subfloor under the tub was rotted, replaced a 4 x 5 section.', now - 2 * DAY], ['Vanity on backorder from the supplier, ETA Thursday. Tile is going in meanwhile.', now - 2 * H]],
         desc: 'Hall bathroom remodel: new tub surround, tile floor, vanity and lighting.', address: '88 Sycamore Dr, Springfield' }),
       job({ who: ['Paul Jensen', '(555) 248-6609', 'pjensen@example.com'], ago: 9 * 24, status: 'in_progress', trade: 'plumbing', price: 3400, crewPay: 2100,
         contractorId: crew.mike, when: when(-1, 7, 30), crewResponse: 'confirmed', crewResponseAt: now - 4 * DAY, startedAt: msAt(-1, 7, 45),
+        docs: [pay(3400, null, 0, now - 8 * DAY, 7, [['all', 'Zelle', now - 7 * DAY]])],
         progressAt: msAt(-1, 7, 45), progressBy: 'Mike Alvarez', progressByCrew: true,
         desc: 'Replace galvanized supply lines with PEX from the meter to the kitchen and both bathrooms.', address: '410 Cedar Ave, Springfield' }),
       // Done: invoice and payments
       job({ who: ['Diane Morales', '(555) 733-0912', 'dmorales@example.com'], ago: 12 * 24, status: 'completed', trade: 'drywall', salesId: sales.tasha, price: 980, crewPay: 560,
         contractorId: crew.jasmine, when: when(-1, 9), crewResponse: 'confirmed', crewResponseAt: now - 6 * DAY, startedAt: msAt(-1, 9, 10), finishedAt: msAt(-1, 14, 40),
+        docs: [pay(980, null, 0, now - 10 * DAY, 7, [['all', 'Cash', now - 9 * DAY]]), pay(980, null, 1, msAt(-1, 9, 30), 7, [['all', 'Zelle', msAt(-1, 12)]])],
         desc: 'Patch and texture a water-damaged ceiling in the living room, about 4 x 6 ft.', address: '27 Poplar St, Springfield' }),
       job({ who: ['Gregory Shaw', '(555) 456-2280', 'gshaw@example.com'], ago: 26 * 24, status: 'completed', trade: 'roofing', salesId: sales.jake, price: 9200, crewPay: 5900,
         contractorId: crew.derek, when: when(-13, 7), crewResponse: 'confirmed', crewResponseAt: now - 18 * DAY, startedAt: msAt(-13, 7, 15), finishedAt: msAt(-12, 16, 30),
-        docs: [roofEst, invoice(roofEst, msAt(-12, 18), 7, [])],
+        docs: [roofEst, pay(9200, roofEst, 0, now - 19 * DAY, 7, [['all', 'Check', now - 18 * DAY]]), pay(9200, roofEst, 1, msAt(-13, 9), 7, [['all', 'ACH', msAt(-13, 16)]]), pay(9200, roofEst, 2, msAt(-12, 18), 7)],
         desc: 'Full roof replacement after hail damage. Insurance job.', address: '1504 Prairie Rd, Springfield', notes: 'Insurance check expected. Follow up on payment.' }),
       job({ who: ['Yvonne Carter', '(555) 389-7710', 'ycarter@example.com'], ago: 28 * 24, status: 'completed', trade: 'flooring', salesId: sales.tasha, price: 5100, crewPay: 3300,
         contractorId: crew.lou, when: when(-16, 8), crewResponse: 'confirmed', crewResponseAt: now - 20 * DAY, startedAt: msAt(-16, 8, 5), finishedAt: msAt(-14, 15),
-        docs: [floorEst, invoice(floorEst, msAt(-14, 17), 30, [[2500, 'Zelle', msAt(-13, 11)]])],
+        docs: [floorEst, pay(5100, floorEst, 0, now - 21 * DAY, 7, [['all', 'Zelle', now - 21 * DAY]]), pay(5100, floorEst, 1, msAt(-16, 9), 7, [['all', 'Zelle', msAt(-15, 10)]]), pay(5100, floorEst, 2, msAt(-14, 17), 30, [[600, 'Zelle', msAt(-13, 11)]])],
         desc: 'Luxury vinyl plank in the living room, dining room and hallway.', address: '61 Willow Bend, Springfield' }),
       job({ who: ['Henry Walsh', '(555) 502-6644', 'hwalsh@example.com'], ago: 45 * 24, status: 'completed', trade: 'electrical', salesId: sales.maria, price: 2900, crewPay: 1750,
         contractorId: crew.ray, when: when(-36, 8), crewResponse: 'confirmed', crewResponseAt: now - 38 * DAY, startedAt: msAt(-36, 8, 10), finishedAt: msAt(-36, 15, 30),
-        docs: [panelEst, invoice(panelEst, msAt(-36, 17), 14, [[2900, 'Check', msAt(-30, 10)]])],
+        docs: [panelEst, pay(2900, panelEst, 0, now - 39 * DAY, 7, [['all', 'Check', now - 38 * DAY]]), pay(2900, panelEst, 1, msAt(-36, 8, 30), 7, [['all', 'Check', msAt(-36, 12)]]), pay(2900, panelEst, 2, msAt(-36, 17), 14, [['all', 'Check', msAt(-30, 10)]])],
         desc: 'Upgrade the 100 amp panel to 200 amp.', address: '8 Fox Run, Springfield' }),
       job({ who: ['Carla Nguyen', '(555) 677-4129', 'cnguyen@example.com'], ago: 80 * 24, status: 'completed', trade: 'remodel', salesId: sales.maria, price: 14500, crewPay: 9200,
         contractorId: crew.ray, when: when(-68, 8), crewResponse: 'confirmed', crewResponseAt: now - 70 * DAY, startedAt: msAt(-68, 8), finishedAt: msAt(-61, 16),
-        docs: [bathEst, invoice(bathEst, msAt(-61, 17), 14, [[7250, 'ACH', msAt(-68, 9)], [7250, 'ACH', msAt(-58, 9)]])],
+        docs: [bathEst, pay(14500, bathEst, 0, now - 72 * DAY, 7, [['all', 'ACH', now - 71 * DAY]]), pay(14500, bathEst, 1, msAt(-68, 9), 7, [['all', 'ACH', msAt(-66, 9)]]), pay(14500, bathEst, 2, msAt(-61, 17), 14, [['all', 'ACH', msAt(-58, 9)]])],
         desc: 'Master bathroom remodel with a walk-in shower.', address: '300 Highland Ave, Springfield' }),
       // Closed
       job({ who: ['Gary Fields', '(555) 118-5523', 'gfields@example.com'], ago: 8 * 24, status: 'lost', trade: 'hvac', price: 6200,
@@ -781,7 +798,9 @@
           const prefix = doc.type === 'invoice' ? 'INV' : 'E';
           const n = j.docs.filter((x) => x.type === doc.type).length + 1;
           rec = { id: uid(), type: doc.type, number: `${prefix}-${j.number}${n > 1 ? '-' + n : ''}`, status: 'draft',
-            payments: [], created: Date.now(), fromEstimateId: doc.fromEstimateId || null, ...fields };
+            payments: [], created: Date.now(), fromEstimateId: doc.fromEstimateId || null,
+            scheduleStep: doc.type === 'invoice' && Number.isInteger(doc.scheduleStep) ? doc.scheduleStep : null,
+            scheduleBase: doc.type === 'invoice' && Number.isInteger(doc.scheduleStep) ? Number(doc.scheduleBase) || 0 : null, ...fields };
           j.docs.push(rec);
           j.log.push({ at: Date.now(), text: `${doc.type === 'invoice' ? 'Invoice' : 'Estimate'} ${rec.number} created` });
         }

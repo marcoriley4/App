@@ -569,6 +569,26 @@ set role authenticated;
 select t.ok((select count(*) from public.jobs) = 0, 'turned-off sales login sees nothing');
 reset role;
 
+-- ========== Payment schedule invoices ==========
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+insert into public.documents (job_id, type, items, schedule_step, schedule_base)
+  values (current_setting('t.job')::uuid, 'invoice', '[{"desc":"Deposit: 50% of $422.28","qty":1,"price":211.14}]', 0, 422.28);
+select set_config('t.dep', (select id::text from public.documents where schedule_step = 0), false);
+select t.ok((select schedule_base from public.documents where id = current_setting('t.dep')::uuid) = 422.28, 'deposit invoice remembers the job total');
+update public.documents set schedule_step = 2, schedule_base = 1 where id = current_setting('t.dep')::uuid;
+select t.ok((select schedule_step from public.documents where id = current_setting('t.dep')::uuid) = 0, 'which payment an invoice is for cannot be changed later');
+do $$ begin
+  begin insert into public.documents (job_id, type, items, schedule_step) values (current_setting('t.job')::uuid, 'estimate', '[]', 0); perform t.ok(false, 'x');
+  exception when check_violation then perform t.ok(true, 'only invoices can be schedule payments'); end;
+end $$;
+update public.documents set status = 'sent' where id = current_setting('t.dep')::uuid;
+reset role;
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+select t.ok(public.my_documents()::text ~ '"schedule_step": 0', 'customer sees which payment the invoice is for');
+reset role;
+
 -- ========== Hot lead: phone estimate agreed, rep visit booked ==========
 select set_config('request.jwt.claim.sub', :'S', false);
 set role authenticated;

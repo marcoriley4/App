@@ -575,3 +575,23 @@ button.ghost, .btn.ghost { border-width: 1.5px; }
 .next-step .link { display: block; margin-top: 6px; }
 .next-step .link { white-space: normal; text-align: left; line-height: 1.35; }
 .stepper .lbl { font-size: .68rem; padding: 0 1px; }
+
+/* Payment schedule */
+.sched-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.sched-list li { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: var(--surface); }
+.sched-list li.due { border: 2px solid var(--gold); background: var(--gold-soft); }
+.sched-list .n, .sched-edit .n { flex: none; width: 28px; height: 28px; border-radius: 99px; background: var(--ink); color: var(--gold); font-weight: 800; display: grid; place-items: center; font-size: .85rem; }
+.sched-list li.paid .n { background: var(--good); color: #fff; }
+.sched-list .body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sched-list .pill { border: 0; cursor: pointer; white-space: nowrap; }
+.sched-edit { display: grid; grid-template-columns: 28px minmax(0, 1fr) 76px minmax(0, 1fr) 32px; gap: 6px; align-items: center; }
+.sched-edit .pct { display: flex; align-items: center; gap: 2px; font-weight: 700; }
+.sched-edit .pct input { min-width: 0; padding-left: 6px; padding-right: 2px; }
+.sched-edit input, .sched-edit select { min-width: 0; }
+.doc-schedule table { width: 100%; border-collapse: collapse; margin: 4px 0; }
+.doc-schedule td { padding: 4px 6px 4px 0; border-bottom: 1px solid #e5e5e5; vertical-align: top; }
+.doc-schedule td.num { text-align: right; white-space: nowrap; }
+.doc-schedule tr.this td { font-weight: 800; }
+.sched-list .amt { font-weight: 800; font-size: 1.05rem; }
+.sched-edit { grid-template-columns: 28px 84px minmax(0, 1fr) 32px; grid-template-areas: "n name name x" ". pct when when"; border: 1px solid var(--border); border-radius: 12px; padding: 8px; background: var(--surface); }
+.sched-edit .n { grid-area: n; } .sched-edit .name { grid-area: name; } .sched-edit .pct { grid-area: pct; } .sched-edit .when { grid-area: when; } .sched-edit .x { grid-area: x; }

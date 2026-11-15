@@ -548,6 +548,10 @@ create table public.documents (
   pay_link text not null default '' check (pay_link = '' or pay_link ~* '^https://'),
   payments jsonb not null default '[]' check (jsonb_typeof(payments) = 'array'),
   from_estimate uuid references public.documents(id) on delete set null,
+  -- An invoice for one payment on the payment schedule: which payment, and the job total it was worked out from.
+  schedule_step smallint check (schedule_step between 0 and 19),
+  schedule_base numeric(12, 2) check (schedule_base >= 0),
+  check (type = 'invoice' or schedule_step is null),
   created_at timestamptz not null default now(),
   sent_at timestamptz,
   responded_at timestamptz,
@@ -586,6 +590,7 @@ begin
     return new;
   end if;
   new.job_id := old.job_id; new.type := old.type; new.number := old.number; new.created_at := old.created_at;
+  new.schedule_step := old.schedule_step; new.schedule_base := old.schedule_base;
   if (new.items, new.tax_rate) is distinct from (old.items, old.tax_rate)
      and not (old.status = 'draft' or (old.status = 'sent' and jsonb_array_length(old.payments) = 0)) then
     raise exception 'This document is locked and can''t be edited.';
@@ -663,7 +668,8 @@ language sql stable security definer set search_path = '' as $$
     select d.job_id, jsonb_agg(jsonb_build_object(
       'id', d.id, 'type', d.type, 'number', d.number, 'status', d.status, 'items', d.items, 'tax_rate', d.tax_rate,
       'notes', d.notes, 'due_date', d.due_date, 'pay_link', d.pay_link, 'payments', d.payments,
-      'created_at', d.created_at, 'sent_at', d.sent_at, 'responded_at', d.responded_at) order by d.created_at) as docs
+      'created_at', d.created_at, 'sent_at', d.sent_at, 'responded_at', d.responded_at,
+      'schedule_step', d.schedule_step, 'schedule_base', d.schedule_base) order by d.created_at) as docs
     from public.documents d join public.jobs j on j.id = d.job_id
     where j.buyer_id = auth.uid() and d.status <> 'draft'
     group by d.job_id) x;

@@ -11,6 +11,8 @@ Reps and crews only go out to customers who have already agreed to the price, so
 3. **Rep visit:** for a hot lead, pick a sales rep and a date and time for the walkthrough, then text the customer the visit time in one tap.
 4. **Sold:** after the visit, tap **✅ Sold: pick crew & date** (or **Didn't close**). The crew takes it from there.
 
+**Payment schedule:** the job total is split into payments (default: **Deposit 50%** when the job is sold, **Progress payment 25%** when work starts, **Final payment 25%** when the job is finished). Change the names, percentages and timing in **Business → Payment schedule**; it has to add up to 100%. Every job's **Money** tab shows each payment with its invoice and status, and the job's **Next step** asks for each invoice as the job reaches that point (**Send the deposit invoice: $925**). One tap fills in the invoice for that payment. Estimates print the schedule, and each schedule invoice prints "Payment 1 of 3" with the full schedule. **Today → Invoices to send** lists every payment that's due.
+
 Today shows each stage: new leads to call, **🔥 hot leads that need a rep visit**, **🤝 rep visits today and tomorrow**, **🤔 customers thinking it over**, and **visits done that need a crew**.
 
 ## How it works

@@ -39,6 +39,29 @@
     draft: 's-lost', sent: 's-qualifying', approved: 's-completed', declined: 's-lost',
     paid: 's-completed', partial: 's-scheduled', overdue: 's-new', void: 's-lost',
   })[state(doc)] || '';
+  // Payment schedule: when each payment is due during the job. Set in Business; amounts come from the job total.
+  const WHEN = [
+    { id: 'sold', label: 'When the job is sold', short: 'Job sold' },
+    { id: 'start', label: 'When work starts', short: 'Work starts' },
+    { id: 'mid', label: 'Halfway through the job', short: 'Halfway' },
+    { id: 'done', label: 'When the job is finished', short: 'Job finished' },
+  ];
+  const DEFAULT_SCHEDULE = [
+    { label: 'Deposit', pct: 50, when: 'sold' },
+    { label: 'Progress payment', pct: 25, when: 'start' },
+    { label: 'Final payment', pct: 25, when: 'done' },
+  ];
+  const scheduleOf = (company) => (Array.isArray(company?.paymentSchedule) && company.paymentSchedule.length ? company.paymentSchedule : DEFAULT_SCHEDULE);
+  // Each payment's dollar amount. The last one takes whatever is left, so it always adds up to the total.
+  function schedule(company, total) {
+    const steps = scheduleOf(company);
+    let left = round2(total);
+    return steps.map((s, i) => {
+      const amount = i === steps.length - 1 ? left : round2(total * (Number(s.pct) || 0) / 100);
+      left = round2(left - amount);
+      return { ...s, index: i, amount, whenLabel: (WHEN.find((w) => w.id === s.when) || WHEN[3]).label };
+    });
+  }
   const editable = (doc) => doc.status === 'draft' || (doc.status === 'sent' && totals(doc).paid === 0);
   // Unpaid balance on an invoice the customer has been sent.
   const owed = (doc) => (doc.type === 'invoice' && !['draft', 'void'].includes(doc.status) ? Math.max(0, totals(doc).balance) : 0);
@@ -82,6 +105,18 @@
           isInv && t.paid ? el('dt', {}, 'Paid') : null, isInv && t.paid ? el('dd', {}, '−' + usd(t.paid)) : null,
           isInv ? el('dt', { class: 'big' }, 'Balance due') : null, isInv ? el('dd', { class: 'big' }, usd(Math.max(0, t.balance))) : null)),
       doc.notes ? el('section', { class: 'doc-notes' }, el('h4', {}, isInv ? 'Notes' : 'Terms'), ...lines(doc.notes)) : null,
+      // The payment schedule: on estimates, and on each invoice that is one of its payments.
+      (() => {
+        const base = isInv ? Number(doc.scheduleBase) || 0 : t.total;
+        if (!base || st === 'declined' || st === 'void' || (isInv && doc.scheduleStep == null)) return null;
+        const plan = schedule(company, base);
+        return el('section', { class: 'doc-notes doc-schedule' },
+          el('h4', {}, isInv ? `Payment ${doc.scheduleStep + 1} of ${plan.length}` : 'Payment schedule'),
+          el('table', {}, el('tbody', {}, ...plan.map((p) => el('tr', { class: isInv && p.index === doc.scheduleStep ? 'this' : '' },
+            el('td', {}, `${p.index + 1}. ${p.label} (${Number(p.pct)}%)`), el('td', {}, p.whenLabel), el('td', { class: 'num' }, usd(p.amount)),
+            isInv ? el('td', { class: 'num' }, p.index === doc.scheduleStep ? '← this invoice' : '') : null)))),
+          isInv ? el('div', { class: 'muted' }, `Job total ${usd(base)}`) : null);
+      })(),
       // Payment terms & how to pay: on every estimate and invoice (not once an invoice is paid or void).
       // Estimates print only the estimate text (e.g. Zelle); bank/ACH details stay on invoices.
       st !== 'void' && st !== 'paid' && (isInv ? company.paymentInstructions : company.estimatePaymentInstructions)
@@ -112,5 +147,5 @@
     return close;
   }
 
-  TH.docs = { METHODS, LABELS, totals, state, label, pillClass, editable, owed, usd, fmtDate, todayKey, render, view, round2 };
+  TH.docs = { METHODS, LABELS, WHEN, DEFAULT_SCHEDULE, scheduleOf, schedule, totals, state, label, pillClass, editable, owed, usd, fmtDate, todayKey, render, view, round2 };
 })();

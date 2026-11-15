@@ -66,6 +66,7 @@
     notes: r.notes || '', dueDate: r.due_date || null, payLink: r.pay_link || '', payments: r.payments || [],
     created: ms(r.created_at), sentAt: ms(r.sent_at), respondedAt: ms(r.responded_at), respondedBy: r.responded_by || '',
     fromEstimateId: r.from_estimate || null,
+    scheduleStep: r.schedule_step ?? null, scheduleBase: r.schedule_base == null ? null : Number(r.schedule_base),
   });
   async function getDoc(docId) {
     const r = must(await sb.from('documents').select('*').eq('id', docId).maybeSingle());
@@ -163,7 +164,7 @@
           fetchAll(() => sb.from('job_private').select('*')),
           fetchAll(() => sb.from('job_files').select('id, job_id, kind')),
           fetchAll(() => sb.from('profiles').select('id, name, email, phone')),
-          fetchAll(() => sb.from('documents').select('id, job_id, type, number, status, items, tax_rate, due_date, payments')),
+          fetchAll(() => sb.from('documents').select('id, job_id, type, number, status, items, tax_rate, due_date, payments, schedule_step, schedule_base')),
           fetchAll(() => sb.from('crew_notes').select('id, job_id, created_at')),
           u.role === 'staff' ? fetchAll(() => sb.from('job_costs').select('job_id, crew_pay')) : Promise.resolve([]),
         ]);
@@ -327,7 +328,9 @@
         };
         if (row.pay_link && !/^https:\/\//i.test(row.pay_link)) throw new Error('The card payment link must start with https://');
         if (doc.id) return mapDoc(must(await sb.from('documents').update(row).eq('id', doc.id).select().single()));
-        return mapDoc(must(await sb.from('documents').insert({ ...row, job_id: jobId, type: doc.type, from_estimate: doc.fromEstimateId || null, number: 'pending' }).select().single()));
+        const step = doc.type === 'invoice' && Number.isInteger(doc.scheduleStep) ? doc.scheduleStep : null;
+        return mapDoc(must(await sb.from('documents').insert({ ...row, job_id: jobId, type: doc.type, from_estimate: doc.fromEstimateId || null, number: 'pending',
+          schedule_step: step, schedule_base: step == null ? null : Number(doc.scheduleBase) || 0 }).select().single()));
       },
       async send(jobId, docId) {
         await requireOffice();

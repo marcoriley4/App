@@ -87,7 +87,23 @@
   const progressText = (j) => (j.stage ? `${stageOf(j.stage).icon} ${stageOf(j.stage).label}` : ({ scheduled: 'Scheduled', in_progress: 'Working', completed: 'Done' })[j.status] || statusOf(j.status).label);
   const estWith = (j, st) => (j.docs || []).find((d) => d.type === 'estimate' && d.status === st);
   const liveInvoices = (j) => (j.docs || []).filter((d) => d.type === 'invoice' && d.status !== 'void');
-  const needsInvoice = (j) => j.status === 'completed' && !liveInvoices(j).some((d) => d.status !== 'draft');
+  // Payment schedule on a job: the total it's based on, and each payment with its invoice once made.
+  const approvedEstOf = (j) => (j.docs || []).filter((d) => d.type === 'estimate' && d.status === 'approved').at(-1);
+  const jobTotal = (j) => { const e = approvedEstOf(j); return e ? docs.totals(e).total : Number(j.price) || 0; };
+  const DUE_FROM = { sold: ['scheduled', 'in_progress', 'completed'], start: ['in_progress', 'completed'], mid: ['in_progress', 'completed'], done: ['completed'] };
+  function planOf(j) {
+    const total = jobTotal(j);
+    if (!total || j.status === 'lost') return [];
+    const invs = liveInvoices(j);
+    const billedInFull = invs.some((d) => d.scheduleStep == null && d.status !== 'draft' && docs.totals(d).total >= total - 0.01);
+    return docs.schedule(settings, total).map((p) => {
+      const inv = invs.find((d) => d.scheduleStep === p.index) || null;
+      return { ...p, inv, covered: !!inv || billedInFull, due: (DUE_FROM[p.when] || DUE_FROM.done).includes(j.status) };
+    });
+  }
+  // The next payment that's due but not sent yet (a draft counts as not sent).
+  const nextDue = (j) => planOf(j).find((p) => p.due && (!p.covered || p.inv?.status === 'draft')) || null;
+  const needsInvoice = (j) => !!nextDue(j);
   const visitPassed = (j) => !!j.visitAt && new Date(j.visitAt).getTime() < Date.now();
   // Sold: the rep has been out (or the customer approved in writing). Time to pick a crew.
   const needsScheduling = (j) => (j.status === 'hot' && visitPassed(j)) || (['new', 'qualifying'].includes(j.status) && !!estWith(j, 'approved'));
@@ -125,8 +141,8 @@
         line: (j) => `${tradeOf(j.trade).label}${j.price != null ? ' · quoted ' + money(j.price) : ''}` },
       { id: 'schedule', icon: '✅', title: 'Rep visit done: schedule the crew', why: 'Sold? Pick who’s doing the work and when. Didn’t close? Mark it on the job.',
         list: open.filter(needsScheduling), line: (j) => `${tradeOf(j.trade).label}${j.price != null ? ' · ' + money(j.price) : ''}` },
-      { id: 'invoice', icon: '🏁', title: 'Finished: send the invoice', why: 'The work is done but no invoice has gone out.',
-        list: jobs.filter(needsInvoice), line: (j) => `${tradeOf(j.trade).label}${j.price != null ? ' · ' + money(j.price) : ''}` },
+      { id: 'invoice', icon: '🧾', title: 'Invoices to send', why: 'The next payment on the schedule is due.',
+        list: jobs.filter(needsInvoice), line: (j) => { const p = nextDue(j); return `${p.label} · ${docs.usd(p.amount)}${p.inv ? ' · draft' : ''}`; } },
       { id: 'unpaid', icon: '💵', title: 'Waiting for payment', why: 'Invoices with money still owed.',
         list: jobs.filter((j) => owedOn(j) > 0).sort((a, b) => owedOn(b) - owedOn(a)),
         line: (j) => `${docs.usd(owedOn(j))} due${liveInvoices(j).some((d) => docs.state(d) === 'overdue') ? ' · OVERDUE' : ''}` },
@@ -230,7 +246,7 @@
       needsVisit(j) ? ['🔥 Book the rep visit', 'hot'] : null,
       j.status === 'hot' && j.visitAt && !visitPassed(j) ? [`🤝 Visit ${fmtWhen(j.visitAt)}`, ''] : null,
       needsScheduling(j) ? ['✅ Sold? Schedule the crew', 'hot'] : null,
-      needsInvoice(j) ? ['🏁 Needs invoice', 'hot'] : null,
+      needsInvoice(j) ? [`🧾 ${nextDue(j).label} invoice due`, 'hot'] : null,
       owedOn(j) > 0 ? [`💵 ${docs.usd(owedOn(j))} due`, 'hot'] : null,
       estWith(j, 'sent') ? ['⏳ Estimate sent', ''] : null,
     ].filter(Boolean);
@@ -499,6 +515,26 @@
         el('span', {}, new Date(l.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })), el('span', {}, l.text)))),
     );
 
+    // Payment schedule: each payment, its invoice, and a button to make the next one.
+    const plan = planOf(j);
+    const due = nextDue(j);
+    const invoiceStep = (p) => p.inv
+      ? { icon: '🧾', title: `Finish and send the ${p.label.toLowerCase()} invoice`, why: `${p.inv.number} is saved as a draft. ${docs.usd(p.amount)}, payment ${p.index + 1} of ${plan.length}.`, act: ['Open the invoice', () => openDoc(j.id, p.inv.id)] }
+      : { icon: '🧾', title: `Send the ${p.label.toLowerCase()} invoice: ${docs.usd(p.amount)}`, why: `Payment ${p.index + 1} of ${plan.length} on the schedule (${Number(p.pct)}%, ${p.whenLabel.toLowerCase()}).`,
+        act: [`+ Create ${p.label.toLowerCase()} invoice`, () => openDoc(j.id, null, 'invoice', null, { index: p.index })] };
+    const scheduleCard = el('section', { class: 'card stack' },
+      el('div', { class: 'row' }, el('h3', {}, '💵 Payment schedule'), el('span', { class: 'spacer' }),
+        plan.length ? el('span', { class: 'muted small' }, `Job total ${docs.usd(jobTotal(j))}`) : null),
+      plan.length ? el('ol', { class: 'sched-list' }, ...plan.map((p) => el('li', { class: p.due && (!p.covered || p.inv?.status === 'draft') ? 'due' : p.inv && docs.state(p.inv) === 'paid' ? 'paid' : '' },
+        el('span', { class: 'n' }, p.inv && docs.state(p.inv) === 'paid' ? '✓' : String(p.index + 1)),
+        el('span', { class: 'body' }, el('b', {}, p.label), el('span', { class: 'amt' }, docs.usd(p.amount)), el('span', { class: 'muted small' }, `${Number(p.pct)}% · ${p.whenLabel}`)),
+        p.inv ? el('button', { type: 'button', class: `pill ${docs.pillClass(p.inv)}`, onclick: () => openDoc(j.id, p.inv.id) }, `${p.inv.number} · ${docs.label(p.inv)}`)
+          : p.covered ? el('span', { class: 'muted small' }, 'Billed in full')
+          : el('button', { type: 'button', class: (p.due ? 'gold' : 'ghost') + ' small', onclick: () => openDoc(j.id, null, 'invoice', null, { index: p.index }) }, p.due ? 'Create invoice' : 'Bill early'))))
+        : el('p', { class: 'muted small' }, 'Once the job has a price (or an approved estimate), each payment shows up here with a button to invoice it.'),
+      el('p', { class: 'muted small' }, isStaff ? 'Change the payments and percentages in Business → Payment schedule.' : 'The office sets the payments and percentages.'),
+    );
+
     // Next step: one clear action based on where the job is.
     const sentEst = jobDocs.find((d) => d.type === 'estimate' && d.status === 'sent');
     const draftEst = jobDocs.find((d) => d.type === 'estimate' && d.status === 'draft');
@@ -565,6 +601,7 @@
     } else if (j.status === 'scheduled') {
       if (!assigned || !j.scheduledFor) step = { icon: '👷', title: 'Pick a crew and a date', act: ['Pick crew & date', focusSetup] };
       else if (j.crewResponse === 'declined') step = { icon: '🙅', title: `${crewFirst} can’t make it`, why: j.crewResponseNote ? `“${j.crewResponseNote}”` : 'Pick another crew or a new date.', act: ['Pick another crew or date', focusSetup] };
+      else if (due) step = { ...invoiceStep(due), second: ['Work has started', () => update({ status: 'in_progress' })] };
       else if (j.stage === 'on_the_way') step = { icon: '🚚', title: `${crewFirst} is on the way`, why: 'They’ll mark the work started when they get there. You can too.', act: ['▶ Work has started', () => update({ status: 'in_progress' })] };
       else step = { icon: '📲', title: `Send the job to ${crewFirst}`, why: 'Texts them the date, address, customer phone, job details and photo link. Never prices.',
         href: assigned.phone ? smsHref(assigned.phone, dispatchText) : null, label: `💬 Text job to ${crewFirst}`, second: ['Work has started', () => update({ status: 'in_progress' })] };
@@ -572,12 +609,15 @@
       step = { icon: '⏸', title: 'Paused: waiting on materials', why: 'Check the crew notes for what’s needed. Resume when the materials are in.', act: ['▶ Work resumed', () => update({ stage: null })] };
     } else if (j.status === 'in_progress' && j.stage === 'return_visit') {
       step = { icon: '🔁', title: 'Needs another visit', why: 'Set the date for the return visit, then let the customer know.', act: ['Pick the return date', focusSetup], second: ['Back to work (no visit needed)', () => update({ stage: null })] };
+    } else if (j.status === 'in_progress' && due) {
+      step = { ...invoiceStep(due), second: ['✓ Mark job finished', () => update({ status: 'completed' })] };
     } else if (j.status === 'in_progress') {
       step = { icon: '🔨', title: 'Work in progress', why: `${crewFirst || 'The crew'} can update progress from their crew login, or you can here.`, act: ['✓ Mark job finished', () => update({ status: 'completed' })] };
     } else if (j.status === 'completed') {
-      if (owedInv) step = { icon: '💵', title: `Collect payment: ${docs.usd(docs.owed(owedInv))} due`, why: `Record it when ${first} pays: cash, check, Zelle, card, Venmo or Cash App.`, act: ['Record a payment', () => openDoc(j.id, owedInv.id)] };
+      if (due) step = invoiceStep(due);
+      else if (owedInv) step = { icon: '💵', title: `Collect payment: ${docs.usd(docs.owed(owedInv))} due`, why: `Record it when ${first} pays: cash, check, Zelle, card, Venmo or Cash App.`, act: ['Record a payment', () => openDoc(j.id, owedInv.id)] };
       else if (draftInv) step = { icon: '🧾', title: `Finish and send invoice ${draftInv.number}`, act: ['Open the invoice', () => openDoc(j.id, draftInv.id)] };
-      else if (!invs.length) step = { icon: '🧾', title: 'Job finished: send the invoice', why: invoiceBase ? `It starts from approved estimate ${invoiceBase.number}.` : 'Add the work and the total.', act: ['+ Create invoice', () => openDoc(j.id, null, 'invoice', invoiceBase)] };
+      else if (!invs.length && !plan.length) step = { icon: '🧾', title: 'Job finished: send the invoice', why: invoiceBase ? `It starts from approved estimate ${invoiceBase.number}.` : 'Add the work and the total.', act: ['+ Create invoice', () => openDoc(j.id, null, 'invoice', invoiceBase)] };
       else step = { icon: '🎉', title: 'All done: paid in full', why: 'Nice work.' };
     }
     const nextCard = step ? el('section', { class: 'card next-step' },
@@ -599,7 +639,7 @@
       tabsBar.replaceChildren(...TABS.map(([id, label]) => el('button', { role: 'tab', 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } }, label)));
       const content = {
         overview: [nextCard, progress, crewNotes.length ? crewNotesCard() : null, setup, details],
-        money: [moneyCard, docsCard],
+        money: [scheduleCard, docsCard, moneyCard],
         files: [filesCard],
         history: [notesCard, crewNotesCard(), log],
       }[leadTab] || [];
@@ -706,7 +746,7 @@
   }
 
   /* ---------- estimate / invoice editor ---------- */
-  async function openDoc(jobId, docId, type, fromEstimate) {
+  async function openDoc(jobId, docId, type, fromEstimate, sched) {
     const j = jobs.find((x) => x.id === jobId);
     if (!j) return;
     const t = tradeOf(j.trade);
@@ -722,6 +762,14 @@
         dueDate: type === 'invoice' ? addDays(Number(settings.dueDays) || 14) : null,
         payLink: '', fromEstimateId: fromEstimate ? fromEstimate.id : null,
       };
+      const p = sched && planOf(j)[sched.index];
+      if (p) {
+        const est = approvedEstOf(j);
+        Object.assign(doc, {
+          number: `New ${p.label.toLowerCase()} invoice`, scheduleStep: p.index, scheduleBase: jobTotal(j), taxRate: 0, fromEstimateId: est ? est.id : null,
+          items: [{ desc: `${p.label}: ${Number(p.pct)}% of ${docs.usd(jobTotal(j))}${est ? ` (estimate ${est.number})` : ''}\n${t.label} at ${j.address}`, qty: 1, price: p.amount }],
+        });
+      }
     }
     type = doc.type;
     const isInv = type === 'invoice';
@@ -862,10 +910,31 @@
     const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
     const f = (name, label, attrs = {}, hint) => el('label', { class: 'field' }, label, hint ? el('span', { class: 'hint' }, hint) : null,
       attrs.rows ? el('textarea', { name, rows: attrs.rows, value: settings[name] ?? '' }) : el('input', { name, value: settings[name] ?? '', ...attrs }));
+    // Payment schedule editor: name, percent and when each payment is due.
+    const plan = docs.scheduleOf(settings).map((s) => ({ ...s }));
+    const planWrap = el('div', { class: 'stack', style: 'gap:8px' });
+    const planTotal = el('p', { class: 'small sched-total', style: 'font-weight:700' });
+    const pctSum = () => plan.reduce((t, s) => t + (Number(s.pct) || 0), 0);
+    const drawTotal = () => { const tot = pctSum(); planTotal.textContent = tot === 100 ? 'Adds up to 100% ✓' : `Adds up to ${tot}%. It needs to be 100%.`; planTotal.style.color = tot === 100 ? 'var(--good)' : 'var(--bad)'; };
+    function drawPlan() {
+      planWrap.replaceChildren(...plan.map((s, i) => el('div', { class: 'sched-edit' },
+        el('span', { class: 'n' }, String(i + 1)),
+        el('input', { class: 'name', value: s.label, maxlength: '40', 'aria-label': `Payment ${i + 1} name`, oninput: (e) => { s.label = e.target.value; } }),
+        el('label', { class: 'pct' }, el('input', { type: 'number', inputmode: 'decimal', min: '0', max: '100', step: '1', value: s.pct, 'aria-label': `Payment ${i + 1} percent`, oninput: (e) => { s.pct = Number(e.target.value) || 0; drawTotal(); } }), '%'),
+        el('select', { class: 'when', 'aria-label': `Payment ${i + 1} is due`, onchange: (e) => { s.when = e.target.value; } }, ...docs.WHEN.map((w) => el('option', { value: w.id, selected: w.id === s.when }, w.short))),
+        plan.length > 1 ? el('button', { type: 'button', class: 'icon x', 'aria-label': `Remove payment ${i + 1}`, onclick: () => { plan.splice(i, 1); drawPlan(); } }, '✕') : el('span', { class: 'x' })),
+      ), el('button', { type: 'button', class: 'ghost small', onclick: () => { plan.push({ label: 'Payment', pct: 0, when: 'mid' }); drawPlan(); } }, '+ Add a payment'));
+      drawTotal();
+    }
+    drawPlan();
     const form = el('form', { class: 'card stack', onsubmit: async (e) => {
       e.preventDefault();
       const fd = new FormData(form);
       const patch = Object.fromEntries([...fd.entries()].map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v]));
+      if (plan.some((s) => !String(s.label).trim())) { errorBox.textContent = 'Give each payment a name, like Deposit or Final payment.'; errorBox.hidden = false; return; }
+      if (pctSum() !== 100) { errorBox.textContent = 'The payment schedule has to add up to 100%.'; errorBox.hidden = false; planWrap.scrollIntoView({ block: 'center' }); return; }
+      errorBox.hidden = true;
+      patch.paymentSchedule = plan.map((s) => ({ label: String(s.label).trim(), pct: Number(s.pct) || 0, when: s.when }));
       patch.taxRate = Number(patch.taxRate) || 0;
       patch.dueDays = Math.max(0, Math.round(Number(patch.dueDays) || 0));
       patch.showCrewPay = fd.get('showCrewPay') === 'on';
@@ -884,6 +953,9 @@
       el('label', { class: 'row', style: 'font-weight:600;align-items:flex-start' },
         el('input', { type: 'checkbox', name: 'showCrewPay', checked: settings.showCrewPay !== false, style: 'width:22px;height:22px;flex-shrink:0;min-height:0' }),
         el('span', {}, 'Show crew their pay', el('span', { class: 'hint', style: 'display:block;font-weight:400' }, 'Crew see the “crew pay” you set on each of their jobs. They never see the customer price.'))),
+      el('h3', { style: 'margin-top:8px' }, 'Payment schedule'),
+      el('p', { class: 'muted small' }, 'How the job total is split into payments. Each estimate shows it, and each job gets an invoice for every payment as it comes due: the first when the job is sold, then as work moves along.'),
+      planWrap, planTotal,
       f('estimatePaymentInstructions', 'Payment terms & how to pay: on estimates', { rows: 5 }, 'Printed on every estimate. Keep it to your payment schedule and Zelle. No bank numbers here.'),
       f('paymentInstructions', 'Payment terms & how to pay: on invoices', { rows: 8 }, 'Printed on every invoice. Your payment schedule, Zelle, and ACH details (routing and account number).'),
       f('estimateTerms', 'Terms on estimates', { rows: 2 }),
