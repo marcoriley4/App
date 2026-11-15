@@ -726,3 +726,8 @@ input[type="date"], input[type="datetime-local"], input[type="time"] { -webkit-a
 input[type="date"]::-webkit-date-and-time-value, input[type="datetime-local"]::-webkit-date-and-time-value { text-align: left; }
 .sched-list .wait { text-align: right; max-width: 42%; line-height: 1.25; }
 .sched-list li.locked { opacity: .7; }
+/* Photos sent with a crew bill */
+.bill-photos img { width: 76px; height: 76px; }
+.bill-thumb { position: relative; display: inline-block; }
+.bill-thumb img { width: 76px; height: 76px; object-fit: cover; border-radius: 10px; display: block; }
+.bill-thumb button.x { position: absolute; top: -8px; right: -8px; width: 30px; height: 30px; min-width: 0; min-height: 0; padding: 0; line-height: 1; display: grid; place-items: center; border-radius: 50%; background: var(--surface); color: var(--text); border: 1px solid var(--muted); font-size: .8rem; }

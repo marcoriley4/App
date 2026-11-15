@@ -7,13 +7,12 @@
  * Never shows customer prices, profit, estimates, invoices or office notes.
  */
 (function () {
-  const { api, TRADES, PHOTO_STAGES, STATUSES, el, fmtWhen, find } = TH;
+  const { api, TRADES, STATUSES, el, fmtWhen, find } = TH;
   const view = document.getElementById('view');
   const nav = document.getElementById('nav');
   const params = new URLSearchParams(location.search);
   const token = params.get('t') || '';
   const invite = params.get('invite') || '';
-  let stage = 'before';
   let urls = [];
 
   if (api.mode === 'preview') document.getElementById('previewBanner').hidden = false;
@@ -89,15 +88,13 @@
       let done = 0;
       for (const f of files) {
         status.textContent = `Uploading ${done + 1} of ${files.length}…`;
-        try { await api.crew.upload(token, f, { stage, note: note.value }); done++; }
+        try { await api.crew.upload(token, f, { note: note.value }); done++; }
         catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; break; }
       }
       if (done) renderUpload(`✓ ${done} ${done === 1 ? 'file' : 'files'} sent to the Top Hat office.`);
       else status.textContent = '';
     } });
 
-    const byStage = PHOTO_STAGES.map((s) => [s, job.uploads.filter((f) => f.stage === s.id)]).filter(([, l]) => l.length);
-    const other = job.uploads.filter((f) => !find(PHOTO_STAGES, f.stage));
 
     view.replaceChildren(el('div', { class: 'stack', style: 'margin:20px 0' },
       el('section', { class: 'card stack' },
@@ -112,12 +109,6 @@
       ),
       el('section', { class: 'card stack' },
         el('h2', {}, 'Send job photos'),
-        el('div', { class: 'field' }, el('b', { style: 'font-size:.92rem' }, 'These photos are…'),
-          el('div', { class: 'seg3', role: 'radiogroup', 'aria-label': 'Photo stage' }, ...PHOTO_STAGES.map((s) =>
-            el('button', { type: 'button', role: 'radio', 'aria-checked': String(stage === s.id), onclick: (e) => {
-              stage = s.id;
-              e.currentTarget.parentElement.querySelectorAll('button').forEach((b) => b.setAttribute('aria-checked', String(b === e.currentTarget)));
-            } }, s.label)))),
         note,
         errorBox,
         el('label', { class: 'btn gold block big' }, '📷 Add photos', picker),
@@ -128,11 +119,9 @@
       notesSection(job.notes || [], async (t) => { await api.crew.addNote(token, t); renderUpload('✓ Note sent to the office.'); }),
       job.uploads.length ? el('section', { class: 'card stack' },
         el('h3', {}, `You’ve sent ${job.uploads.length} ${job.uploads.length === 1 ? 'file' : 'files'}`),
-        ...[...byStage, ...(other.length ? [[{ label: 'Other' }, other]] : [])].map(([s, list]) => el('div', { class: 'stack', style: 'gap:6px' },
-          el('b', { class: 'small' }, s.label),
-          el('div', { class: 'photo-row', style: 'flex-wrap:wrap' }, ...list.map((f) => /^image\//.test(f.mime) && f.url
-            ? el('img', { src: f.url, alt: f.note || f.name, title: f.note || f.name, style: 'width:96px;height:96px' })
-            : el('span', { class: 'pill' }, '📎 ' + f.name))))),
+        el('div', { class: 'photo-row', style: 'flex-wrap:wrap' }, ...job.uploads.map((f) => /^image\//.test(f.mime) && f.url
+          ? el('img', { src: f.url, alt: f.note || f.name, title: f.note || f.name, style: 'width:96px;height:96px' })
+          : el('span', { class: 'pill' }, '📎 ' + f.name))),
       ) : null,
     ));
   }
@@ -408,7 +397,6 @@
     const co = company.name || 'Top Hat Contracting';
     const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
     const fail = (err) => { errorBox.textContent = err.message; errorBox.hidden = false; errorBox.scrollIntoView({ block: 'center' }); };
-    const afterCount = uploads.filter((f) => f.stage === 'after').length;
 
     const go = async (change, msg, btn) => {
       if (btn) btn.disabled = true;
@@ -463,9 +451,6 @@
         btn: null, back: ['Not finished yet', () => { if (confirm(`Move ${n} back to Working?`)) go({ status: 'in_progress' }, `↩ ${n}: back to working.`); }] };
     }
     function finish() {
-      if (!afterCount && !confirm('You haven’t added any After photos yet.\n\nTap OK to finish anyway, or Cancel to add photos first.')) {
-        photoStage = 'after'; renderPhotoStage(); photosCard.scrollIntoView({ block: 'start', behavior: 'smooth' }); return;
-      }
       go({ status: 'completed' }, `✓ ${n} finished. Thanks!`);
     }
     const onWayMsg = message === 'on_the_way';
@@ -526,37 +511,6 @@
         el('div', { class: 'photo-row' }, ...j.customerPhotos.map((src, i) => el('a', { href: src, target: '_blank' }, el('img', { src, alt: `Customer photo ${i + 1}` }))))) : null,
     );
 
-    // Photos (Before / During / After), right here
-    let photoStage = j.status === 'completed' ? 'after' : j.status === 'in_progress' ? 'during' : 'before';
-    const stageSeg = el('div', { class: 'seg3', role: 'radiogroup', 'aria-label': 'Photo stage' });
-    function renderPhotoStage() {
-      stageSeg.replaceChildren(...PHOTO_STAGES.map((s) => el('button', { type: 'button', role: 'radio', 'aria-checked': String(photoStage === s.id), onclick: () => { photoStage = s.id; renderPhotoStage(); } }, s.label)));
-    }
-    renderPhotoStage();
-    const photoStatus = el('p', { class: 'muted small', role: 'status', 'aria-live': 'polite' });
-    const photoNote = el('input', { type: 'text', placeholder: 'Optional caption, e.g. “Rot behind the sink”', autocomplete: 'off' });
-    const picker = el('input', { type: 'file', accept: 'image/*,application/pdf', multiple: true, hidden: true, onchange: async (e) => {
-      const files = [...e.target.files];
-      if (!files.length || !j.crewToken) return;
-      let done = 0;
-      for (const f of files) {
-        photoStatus.textContent = `Uploading ${done + 1} of ${files.length}…`;
-        try { await api.crew.upload(j.crewToken, f, { stage: photoStage, note: photoNote.value }); done++; }
-        catch (err) { fail(err); break; }
-      }
-      if (done) renderJob(j.id, `📷 ${done} ${done === 1 ? 'photo' : 'photos'} sent to the office.`);
-    } });
-    const byStage = PHOTO_STAGES.map((s) => [s, uploads.filter((f) => f.stage === s.id)]).filter(([, l]) => l.length);
-    const photosCard = el('section', { class: 'card stack' },
-      el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, '📷 Job photos'), uploads.length ? el('span', { class: 'pill' }, String(uploads.length)) : null),
-      stageSeg, photoNote,
-      el('label', { class: 'btn gold block big' }, '📷 Take or add photos', picker),
-      photoStatus,
-      ...byStage.map(([s, list]) => el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, `${s.label} (${list.length})`),
-        el('div', { class: 'photo-row', style: 'flex-wrap:wrap' }, ...list.map((f) => /^image\//.test(f.mime) && f.url
-          ? el('img', { src: f.url, alt: f.note || f.name, title: f.note || f.name, style: 'width:84px;height:84px' })
-          : el('span', { class: 'pill' }, '📎 ' + f.name))))),
-    );
 
     // Notes with one-tap starters
     const notesCard = notesSection(notes, async (txt) => { await api.crewPortal.addNote(j.id, txt); renderJob(j.id, '✓ Note sent to the office.'); });
@@ -578,13 +532,30 @@
         const note = el('textarea', { rows: 2, maxlength: '500', placeholder: step == null ? 'What was it? e.g. 2 extra bundles of shingles, replaced rotted fascia board' : 'What did you finish? (optional)', 'aria-label': 'What you finished' });
         const amt = step == null ? el('input', { type: 'number', inputmode: 'decimal', min: '1', step: '0.01', placeholder: 'Amount ($)', 'aria-label': 'Amount' }) : null;
         const err = el('div', { class: 'error', hidden: true, role: 'alert' });
+        // Photos of the work are required, so the office can see what was done.
+        let photos = [];
+        const thumbs = el('div', { class: 'photo-row bill-photos', style: 'flex-wrap:wrap' });
+        const drawThumbs = () => {
+          thumbs.querySelectorAll('img').forEach((im) => URL.revokeObjectURL(im.src));
+          thumbs.replaceChildren(...photos.map((f, i) => el('span', { class: 'bill-thumb' },
+            el('img', { src: URL.createObjectURL(f), alt: `Photo ${i + 1}` }),
+            el('button', { type: 'button', class: 'icon x', 'aria-label': `Remove photo ${i + 1}`, onclick: () => { photos.splice(i, 1); drawThumbs(); } }, '✕'))));
+          addLbl.firstChild.textContent = photos.length ? '📷 Add more photos' : '📷 Take or add photos of the work';
+        };
+        const pick = el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, 'aria-label': 'Photos of the work', onchange: (e) => {
+          photos = [...photos, ...[...e.target.files].filter((f) => /^image\//.test(f.type))].slice(0, 12); e.target.value = ''; err.hidden = true; drawThumbs(); } });
+        const addLbl = el('label', { class: 'btn ghost block' }, el('span', {}, '📷 Take or add photos of the work'), pick);
         formWrap.replaceChildren(el('div', { class: 'bill-form stack' },
           el('b', {}, step == null ? 'Bill for extra work or materials' : `Bill for “${label}”: ${usd(amount)}`),
-          amt, note, err,
+          amt, note,
+          el('div', { class: 'stack', style: 'gap:6px' }, el('span', { class: 'small', style: 'font-weight:700' }, 'Photos of what you did (required)'), thumbs, addLbl),
+          err,
           el('button', { type: 'button', class: 'gold block', onclick: async (e) => {
-            e.currentTarget.disabled = true;
-            try { const b = await api.crewPortal.bill(j.id, { step, amount: amt ? amt.value : null, note: note.value }); renderJob(j.id, `🧾 Bill sent: ${usd(b.amount)} for “${b.label}”. The office will approve it and pay you.`); }
-            catch (ex) { err.textContent = ex.message; err.hidden = false; e.currentTarget.disabled = false; }
+            const btn = e.currentTarget;
+            if (!photos.length) { err.textContent = 'Add at least one photo of the work so the office can see what you did.'; err.hidden = false; return; }
+            btn.disabled = true; btn.textContent = `Sending ${photos.length} ${photos.length === 1 ? 'photo' : 'photos'}…`;
+            try { const b = await api.crewPortal.bill(j.id, { step, amount: amt ? amt.value : null, note: note.value, photos, token: j.crewToken }); renderJob(j.id, `🧾 Bill sent: ${usd(b.amount)} for “${b.label}” with ${photos.length} ${photos.length === 1 ? 'photo' : 'photos'}. The office will approve it and pay you.`); }
+            catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; btn.textContent = '🧾 Send bill to Top Hat'; }
           } }, '🧾 Send bill to Top Hat'),
           el('button', { type: 'button', class: 'link', onclick: () => formWrap.replaceChildren() }, 'Cancel')));
         (amt || note).focus();
@@ -592,12 +563,13 @@
       const row = (num, label, sub, amount, b, action) => el('li', { class: b?.status === 'paid' ? 'paid' : action?.tagName === 'BUTTON' ? 'due' : action ? 'locked' : '' },
         el('span', { class: 'n' }, b?.status === 'paid' ? '✓' : num),
         el('span', { class: 'body' }, el('b', {}, label), el('span', { class: 'amt' }, usd(amount)), el('span', { class: 'muted small' }, sub),
+          b?.photos ? el('span', { class: 'muted small' }, `📷 ${b.photos} ${b.photos === 1 ? 'photo' : 'photos'} sent`) : null,
           b?.status === 'declined' && b.reason ? el('span', { class: 'small bad-text' }, `Declined: ${b.reason}`) : null),
         b && (b.status !== 'declined' || !action) ? el('span', { class: `pill ${PILL[b.status][1]}` }, b.status === 'paid' && b.paidDate ? `Paid ${b.paidDate.slice(5).replace('-', '/')}` : PILL[b.status][0]) : action || el('span', { class: 'muted small' }, 'Not yet'));
       const paidSoFar = paidOf(j);
       return el('section', { class: 'card stack' },
         el('div', { class: 'row' }, el('h3', {}, '💵 Bill Top Hat'), el('span', { class: 'spacer' }), el('span', { class: 'muted small' }, `${usd(paidSoFar)} of ${usd(earnedOf(j))} paid`)),
-        el('p', { class: 'muted small' }, 'Bill for each part as you finish it. The office approves it and pays you.'),
+        el('p', { class: 'muted small' }, 'Bill for each part as you finish it, with photos of the work. The office approves it and pays you.'),
         el('ol', { class: 'sched-list' },
           ...steps.map((p) => { const b = billOf(p.index); const open = !b || b.status === 'declined';
             const can = open && p.reached && prevHandled(j, p.index);
@@ -614,7 +586,7 @@
       el('div', { class: 'row' }, el('a', { class: 'btn ghost small', href: j.status === 'completed' ? '#/done' : '#/' }, j.status === 'completed' ? '← Completed' : '← My jobs'), el('span', { class: 'spacer' }), el('span', { class: `pill s-${j.status}` }, find(STATUSES, j.status).label)),
       el('div', {}, el('h1', { style: 'font-size:1.45rem' }, `${t.icon} ${t.label}`), el('p', { class: 'muted' }, `${n} · ${j.customerName}`)),
       message && !onWayMsg ? el('div', { class: 'callout' }, message) : null,
-      errorBox, nextCard, onWayMsg ? textsBox : null, quick, billCard, progress, details, photosCard, notesCard,
+      errorBox, nextCard, onWayMsg ? textsBox : null, quick, billCard, progress, details, notesCard,
     ));
     window.scrollTo(0, 0);
   }

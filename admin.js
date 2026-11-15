@@ -607,6 +607,11 @@
             el('div', { class: 'row' }, el('b', { style: 'flex:1' }, `${b.label} · ${docs.usd(b.amount)}`), el('span', { class: `pill ${PILL[b.status][1]}` }, PILL[b.status][0])),
             el('div', { class: 'muted small' }, `Billed by ${b.by} · ${ago(b.at)}${b.paidDate ? ` · paid ${docs.fmtDate(b.paidDate)} (${b.paidMethod})` : ''}`),
             b.note ? el('div', { class: 'small' }, `“${b.note}”`) : null,
+            (() => { const pics = files.filter((f) => f.billId === b.id);
+              return pics.length ? el('div', { class: 'photo-row bill-photos', style: 'flex-wrap:wrap' }, ...pics.map((f, i) => f.url && /^image\//.test(f.mime)
+                ? el('a', { href: f.url, target: '_blank', rel: 'noopener' }, el('img', { src: f.url, alt: `${b.label} photo ${i + 1}` }))
+                : el('span', { class: 'pill' }, '📎 ' + f.name)))
+                : null; })(),
             b.status === 'declined' && b.reason ? el('div', { class: 'small bad-text' }, `Declined: ${b.reason}`) : null,
             b.status === 'submitted' ? el('div', { class: 'row' },
               el('button', { type: 'button', class: 'gold small', style: 'flex:1', onclick: act(b, 'approve') }, '✓ Approve'),

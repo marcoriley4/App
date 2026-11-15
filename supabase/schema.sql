@@ -649,6 +649,9 @@ create table public.crew_bills (
   resolved_by text not null default ''
 );
 create index on public.crew_bills (job_id);
+-- Photos the contractor sent with a bill (required), so the office can see the work.
+alter table public.job_files add column bill_id uuid references public.crew_bills(id) on delete set null;
+create index on public.job_files (bill_id);
 alter table public.crew_bills enable row level security;
 create policy "staff reads crew bills" on public.crew_bills for select to authenticated using (public.is_staff());
 revoke all on public.crew_bills from anon;
@@ -818,12 +821,14 @@ begin
 end $$;
 
 -- Crew: bill Top Hat for a step of the crew pay schedule (amount worked out here), or for extra work/materials.
-create function public.crew_bill(p_job uuid, p_step int, p_amount numeric, p_note text) returns jsonb
+create function public.crew_bill(p_job uuid, p_step int, p_amount numeric, p_note text, p_paths text[]) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare cid uuid := public.my_crew(); j record; pay numeric; steps jsonb; n int; s jsonb; i int := 0; amt numeric; left_amt numeric; show_pay boolean;
-  who text; lbl text; nt text := left(trim(coalesce(p_note, '')), 500); rec public.crew_bills;
+  who text; lbl text; nt text := left(trim(coalesce(p_note, '')), 500); rec public.crew_bills; linked int;
 begin
   if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
+  if coalesce(cardinality(p_paths), 0) = 0 then raise exception 'Add at least one photo of the work so the office can see what you did.'; end if;
+  if cardinality(p_paths) > 12 then raise exception 'Send up to 12 photos with a bill.'; end if;
   select x.id, x.status, x.halfway_at into j from public.jobs x where x.id = p_job and x.contractor_id = cid and x.status in ('scheduled', 'in_progress', 'completed');
   if j.id is null then raise exception 'That job isn’t assigned to you.'; end if;
   select coalesce((data->>'showCrewPay')::boolean, true), coalesce(data->'crewPaySchedule', '[]'::jsonb) into show_pay, steps from public.settings where id = 1;
@@ -863,8 +868,14 @@ begin
     lbl := left(coalesce(nullif(trim(s->>'label'), ''), 'Payment ' || (p_step + 1)), 60);
   end if;
   insert into public.crew_bills (job_id, contractor_id, step, label, amount, note, by_name) values (p_job, cid, p_step, lbl, amt, nt, coalesce(who, 'Crew')) returning * into rec;
-  perform public.log_event(p_job, '🧾 ' || coalesce(who, 'Crew') || ' billed ' || public.usd(amt) || ' for “' || lbl || '”' || case when nt <> '' then ': ' || nt else '' end);
-  return jsonb_build_object('id', rec.id, 'label', rec.label, 'amount', rec.amount, 'step', rec.step, 'status', rec.status);
+  -- Claim the photos they just uploaded for this job (only their own, not already on another bill).
+  update public.job_files set bill_id = rec.id, note = left('Bill: ' || lbl, 500)
+   where job_id = p_job and contractor_id = cid and source = 'crew' and kind = 'photo' and bill_id is null and path = any(p_paths);
+  get diagnostics linked = row_count;
+  if linked = 0 then raise exception 'Add at least one photo of the work so the office can see what you did.'; end if;
+  perform public.log_event(p_job, '🧾 ' || coalesce(who, 'Crew') || ' billed ' || public.usd(amt) || ' for “' || lbl || '” with ' || linked || case when linked = 1 then ' photo' else ' photos' end
+    || case when nt <> '' then ': ' || nt else '' end);
+  return jsonb_build_object('id', rec.id, 'label', rec.label, 'amount', rec.amount, 'step', rec.step, 'status', rec.status, 'photos', linked);
 end $$;
 
 -- Crew: "I'm halfway done." Unlocks the halfway bill and tells the office.
@@ -1008,7 +1019,8 @@ begin
                     from public.job_files f where f.job_id = j.id and f.source = 'crew' and f.contractor_id = cid),
       'crew_paid_date', case when coalesce(show_pay, true) then (select k.crew_paid_date from public.job_costs k where k.job_id = j.id) end,
       'bills', case when coalesce(show_pay, true) then (select coalesce(jsonb_agg(jsonb_build_object('id', cb.id, 'step', cb.step, 'label', cb.label, 'amount', cb.amount, 'note', cb.note,
-                  'status', cb.status, 'reason', cb.reason, 'paid_date', cb.paid_date, 'paid_method', cb.paid_method, 'created_at', cb.created_at) order by cb.created_at), '[]'::jsonb)
+                  'status', cb.status, 'reason', cb.reason, 'paid_date', cb.paid_date, 'paid_method', cb.paid_method, 'created_at', cb.created_at,
+                  'photos', (select count(*) from public.job_files f where f.bill_id = cb.id)) order by cb.created_at), '[]'::jsonb)
                   from public.crew_bills cb where cb.job_id = j.id and cb.contractor_id = cid) else '[]'::jsonb end,
       'crew_paid_method', case when coalesce(show_pay, true) then (select k.crew_paid_method from public.job_costs k where k.job_id = j.id) end,
       'notes', (select coalesce(jsonb_agg(jsonb_build_object('id', n.id, 'text', n.text, 'created_at', n.created_at) order by n.created_at), '[]'::jsonb)
@@ -1207,7 +1219,7 @@ grant execute on function public.is_staff(), public.owns_job(text), public.custo
   public.office_can_access_path(text), public.log_call(uuid, text, text), public.staff_invite_sales(uuid), public.staff_revoke_sales(uuid),
   public.claim_sales_invite(text), public.office_crew_list(), public.authorize_permit(uuid, text), public.can_design(uuid),
   public.report_payment(uuid, numeric, text, text, text, text), public.resolve_payment_report(uuid, boolean),
-  public.crew_bill(uuid, int, numeric, text), public.staff_crew_bill(uuid, text, text, date, text), public.crew_halfway(uuid) to authenticated;
+  public.crew_bill(uuid, int, numeric, text, text[]), public.staff_crew_bill(uuid, text, text, date, text), public.crew_halfway(uuid) to authenticated;
 grant execute on function public.sales_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_add_note(text, uuid, text) to anon, authenticated;

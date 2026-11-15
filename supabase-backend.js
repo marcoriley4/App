@@ -20,7 +20,7 @@
 
   /* ---------- helpers ---------- */
   const mapBill = (b) => ({ id: b.id, step: b.step ?? null, label: b.label, amount: Number(b.amount), note: b.note || '', status: b.status, reason: b.reason || '',
-    paidDate: b.paid_date || null, paidMethod: b.paid_method || '', by: b.by_name || '', at: Date.parse(b.created_at) || null });
+    paidDate: b.paid_date || null, paidMethod: b.paid_method || '', by: b.by_name || '', at: Date.parse(b.created_at) || null, photos: Number(b.photos) || 0 });
   const mapDesign = (v) => v && ({ id: v.id, parentId: v.parent_id || null, source: v.source, prompt: v.prompt || '', by: v.by_name || '', at: Date.parse(v.created_at) || Date.now(), chosen: !!v.chosen, url: v.url || null });
   async function designCall(body) {
     const { data, error } = await sb.functions.invoke('design', { body });
@@ -70,7 +70,7 @@
   }
   const mapFile = (r, url) => ({
     id: r.id, name: r.name, mime: r.mime, size: Number(r.size) || 0, kind: r.kind, stage: r.stage || '', note: r.note || '',
-    shared: !!r.shared, uploaded: ms(r.uploaded_at), by: r.by_name, source: r.source, url: url || null,
+    shared: !!r.shared, uploaded: ms(r.uploaded_at), by: r.by_name, source: r.source, billId: r.bill_id || null, url: url || null,
   });
 
   const mapDoc = (r) => ({
@@ -553,8 +553,21 @@
         }));
       },
       async halfway(jobId) { must(await sb.rpc('crew_halfway', { p_job: jobId })); },
-      async bill(jobId, { step = null, amount = null, note = '' } = {}) {
-        const r = must(await sb.rpc('crew_bill', { p_job: jobId, p_step: step, p_amount: amount == null || amount === '' ? null : Number(amount), p_note: note || '' }));
+      async bill(jobId, { step = null, amount = null, note = '', photos = [], token = '' } = {}) {
+        photos = [...(photos || [])];
+        if (!photos.length) throw new Error('Add at least one photo of the work so the office can see what you did.');
+        if (photos.length > 12) throw new Error('Send up to 12 photos with a bill.');
+        if (!token) throw new Error('Ask the office to reassign this job to you, then try again.');
+        photos.forEach(tooBig);
+        // Upload the photos into the job's files first; the bill then claims them.
+        const paths = [];
+        for (const f of photos) {
+          const path = `crew/${token}/${rid()}-${safeName(f.name || 'photo.jpg')}`;
+          await upload(path, f);
+          must(await sb.rpc('crew_add_file', { p_token: token, p_path: path, p_name: f.name || 'photo.jpg', p_mime: f.type || 'image/jpeg', p_size: f.size, p_stage: '', p_note: 'Bill photo' }));
+          paths.push(path);
+        }
+        const r = must(await sb.rpc('crew_bill', { p_job: jobId, p_step: step, p_amount: amount == null || amount === '' ? null : Number(amount), p_note: note || '', p_paths: paths }));
         return { ...r, amount: Number(r.amount) };
       },
       async addNote(jobId, text) {

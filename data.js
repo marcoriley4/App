@@ -1358,8 +1358,15 @@
         if (!j.halfwayAt) { j.halfwayAt = Date.now(); j.log.push({ at: Date.now(), text: `½ Halfway done (by ${u.name}, crew)` }); writeDb(d); }
       },
       // Crew bills Top Hat for a step on the crew pay schedule, or for extra work/materials.
-      async bill(jobId, { step = null, amount, note = '' } = {}) {
+      async bill(jobId, { step = null, amount, note = '', photos = [] } = {}) {
         const { d, c, u } = await requireCrew();
+        photos = [...(photos || [])];
+        if (!photos.length) throw new Error('Add at least one photo of the work so the office can see what you did.');
+        if (photos.length > 12) throw new Error('Send up to 12 photos with a bill.');
+        for (const f of photos) {
+          if (!/^image\//.test(f.type || '')) throw new Error(`"${f.name}" isn’t a photo.`);
+          if (f.size > MAX_FILE_MB * 1024 * 1024) throw new Error(`"${f.name}" is over ${MAX_FILE_MB} MB.`);
+        }
         const j = d.jobs.find((x) => x.id === jobId && x.contractorId === c.id && ['scheduled', 'in_progress', 'completed'].includes(x.status));
         if (!j) throw new Error('That job isn’t assigned to you.');
         if (d.settings.showCrewPay === false) throw new Error('Ask the office about billing for this job.');
@@ -1385,9 +1392,16 @@
           steps.forEach((x, i) => { const a = i === steps.length - 1 ? left : Math.round(j.crewPay * (Number(x.pct) || 0)) / 100; left = Math.round((left - a) * 100) / 100; if (i === step) amt = a; });
           rec = { label: s.label, step, amount: amt };
         }
-        const bill = { id: uid(), ...rec, note, contractorId: c.id, by: u.name, at: Date.now(), status: 'submitted', reason: '', paidDate: null, paidMethod: '' };
+        const bill = { id: uid(), ...rec, note, contractorId: c.id, by: u.name, at: Date.now(), status: 'submitted', reason: '', paidDate: null, paidMethod: '', photos: photos.length };
+        // The photos go into the job's files, tied to this bill.
+        for (const [i, f] of photos.entries()) {
+          const meta = { id: uid(), name: f.name || `bill-photo-${i + 1}.jpg`, mime: f.type, size: f.size, kind: 'photo', shared: false, uploaded: Date.now(),
+            source: 'crew', contractorId: c.id, by: u.name, stage: '', note: `Bill: ${bill.label}`, billId: bill.id };
+          await blobs.put(meta.id, f);
+          j.files.push(meta);
+        }
         bills.push(bill);
-        j.log.push({ at: Date.now(), text: `🧾 ${u.name} billed ${usd(bill.amount)} for “${bill.label}”${note ? `: ${note}` : ''}` });
+        j.log.push({ at: Date.now(), text: `🧾 ${u.name} billed ${usd(bill.amount)} for “${bill.label}” with ${photos.length} ${photos.length === 1 ? 'photo' : 'photos'}${note ? `: ${note}` : ''}` });
         writeDb(d);
         return { ...bill };
       },
