@@ -19,6 +19,8 @@
   const { guessKind, normEmail, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS } = TH._util;
 
   /* ---------- helpers ---------- */
+  const mapBill = (b) => ({ id: b.id, step: b.step ?? null, label: b.label, amount: Number(b.amount), note: b.note || '', status: b.status, reason: b.reason || '',
+    paidDate: b.paid_date || null, paidMethod: b.paid_method || '', by: b.by_name || '', at: Date.parse(b.created_at) || null });
   const mapDesign = (v) => v && ({ id: v.id, parentId: v.parent_id || null, source: v.source, prompt: v.prompt || '', by: v.by_name || '', at: Date.parse(v.created_at) || Date.now(), chosen: !!v.chosen, url: v.url || null });
   async function designCall(body) {
     const { data, error } = await sb.functions.invoke('design', { body });
@@ -185,6 +187,9 @@
           u.role === 'staff' ? fetchAll(() => sb.from('job_costs').select('job_id, crew_pay, crew_paid_date, crew_paid_method, crew_paid_note')) : Promise.resolve([]),
         ]);
         const designRows = await fetchAll(() => sb.from('design_versions').select('id, job_id, chosen, source'));
+        const billRows = u.role === 'staff' ? await fetchAll(() => sb.from('crew_bills').select('*').order('created_at')) : [];
+        const billsBy = {};
+        billRows.forEach((b) => { (billsBy[b.job_id] ||= []).push(mapBill(b)); });
         const designsBy = {};
         designRows.forEach((v) => { (designsBy[v.job_id] ||= []).push({ id: v.id, chosen: v.chosen, source: v.source }); });
         const costBy = Object.fromEntries(costs.map((c) => [c.job_id, c.crew_pay]));
@@ -205,7 +210,7 @@
             contractorId: j.contractor_id, scheduledFor: local16(j.scheduled_for), visitAt: local16(j.visit_at),
             permit: { status: j.permit_status || 'none', number: j.permit_number || '', authorizedBy: j.permit_authorized_by || '', authorizedAt: ms(j.permit_authorized_at) || null,
               portalUrl: p.permit_portal || '', fee: p.permit_fee == null ? null : Number(p.permit_fee) },
-            designs: designsBy[j.id] || [],
+            designs: designsBy[j.id] || [], crewBills: billsBy[j.id] || [],
             salesId: j.sales_id || null,
             price: num(p.price), crewPay: num(costBy[j.id]), crewPaid: paidBy[j.id] || null, notes: p.notes || '', crewToken: p.crew_token || null,
             files: filesBy[j.id] || [], docs: docsBy[j.id] || [],
@@ -255,6 +260,10 @@
       async authorizePermit(jobId, name) {
         if (!(await me())) throw new Error('Please log in.');
         must(await sb.rpc('authorize_permit', { p_job: jobId, p_name: name || '' }));
+      },
+      async crewBill(jobId, billId, action, opts = {}) {
+        await requireStaff();
+        must(await sb.rpc('staff_crew_bill', { p_bill: billId, p_action: action, p_reason: opts.reason || '', p_date: opts.date || null, p_method: opts.method || '' }));
       },
       async logCall(id, outcome, note = '') {
         await requireOffice();
@@ -539,8 +548,13 @@
           crewToken: j.crew_token || null, crewPay: num(j.crew_pay), photos: Number(j.photos) || 0,
           uploads: (j.uploads || []).map((f) => ({ name: f.name, stage: f.stage || '', mime: f.mime || '', uploaded: ms(f.uploaded_at), url: photoUrls[f.path] || null })),
           crewPaid: j.crew_paid_date ? { date: j.crew_paid_date, method: j.crew_paid_method || 'Other' } : null,
+          crewBills: (j.bills || []).map(mapBill),
           notes: (j.notes || []).map((n) => ({ id: n.id, at: ms(n.created_at), text: n.text })),
         }));
+      },
+      async bill(jobId, { step = null, amount = null, note = '' } = {}) {
+        const r = must(await sb.rpc('crew_bill', { p_job: jobId, p_step: step, p_amount: amount == null || amount === '' ? null : Number(amount), p_note: note || '' }));
+        return { ...r, amount: Number(r.amount) };
       },
       async addNote(jobId, text) {
         must(await sb.rpc('crew_add_note', { p_token: null, p_job: jobId, p_text: text }));

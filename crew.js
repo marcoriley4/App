@@ -18,6 +18,16 @@
 
   if (api.mode === 'preview') document.getElementById('previewBanner').hidden = false;
   const usd = (n) => '$' + Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  // Money on a job: the crew pay plus approved extras; paid = bills paid so far (or the whole job if the office marked it paid).
+  const extrasOf = (j, sts) => (j.crewBills || []).filter((b) => b.step == null && sts.includes(b.status)).reduce((t, b) => t + Number(b.amount), 0);
+  const earnedOf = (j) => (Number(j.crewPay) || 0) + extrasOf(j, ['approved', 'paid']);
+  const paidOf = (j) => {
+    const billsPaid = (j.crewBills || []).filter((b) => b.status === 'paid').reduce((t, b) => t + Number(b.amount), 0);
+    return j.crewPaid ? Math.max(billsPaid, (Number(j.crewPay) || 0) + extrasOf(j, ['paid'])) : billsPaid;
+  };
+  // Steps on the crew pay schedule they've reached but not billed yet.
+  const readyToBill = (j, company) => j.crewPay == null ? [] : TH.docs.crewSchedule(company, j.crewPay, j.status)
+    .filter((p) => p.reached && !(j.crewBills || []).some((b) => b.step === p.index && b.status !== 'declined'));
   const sessionStorageGet = (k) => { try { return sessionStorage.getItem(k); } catch (e) { return null; } };
   const sessionStorageSet = (k, v) => { try { sessionStorage.setItem(k, String(v)); } catch (e) { /* fine */ } };
   const tradeOf = (id) => find(TRADES, id) || TRADES.at(-1);
@@ -182,7 +192,7 @@
   }
 
   async function renderPortal(message, which = 'active') {
-    const { me, jobs, error } = await loadCrew();
+    const { me, jobs, company = {}, error } = await loadCrew();
     if (!me) return renderLogin(error);
     const tk = todayKey();
     const notDone = jobs.filter((j) => j.status !== 'completed')
@@ -192,7 +202,8 @@
     // Every finished job is kept here, newest first.
     const doneAt = (j) => j.finishedAt || (j.scheduledFor ? Date.parse(j.scheduledFor) : 0);
     const finished = jobs.filter((j) => j.status === 'completed').sort((a, b) => doneAt(b) - doneAt(a));
-    const pay = (list) => list.reduce((t, j) => t + (Number(j.crewPay) || 0), 0);
+    const pay = (list) => list.reduce((t, j) => t + earnedOf(j), 0);
+    const paidSum = (list) => list.reduce((t, j) => t + paidOf(j), 0);
     const showPay = jobs.some((j) => j.crewPay != null);
     const toConfirm = notDone.filter((j) => j.status === 'scheduled' && !j.crewResponse).length;
 
@@ -215,7 +226,8 @@
           el('b', {}, `${t.icon} ${t.label} · TH-${j.number}`),
           el('span', { class: 'muted small' }, `${j.customerName ? j.customerName + ' · ' : ''}${j.address}${j.zip ? ' ' + j.zip : ''}`),
           el('span', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, el('span', { class: 'flag ' + chip[1] }, chip[0]),
-            fin && j.crewPay != null ? el('span', { class: 'flag' + (j.crewPaid ? ' paid' : '') }, `${usd(j.crewPay)}${j.crewPaid ? ' · paid ✓' : ' · not paid yet'}`) : null)),
+            fin && j.crewPay != null ? el('span', { class: 'flag' + (paidOf(j) >= earnedOf(j) ? ' paid' : '') }, `${usd(earnedOf(j))}${paidOf(j) >= earnedOf(j) ? ' · paid ✓' : paidOf(j) ? ` · ${usd(paidOf(j))} paid` : ' · not paid yet'}`) : null,
+            readyToBill(j, company).length ? el('span', { class: 'flag hot' }, '🧾 Ready to bill') : null)),
         el('span', { class: 'chev', 'aria-hidden': 'true' }, '›'));
     };
     const section = (title, list, empty) => [el('h2', { style: 'margin-top:6px' }, title),
@@ -242,14 +254,16 @@
       const say = (t) => { note.textContent = t; note.hidden = !t; };
       const fileSafe = (s) => String(s || '').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-');
       const dateStr = (ms) => (ms ? new Date(ms).toISOString().slice(0, 10) : '');
+      const lastPaid = (j) => { const b = (j.crewBills || []).filter((x) => x.status === 'paid').sort((a, c) => String(a.paidDate).localeCompare(String(c.paidDate))).at(-1);
+        return b ? { date: b.paidDate, method: b.paidMethod } : j.crewPaid || null; };
       const rowsFor = (list) => [
-        ['Job #', 'Finished', 'Customer', 'Address', 'ZIP', 'Type of work', ...(showPay ? ['Pay', 'Paid on', 'Paid by'] : []), 'Photos'],
+        ['Job #', 'Finished', 'Customer', 'Address', 'ZIP', 'Type of work', ...(showPay ? ['Pay', 'Paid to you', 'Last paid on', 'Paid by'] : []), 'Photos'],
         ...list.map((j) => [`TH-${j.number}`, dateStr(doneAt(j)), j.customerName, j.address, j.zip, tradeOf(j.trade).label,
-          ...(showPay ? [j.crewPay ?? '', j.crewPaid?.date || '', j.crewPaid?.method || ''] : []), (j.uploads || []).length]),
+          ...(showPay ? [earnedOf(j) || '', paidOf(j) || '', lastPaid(j)?.date || '', lastPaid(j)?.method || ''] : []), (j.uploads || []).length]),
       ];
       const draw = () => {
         const list = finished.filter((j) => yearOf(j) === year);
-        const paid = list.filter((j) => j.crewPaid);
+        const owedNow = (l) => l.reduce((t, j) => t + Math.max(0, earnedOf(j) - paidOf(j)), 0);
         const photos = list.reduce((t, j) => t + (j.uploads || []).filter((f) => f.url).length, 0);
         const statement = () => {
           const sheet = el('article', { class: 'doc-sheet permit-sheet' },
@@ -259,12 +273,12 @@
             el('table', { class: 'doc-items' },
               el('thead', {}, el('tr', {}, ...['Job', 'Finished', 'Customer & address', ...(showPay ? ['Pay', 'Paid'] : [])].map((h, i) => el('th', { class: i > 2 ? 'num' : '' }, h)))),
               el('tbody', {}, ...list.map((j) => el('tr', {}, el('td', {}, `TH-${j.number}`), el('td', {}, new Date(doneAt(j)).toLocaleDateString()),
-                el('td', {}, `${j.customerName}, ${j.address}`), ...(showPay ? [el('td', { class: 'num' }, j.crewPay != null ? usd(j.crewPay) : '—'),
-                  el('td', { class: 'num' }, j.crewPaid ? `${j.crewPaid.date} · ${j.crewPaid.method}` : 'Not yet')] : []))))),
+                el('td', {}, `${j.customerName}, ${j.address}`), ...(showPay ? [el('td', { class: 'num' }, earnedOf(j) ? usd(earnedOf(j)) : '—'),
+                  el('td', { class: 'num' }, paidOf(j) ? `${usd(paidOf(j))}${lastPaid(j) ? ` · ${lastPaid(j).date}` : ''}` : 'Not yet')] : []))))),
             showPay ? el('div', { class: 'doc-totals' }, el('dl', {},
               el('dt', {}, 'Earned'), el('dd', {}, usd(pay(list))),
-              el('dt', { class: 'big' }, 'Paid to you'), el('dd', { class: 'big' }, usd(pay(paid))),
-              el('dt', {}, 'Not paid yet'), el('dd', {}, usd(pay(list.filter((j) => !j.crewPaid)))))) : null,
+              el('dt', { class: 'big' }, 'Paid to you'), el('dd', { class: 'big' }, usd(paidSum(list))),
+              el('dt', {}, 'Not paid yet'), el('dd', {}, usd(owedNow(list))))) : null,
             el('footer', { class: 'doc-foot' }, `Jobs ${me.name} completed for Top Hat Contracting in ${year}`));
           TH.docs.viewSheet(sheet, `${year} statement`);
         };
@@ -295,8 +309,8 @@
           el('div', { class: 'kpis three' },
             el('div', { class: 'kpi' }, el('b', {}, String(list.length)), el('span', {}, 'Jobs done')),
             showPay ? el('div', { class: 'kpi' }, el('b', {}, usd(pay(list))), el('span', {}, 'Earned')) : el('div', { class: 'kpi' }, el('b', {}, String(photos)), el('span', {}, 'Photos')),
-            showPay ? el('div', { class: 'kpi' }, el('b', {}, usd(pay(paid))), el('span', {}, 'Paid to you')) : null),
-          showPay && list.some((j) => !j.crewPaid && j.crewPay != null) ? el('p', { class: 'muted small' }, `${usd(pay(list.filter((j) => !j.crewPaid)))} not paid yet. The office marks each job paid when they pay you.`) : null,
+            showPay ? el('div', { class: 'kpi' }, el('b', {}, usd(paidSum(list))), el('span', {}, 'Paid to you')) : null),
+          showPay && owedNow(list) > 0 ? el('p', { class: 'muted small' }, `${usd(owedNow(list))} not paid yet. Bill Top Hat from each job as you finish each part.`) : null,
           el('section', { class: 'card stack' },
             el('h3', {}, '📒 Take your records with you'),
             el('p', { class: 'muted small' }, 'For your taxes or your books. Works with Excel, Numbers, Google Sheets, or just hand it to your accountant.'),
@@ -545,11 +559,51 @@
       ...['Need more materials: ', 'Customer not home.', 'Found extra work: ', 'Running late. ETA '].map((txt) =>
         el('button', { type: 'button', class: 'chip', onclick: () => { ta.value = txt; ta.focus(); ta.setSelectionRange(txt.length, txt.length); } }, txt.replace(/[:.]?\s*(ETA\s*)?$/, '')))), ta);
 
+    // Bill Top Hat: each step of the crew pay schedule, plus extra work or materials.
+    const billCard = (() => {
+      if (company.showCrewPay === false) return null;
+      const bills = j.crewBills || [];
+      if (j.crewPay == null && !bills.length) return el('section', { class: 'card stack' }, el('h3', {}, '💵 Bill Top Hat'), el('p', { class: 'muted small' }, 'The office hasn’t set your pay for this job yet. Once they do, you can bill for each part as you finish it.'));
+      const steps = j.crewPay != null ? TH.docs.crewSchedule(company, j.crewPay, j.status) : [];
+      const PILL = { submitted: ['Sent · waiting', ''], approved: ['Approved', 's-scheduled'], paid: ['Paid ✓', 's-completed'], declined: ['Declined', 's-lost'] };
+      const billOf = (i) => bills.filter((b) => b.step === i).at(-1);
+      const formWrap = el('div');
+      const openForm = (step, label, amount) => {
+        const note = el('textarea', { rows: 2, maxlength: '500', placeholder: step == null ? 'What was it? e.g. 2 extra bundles of shingles, replaced rotted fascia board' : 'What did you finish? (optional)', 'aria-label': 'What you finished' });
+        const amt = step == null ? el('input', { type: 'number', inputmode: 'decimal', min: '1', step: '0.01', placeholder: 'Amount ($)', 'aria-label': 'Amount' }) : null;
+        const err = el('div', { class: 'error', hidden: true, role: 'alert' });
+        formWrap.replaceChildren(el('div', { class: 'bill-form stack' },
+          el('b', {}, step == null ? 'Bill for extra work or materials' : `Bill for “${label}”: ${usd(amount)}`),
+          amt, note, err,
+          el('button', { type: 'button', class: 'gold block', onclick: async (e) => {
+            e.currentTarget.disabled = true;
+            try { const b = await api.crewPortal.bill(j.id, { step, amount: amt ? amt.value : null, note: note.value }); renderJob(j.id, `🧾 Bill sent: ${usd(b.amount)} for “${b.label}”. The office will approve it and pay you.`); }
+            catch (ex) { err.textContent = ex.message; err.hidden = false; e.currentTarget.disabled = false; }
+          } }, '🧾 Send bill to Top Hat'),
+          el('button', { type: 'button', class: 'link', onclick: () => formWrap.replaceChildren() }, 'Cancel')));
+        (amt || note).focus();
+      };
+      const row = (num, label, sub, amount, b, action) => el('li', { class: b?.status === 'paid' ? 'paid' : action ? 'due' : '' },
+        el('span', { class: 'n' }, b?.status === 'paid' ? '✓' : num),
+        el('span', { class: 'body' }, el('b', {}, label), el('span', { class: 'amt' }, usd(amount)), el('span', { class: 'muted small' }, sub),
+          b?.status === 'declined' && b.reason ? el('span', { class: 'small bad-text' }, `Declined: ${b.reason}`) : null),
+        b && (b.status !== 'declined' || !action) ? el('span', { class: `pill ${PILL[b.status][1]}` }, b.status === 'paid' && b.paidDate ? `Paid ${b.paidDate.slice(5).replace('-', '/')}` : PILL[b.status][0]) : action || el('span', { class: 'muted small' }, 'Not yet'));
+      const paidSoFar = paidOf(j);
+      return el('section', { class: 'card stack' },
+        el('div', { class: 'row' }, el('h3', {}, '💵 Bill Top Hat'), el('span', { class: 'spacer' }), el('span', { class: 'muted small' }, `${usd(paidSoFar)} of ${usd(earnedOf(j))} paid`)),
+        el('p', { class: 'muted small' }, 'Bill for each part as you finish it. The office approves it and pays you.'),
+        el('ol', { class: 'sched-list' },
+          ...steps.map((p) => { const b = billOf(p.index); const can = p.reached && (!b || b.status === 'declined');
+            return row(String(p.index + 1), p.label, `${Number(p.pct)}% · ${p.whenLabel}`, p.amount, b, can ? el('button', { type: 'button', class: 'gold small', onclick: () => openForm(p.index, p.label, p.amount) }, 'Bill now') : null); }),
+          ...bills.filter((b) => b.step == null).map((b) => row('+', 'Extra work / materials', b.note || '', b.amount, b, null))),
+        formWrap,
+        el('button', { type: 'button', class: 'ghost small', onclick: () => openForm(null, '', 0) }, '+ Bill for extra work or materials'));
+    })();
     view.replaceChildren(el('div', { class: 'stack', style: 'margin:14px 0 20px' },
       el('div', { class: 'row' }, el('a', { class: 'btn ghost small', href: j.status === 'completed' ? '#/done' : '#/' }, j.status === 'completed' ? '← Completed' : '← My jobs'), el('span', { class: 'spacer' }), el('span', { class: `pill s-${j.status}` }, find(STATUSES, j.status).label)),
       el('div', {}, el('h1', { style: 'font-size:1.45rem' }, `${t.icon} ${t.label}`), el('p', { class: 'muted' }, `${n} · ${j.customerName}`)),
       message && !onWayMsg ? el('div', { class: 'callout' }, message) : null,
-      errorBox, nextCard, onWayMsg ? textsBox : null, quick, progress, details, photosCard, notesCard,
+      errorBox, nextCard, onWayMsg ? textsBox : null, quick, billCard, progress, details, photosCard, notesCard,
     ));
     window.scrollTo(0, 0);
   }

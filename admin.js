@@ -104,6 +104,10 @@
   // The next payment that's due but not sent yet (a draft counts as not sent).
   const nextDue = (j) => planOf(j).find((p) => p.due && (!p.covered || p.inv?.status === 'draft')) || null;
   const needsInvoice = (j) => !!nextDue(j);
+  // Crew money on a job: their pay plus approved extras, and what's been paid so far.
+  const crewBillsOf = (j, sts) => (j.crewBills || []).filter((b) => sts.includes(b.status));
+  const crewOwedTotal = (j) => (Number(j.crewPay) || 0) + crewBillsOf(j, ['approved', 'paid']).filter((b) => b.step == null).reduce((t, b) => t + Number(b.amount), 0);
+  const crewPaidOn = (j) => { const p = crewBillsOf(j, ['paid']).reduce((t, b) => t + Number(b.amount), 0); return j.crewPaid ? Math.max(p, crewOwedTotal(j)) : p; };
   const reportsOf = (j) => (j.docs || []).flatMap((d) => (d.reports || []).filter((r) => r.status === 'pending').map((r) => ({ r, d })));
   const visitPassed = (j) => !!j.visitAt && new Date(j.visitAt).getTime() < Date.now();
   // Sold: the rep has been out (or the customer approved in writing). Time to pick a crew.
@@ -149,9 +153,12 @@
       { id: 'reported', icon: '💵', title: 'Payments to confirm', why: 'The customer says they paid. Check your account, then record it.',
         list: isStaff ? jobs.filter((j) => reportsOf(j).length) : [],
         line: (j) => reportsOf(j).map(({ r, d }) => `${docs.usd(r.amount)} by ${r.method} · ${d.number}`).join(' · ') },
-      { id: 'paycrew', icon: '💸', title: 'Pay your crew', why: 'Finished jobs where the contractor hasn’t been marked paid.', info: true,
-        list: isStaff ? jobs.filter((j) => j.status === 'completed' && j.contractorId && j.crewPay != null && !j.crewPaid) : [],
-        line: (j) => `${crewName(j) || 'Crew'} · ${money(j.crewPay)}` },
+      { id: 'crewbills', icon: '🧾', title: 'Crew bills to approve', why: 'A contractor billed you for work they finished.',
+        list: isStaff ? jobs.filter((j) => crewBillsOf(j, ['submitted']).length) : [],
+        line: (j) => crewBillsOf(j, ['submitted']).map((b) => `${crewName(j) || 'Crew'}: ${b.label} ${docs.usd(b.amount)}`).join(' · ') },
+      { id: 'paycrew', icon: '💸', title: 'Pay your crew', why: 'Approved crew bills, and finished jobs where the contractor hasn’t been paid.', info: true,
+        list: isStaff ? jobs.filter((j) => crewBillsOf(j, ['approved']).length || (j.status === 'completed' && j.contractorId && j.crewPay != null && crewPaidOn(j) < crewOwedTotal(j) - 0.01 && !crewBillsOf(j, ['submitted']).length)) : [],
+        line: (j) => `${crewName(j) || 'Crew'} · ${money(crewBillsOf(j, ['approved']).reduce((t, b) => t + Number(b.amount), 0) || (crewOwedTotal(j) - crewPaidOn(j)))} to pay` },
       { id: 'unpaid', icon: '💵', title: 'Waiting for payment', why: 'Invoices with money still owed.',
         list: jobs.filter((j) => owedOn(j) > 0).sort((a, b) => owedOn(b) - owedOn(a)),
         line: (j) => `${docs.usd(owedOn(j))} due${liveInvoices(j).some((d) => docs.state(d) === 'overdue') ? ' · OVERDUE' : ''}` },
@@ -256,6 +263,7 @@
       needsVisit(j) ? ['🔥 Book the rep visit', 'hot'] : null,
       j.permit?.status === 'authorized' ? ['📋 Apply for permit', 'hot'] : null,
       reportsOf(j).length ? ['💵 Payment reported', 'hot'] : null,
+      isStaff && crewBillsOf(j, ['submitted']).length ? ['🧾 Crew bill', 'hot'] : null,
       (j.designs || []).some((v) => v.chosen) ? ['🎨 Design picked', ''] : null,
       j.status === 'hot' && j.visitAt && !visitPassed(j) ? [`🤝 Visit ${fmtWhen(j.visitAt)}`, ''] : null,
       needsScheduling(j) ? ['✅ Sold? Schedule the crew', 'hot'] : null,
@@ -582,6 +590,30 @@
         el('span', {}, new Date(l.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })), el('span', {}, l.text)))),
     );
 
+    // Crew bills: what the contractor billed Top Hat for this job. Approve, decline, pay.
+    const crewBillsCard = isStaff && (j.contractorId || (j.crewBills || []).length) ? (() => {
+      const bills = (j.crewBills || []).slice().sort((a, b) => b.at - a.at);
+      const PILL = { submitted: ['New: needs your OK', 's-hot'], approved: ['Approved: to pay', 's-scheduled'], paid: ['Paid', 's-completed'], declined: ['Declined', 's-lost'] };
+      const act = (b, action, opts) => async (e) => { e.currentTarget.disabled = true; try { await api.jobs.crewBill(j.id, b.id, action, opts && opts()); await load(); openLead(j.id, 'money'); } catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; e.currentTarget.disabled = false; } };
+      return el('section', { class: 'card stack' },
+        el('div', { class: 'row' }, el('h3', {}, `🧾 ${crewName(j) ? crewName(j).split(' ')[0] + '’s' : 'Crew'} bills`), el('span', { class: 'spacer' }),
+          el('span', { class: 'muted small' }, `${money(crewPaidOn(j))} paid of ${money(crewOwedTotal(j))}`)),
+        bills.length ? el('div', { class: 'stack', style: 'gap:8px' }, ...bills.map((b) => {
+          const date = el('input', { type: 'date', value: docs.todayKey(), 'aria-label': 'Date paid' });
+          const how = el('select', { 'aria-label': 'How you paid' }, ...['Zelle', 'Check', 'Cash', 'Bank transfer (ACH)', 'Venmo', 'Cash App', 'Other'].map((m) => el('option', {}, m)));
+          return el('div', { class: 'crew-bill' + (b.status === 'submitted' ? ' new' : '') },
+            el('div', { class: 'row' }, el('b', { style: 'flex:1' }, `${b.label} · ${docs.usd(b.amount)}`), el('span', { class: `pill ${PILL[b.status][1]}` }, PILL[b.status][0])),
+            el('div', { class: 'muted small' }, `Billed by ${b.by} · ${ago(b.at)}${b.paidDate ? ` · paid ${docs.fmtDate(b.paidDate)} (${b.paidMethod})` : ''}`),
+            b.note ? el('div', { class: 'small' }, `“${b.note}”`) : null,
+            b.status === 'declined' && b.reason ? el('div', { class: 'small bad-text' }, `Declined: ${b.reason}`) : null,
+            b.status === 'submitted' ? el('div', { class: 'row' },
+              el('button', { type: 'button', class: 'gold small', style: 'flex:1', onclick: act(b, 'approve') }, '✓ Approve'),
+              el('button', { type: 'button', class: 'ghost small', style: 'flex:1', onclick: async (e) => { const reason = prompt('Why are you declining this bill? (The contractor sees this.)', ''); if (reason === null) return; await act(b, 'decline', () => ({ reason }))(e); } }, 'Decline')) : null,
+            ['submitted', 'approved'].includes(b.status) ? el('div', { class: 'stack', style: 'gap:6px' }, el('div', { class: 'two' }, date, how),
+              el('button', { type: 'button', class: 'ghost', onclick: act(b, 'paid', () => ({ date: date.value, method: how.value })) }, `💸 Mark paid · ${docs.usd(b.amount)}`)) : null);
+        })) : el('p', { class: 'muted small' }, 'No bills yet. The contractor bills you from their job page as they finish each part (Business → Crew pay schedule).'));
+    })() : null;
+
     // Payment schedule: each payment, its invoice, and a button to make the next one.
     const plan = planOf(j);
     const due = nextDue(j);
@@ -715,7 +747,7 @@
       tabsBar.replaceChildren(...TABS.map(([id, label]) => el('button', { role: 'tab', 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } }, label)));
       const content = {
         overview: [nextCard, progress, crewNotes.length ? crewNotesCard() : null, setup, designCard, details, permitCard],
-        money: [scheduleCard, docsCard, moneyCard],
+        money: [scheduleCard, crewBillsCard, docsCard, moneyCard],
         files: [filesCard],
         history: [notesCard, crewNotesCard(), log],
       }[leadTab] || [];
@@ -1147,31 +1179,19 @@
     const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
     const f = (name, label, attrs = {}, hint) => el('label', { class: 'field' }, label, hint ? el('span', { class: 'hint' }, hint) : null,
       attrs.rows ? el('textarea', { name, rows: attrs.rows, value: settings[name] ?? '' }) : el('input', { name, value: settings[name] ?? '', ...attrs }));
-    // Payment schedule editor: name, percent and when each payment is due.
-    const plan = docs.scheduleOf(settings).map((s) => ({ ...s }));
-    const planWrap = el('div', { class: 'stack', style: 'gap:8px' });
-    const planTotal = el('p', { class: 'small sched-total', style: 'font-weight:700' });
-    const pctSum = () => plan.reduce((t, s) => t + (Number(s.pct) || 0), 0);
-    const drawTotal = () => { const tot = pctSum(); planTotal.textContent = tot === 100 ? 'Adds up to 100% ✓' : `Adds up to ${tot}%. It needs to be 100%.`; planTotal.style.color = tot === 100 ? 'var(--good)' : 'var(--bad)'; };
-    function drawPlan() {
-      planWrap.replaceChildren(...plan.map((s, i) => el('div', { class: 'sched-edit' },
-        el('span', { class: 'n' }, String(i + 1)),
-        el('input', { class: 'name', value: s.label, maxlength: '40', 'aria-label': `Payment ${i + 1} name`, oninput: (e) => { s.label = e.target.value; } }),
-        el('label', { class: 'pct' }, el('input', { type: 'number', inputmode: 'decimal', min: '0', max: '100', step: '1', value: s.pct, 'aria-label': `Payment ${i + 1} percent`, oninput: (e) => { s.pct = Number(e.target.value) || 0; drawTotal(); } }), '%'),
-        el('select', { class: 'when', 'aria-label': `Payment ${i + 1} is due`, onchange: (e) => { s.when = e.target.value; } }, ...docs.WHEN.map((w) => el('option', { value: w.id, selected: w.id === s.when }, w.short))),
-        plan.length > 1 ? el('button', { type: 'button', class: 'icon x', 'aria-label': `Remove payment ${i + 1}`, onclick: () => { plan.splice(i, 1); drawPlan(); } }, '✕') : el('span', { class: 'x' })),
-      ), el('button', { type: 'button', class: 'ghost small', onclick: () => { plan.push({ label: 'Payment', pct: 0, when: 'mid' }); drawPlan(); } }, '+ Add a payment'));
-      drawTotal();
-    }
-    drawPlan();
+    const plan = scheduleEditor(docs.scheduleOf(settings), docs.WHEN, 'payment');
+    const crewPlan = scheduleEditor(docs.crewScheduleOf(settings), docs.CREW_WHEN, 'crew payment');
     const form = el('form', { class: 'card stack', onsubmit: async (e) => {
       e.preventDefault();
       const fd = new FormData(form);
       const patch = Object.fromEntries([...fd.entries()].map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v]));
-      if (plan.some((s) => !String(s.label).trim())) { errorBox.textContent = 'Give each payment a name, like Deposit or Final payment.'; errorBox.hidden = false; return; }
-      if (pctSum() !== 100) { errorBox.textContent = 'The payment schedule has to add up to 100%.'; errorBox.hidden = false; planWrap.scrollIntoView({ block: 'center' }); return; }
+      for (const [ed, what] of [[plan, 'payment schedule'], [crewPlan, 'crew pay schedule']]) {
+        if (ed.list.some((x) => !String(x.label).trim())) { errorBox.textContent = `Give each step in the ${what} a name.`; errorBox.hidden = false; return; }
+        if (ed.sum() !== 100) { errorBox.textContent = `The ${what} has to add up to 100%.`; errorBox.hidden = false; ed.wrap.scrollIntoView({ block: 'center' }); return; }
+      }
       errorBox.hidden = true;
-      patch.paymentSchedule = plan.map((s) => ({ label: String(s.label).trim(), pct: Number(s.pct) || 0, when: s.when }));
+      patch.paymentSchedule = plan.value();
+      patch.crewPaySchedule = crewPlan.value();
       if (patch.cardPayLink && !/^https:\/\//i.test(patch.cardPayLink)) { errorBox.textContent = 'The card payment link must start with https://'; errorBox.hidden = false; return; }
       patch.taxRate = Number(patch.taxRate) || 0;
       patch.dueDays = Math.max(0, Math.round(Number(patch.dueDays) || 0));
@@ -1193,7 +1213,10 @@
         el('span', {}, 'Show crew their pay', el('span', { class: 'hint', style: 'display:block;font-weight:400' }, 'Crew see the “crew pay” you set on each of their jobs. They never see the customer price.'))),
       el('h3', { style: 'margin-top:8px' }, 'Payment schedule'),
       el('p', { class: 'muted small' }, 'How the job total is split into payments. Each estimate shows it, and each job gets an invoice for every payment as it comes due: the first when the job is sold, then as work moves along.'),
-      planWrap, planTotal,
+      plan.wrap, plan.total,
+      el('h3', { style: 'margin-top:8px' }, 'Crew pay schedule'),
+      el('p', { class: 'muted small' }, 'How a contractor’s pay on a job is split. They bill Top Hat from the job as they reach each step; you approve and pay each bill.'),
+      crewPlan.wrap, crewPlan.total,
       f('cardPayLink', 'Card payment link (optional)', { type: 'url', inputmode: 'url', placeholder: 'https://… your Square, Stripe or PayPal payment link' }, 'Shows a “Pay by card” button on every invoice. Make the link in your Square, Stripe or PayPal account. You can still paste a different link on one invoice.'),
       f('estimatePaymentInstructions', 'Payment terms & how to pay: on estimates', { rows: 5 }, 'Printed on every estimate. Keep it to your payment schedule and Zelle. No bank numbers here.'),
       f('paymentInstructions', 'Payment terms & how to pay: on invoices', { rows: 8 }, 'Printed on every invoice. Your payment schedule, Zelle, and ACH details (routing and account number).'),
@@ -1232,6 +1255,27 @@
       el('button', { type: 'button', class: 'ghost block', onclick: customersList }, '📁 Customer folders'),
     );
     return [form, records, aiCard];
+  }
+
+  // Editable list of steps: name, percent, and when it's due. Used for customer payments and crew pay.
+  function scheduleEditor(initial, whens, noun) {
+    const list = initial.map((x) => ({ ...x }));
+    const wrap = el('div', { class: 'stack', style: 'gap:8px' });
+    const total = el('p', { class: 'small sched-total', style: 'font-weight:700' });
+    const sum = () => list.reduce((t, x) => t + (Number(x.pct) || 0), 0);
+    const drawTotal = () => { const t = sum(); total.textContent = t === 100 ? 'Adds up to 100% ✓' : `Adds up to ${t}%. It needs to be 100%.`; total.style.color = t === 100 ? 'var(--good)' : 'var(--bad)'; };
+    const draw = () => {
+      wrap.replaceChildren(...list.map((x, i) => el('div', { class: 'sched-edit' },
+        el('span', { class: 'n' }, String(i + 1)),
+        el('input', { class: 'name', value: x.label, maxlength: '40', 'aria-label': `${noun} ${i + 1} name`, oninput: (e) => { x.label = e.target.value; } }),
+        el('label', { class: 'pct' }, el('input', { type: 'number', inputmode: 'decimal', min: '0', max: '100', step: '1', value: x.pct, 'aria-label': `${noun} ${i + 1} percent`, oninput: (e) => { x.pct = Number(e.target.value) || 0; drawTotal(); } }), '%'),
+        el('select', { class: 'when', 'aria-label': `${noun} ${i + 1} is due`, onchange: (e) => { x.when = e.target.value; } }, ...whens.map((w) => el('option', { value: w.id, selected: w.id === x.when }, w.short))),
+        list.length > 1 ? el('button', { type: 'button', class: 'icon x', 'aria-label': `Remove ${noun} ${i + 1}`, onclick: () => { list.splice(i, 1); draw(); } }, '✕') : el('span', { class: 'x' })),
+      ), el('button', { type: 'button', class: 'ghost small', onclick: () => { list.push({ label: noun === 'payment' ? 'Payment' : 'Step', pct: 0, when: 'mid' }); draw(); } }, `+ Add a ${noun}`));
+      drawTotal();
+    };
+    draw();
+    return { list, wrap, total, sum, value: () => list.map((x) => ({ label: String(x.label).trim(), pct: Number(x.pct) || 0, when: x.when })) };
   }
 
   /* ---------- sales team (owner/office) ---------- */
@@ -1436,8 +1480,8 @@
           el('div', { class: 'kpi' }, el('b', {}, String(done.length)), el('span', {}, 'Completed')),
           el('div', { class: 'kpi' }, el('b', {}, String(upcoming.length)), el('span', {}, 'Upcoming')),
           el('div', { class: 'kpi' }, el('b', {}, money(payOf(done))), el('span', {}, 'Total crew pay')),
-          el('div', { class: 'kpi' }, el('b', {}, money(payOf(done.filter((j) => j.crewPaid)))), el('span', {}, 'Paid out')),
-          el('div', { class: 'kpi' }, el('b', {}, money(payOf(done.filter((j) => !j.crewPaid)))), el('span', {}, 'Still to pay'))),
+          el('div', { class: 'kpi' }, el('b', {}, money(done.reduce((t, j) => t + crewPaidOn(j), 0))), el('span', {}, 'Paid out')),
+          el('div', { class: 'kpi' }, el('b', {}, money(done.reduce((t, j) => t + Math.max(0, crewOwedTotal(j) - crewPaidOn(j)), 0))), el('span', {}, 'Still to pay'))),
         done.length ? el('button', { type: 'button', class: 'ghost block', onclick: () => downloadJobs(done, `${c.name}-jobs`) }, `⬇ Spreadsheet of ${c.name.split(' ')[0]}’s jobs`) : el('p', { class: 'muted small' }, 'No completed jobs yet.'),
         ...groups.map((g) => el('div', { class: 'stack', style: 'gap:6px' },
           el('div', { class: 'month-head' }, el('b', {}, g.d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })),

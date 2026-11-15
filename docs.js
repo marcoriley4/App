@@ -51,6 +51,29 @@
     { label: 'Progress payment', pct: 25, when: 'start' },
     { label: 'Final payment', pct: 25, when: 'done' },
   ];
+  // Crew pay schedule: how a contractor's pay on a job is split; they bill Top Hat as they reach each step.
+  const CREW_WHEN = [
+    { id: 'start', label: 'When work starts', short: 'Work starts' },
+    { id: 'mid', label: 'Halfway through the job', short: 'Halfway' },
+    { id: 'done', label: 'When the job is finished', short: 'Job finished' },
+  ];
+  const DEFAULT_CREW_SCHEDULE = [
+    { label: 'Work started', pct: 30, when: 'start' },
+    { label: 'Halfway done', pct: 30, when: 'mid' },
+    { label: 'Job finished', pct: 40, when: 'done' },
+  ];
+  const crewScheduleOf = (company) => (Array.isArray(company?.crewPaySchedule) && company.crewPaySchedule.length ? company.crewPaySchedule : DEFAULT_CREW_SCHEDULE);
+  // Each crew payment: amount from the crew pay, and whether the job has reached it.
+  function crewSchedule(company, crewPay, status) {
+    const steps = crewScheduleOf(company);
+    const reached = { start: ['in_progress', 'completed'], mid: ['in_progress', 'completed'], done: ['completed'] };
+    let left = round2(crewPay);
+    return steps.map((s, i) => {
+      const amount = i === steps.length - 1 ? left : round2(crewPay * (Number(s.pct) || 0) / 100);
+      left = round2(left - amount);
+      return { ...s, index: i, amount, whenLabel: (CREW_WHEN.find((w) => w.id === s.when) || CREW_WHEN[2]).label, reached: (reached[s.when] || reached.done).includes(status) };
+    });
+  }
   const scheduleOf = (company) => (Array.isArray(company?.paymentSchedule) && company.paymentSchedule.length ? company.paymentSchedule : DEFAULT_SCHEDULE);
   // Each payment's dollar amount. The last one takes whatever is left, so it always adds up to the total.
   function schedule(company, total) {
@@ -219,5 +242,5 @@
     return close;
   }
 
-  TH.docs = { signaturePad, viewSheet, METHODS, LABELS, WHEN, DEFAULT_SCHEDULE, scheduleOf, schedule, totals, state, label, pillClass, editable, owed, usd, fmtDate, todayKey, render, view, round2 };
+  TH.docs = { CREW_WHEN, DEFAULT_CREW_SCHEDULE, crewScheduleOf, crewSchedule, signaturePad, viewSheet, METHODS, LABELS, WHEN, DEFAULT_SCHEDULE, scheduleOf, schedule, totals, state, label, pillClass, editable, owed, usd, fmtDate, todayKey, render, view, round2 };
 })();

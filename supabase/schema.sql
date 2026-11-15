@@ -28,7 +28,7 @@ end $$;
 
 -- ---------- clean slate for re-runs ----------
 drop trigger if exists on_auth_user_created on auth.users;
-drop table if exists public.payment_reports, public.design_versions, public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
+drop table if exists public.crew_bills, public.payment_reports, public.design_versions, public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
 drop function if exists public.handle_new_user, public.is_staff, public.new_crew_token, public.owns_job,
   public.customer_can_read, public.crew_token_active, public.create_job, public.add_customer_file, public.my_jobs,
   public.crew_job, public.crew_add_file, public.jobs_after_insert, public.jobs_before_update, public.jobs_after_update,
@@ -40,7 +40,7 @@ drop function if exists public.handle_new_user, public.is_staff, public.new_crew
   public.my_sales, public.can_access_job, public.office_can_see_profile, public.office_can_access_path, public.sales_guard,
   public.private_guard, public.costs_after_update, public.log_call, public.staff_invite_sales, public.staff_revoke_sales,
   public.sales_invite_info, public.claim_sales_invite, public.office_crew_list,
-  public.authorize_permit, public.can_design, public.permit_label, public.report_payment, public.resolve_payment_report cascade;
+  public.authorize_permit, public.can_design, public.permit_label, public.report_payment, public.resolve_payment_report, public.crew_bill, public.staff_crew_bill cascade;
 
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
@@ -628,6 +628,30 @@ create table public.payment_reports (
   resolved_by text not null default ''
 );
 create index on public.payment_reports (doc_id);
+
+-- Contractors bill Top Hat for each step of the crew pay schedule (or extra work/materials). Office only; crew go through crew_bill().
+create table public.crew_bills (
+  id uuid primary key default gen_random_uuid(),
+  job_id uuid not null references public.jobs(id) on delete cascade,
+  contractor_id uuid not null references public.contractors(id) on delete cascade,
+  step smallint check (step between 0 and 19),          -- null = extra work / materials
+  label text not null check (length(label) between 1 and 60),
+  amount numeric(12, 2) not null check (amount > 0 and amount <= 100000),
+  note text not null default '' check (length(note) <= 500),
+  status text not null default 'submitted' check (status in ('submitted', 'approved', 'declined', 'paid')),
+  reason text not null default '' check (length(reason) <= 300),
+  paid_date date,
+  paid_method text not null default '' check (length(paid_method) <= 40),
+  by_name text not null default '',
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz,
+  resolved_by text not null default ''
+);
+create index on public.crew_bills (job_id);
+alter table public.crew_bills enable row level security;
+create policy "staff reads crew bills" on public.crew_bills for select to authenticated using (public.is_staff());
+revoke all on public.crew_bills from anon;
+revoke insert, update, delete on public.crew_bills from authenticated;
 alter table public.payment_reports enable row level security;
 create policy "office reads reports" on public.payment_reports for select to authenticated using (public.can_access_job(job_id));
 revoke all on public.payment_reports from anon;
@@ -792,6 +816,80 @@ begin
     || case when p_sig_image is not null then ' (signed “' || left(trim(coalesce(p_sig_name, '')), 120) || '”)' else '' end || '. Confirm it when it arrives.');
 end $$;
 
+-- Crew: bill Top Hat for a step of the crew pay schedule (amount worked out here), or for extra work/materials.
+create function public.crew_bill(p_job uuid, p_step int, p_amount numeric, p_note text) returns jsonb
+language plpgsql security definer set search_path = '' as $$
+declare cid uuid := public.my_crew(); j record; pay numeric; steps jsonb; n int; s jsonb; i int := 0; amt numeric; left_amt numeric; show_pay boolean;
+  who text; lbl text; nt text := left(trim(coalesce(p_note, '')), 500); rec public.crew_bills;
+begin
+  if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
+  select x.id, x.status into j from public.jobs x where x.id = p_job and x.contractor_id = cid and x.status in ('scheduled', 'in_progress', 'completed');
+  if j.id is null then raise exception 'That job isn’t assigned to you.'; end if;
+  select coalesce((data->>'showCrewPay')::boolean, true), coalesce(data->'crewPaySchedule', '[]'::jsonb) into show_pay, steps from public.settings where id = 1;
+  if not coalesce(show_pay, true) then raise exception 'Ask the office about billing for this job.'; end if;
+  select name into who from public.contractors where id = cid;
+  if p_step is null then
+    amt := round(coalesce(p_amount, 0), 2);
+    if amt <= 0 or amt > 100000 then raise exception 'Enter the amount for the extra work or materials.'; end if;
+    if length(nt) < 3 then raise exception 'Say what the extra work or materials were.'; end if;
+    lbl := 'Extra work / materials';
+  else
+    select crew_pay into pay from public.job_costs where job_id = p_job;
+    if pay is null then raise exception 'The office hasn’t set your pay for this job yet.'; end if;
+    if jsonb_typeof(steps) <> 'array' or jsonb_array_length(steps) = 0 then
+      steps := '[{"label":"Work started","pct":30,"when":"start"},{"label":"Halfway done","pct":30,"when":"mid"},{"label":"Job finished","pct":40,"when":"done"}]';
+    end if;
+    n := jsonb_array_length(steps);
+    if p_step < 0 or p_step >= n then raise exception 'That payment isn’t on the schedule.'; end if;
+    s := steps -> p_step;
+    if not ((s->>'when') in ('start', 'mid') and j.status in ('in_progress', 'completed')) and not (j.status = 'completed') then
+      raise exception '%', case when s->>'when' = 'done' then 'Finish the job first, then bill for it.' else 'Start the job first, then bill for it.' end;
+    end if;
+    if exists (select 1 from public.crew_bills where job_id = p_job and step = p_step and status <> 'declined') then raise exception 'You’ve already billed for that.'; end if;
+    left_amt := pay;
+    for i in 0 .. n - 1 loop
+      amt := case when i = n - 1 then left_amt else round(pay * coalesce((steps -> i ->> 'pct')::numeric, 0) / 100, 2) end;
+      left_amt := left_amt - amt;
+      exit when i = p_step;
+    end loop;
+    lbl := left(coalesce(nullif(trim(s->>'label'), ''), 'Payment ' || (p_step + 1)), 60);
+  end if;
+  insert into public.crew_bills (job_id, contractor_id, step, label, amount, note, by_name) values (p_job, cid, p_step, lbl, amt, nt, coalesce(who, 'Crew')) returning * into rec;
+  perform public.log_event(p_job, '🧾 ' || coalesce(who, 'Crew') || ' billed ' || public.usd(amt) || ' for “' || lbl || '”' || case when nt <> '' then ': ' || nt else '' end);
+  return jsonb_build_object('id', rec.id, 'label', rec.label, 'amount', rec.amount, 'step', rec.step, 'status', rec.status);
+end $$;
+
+-- Office: approve, decline or pay a crew bill. When the crew pay is all paid, the job is marked crew paid.
+create function public.staff_crew_bill(p_bill uuid, p_action text, p_reason text, p_date date, p_method text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare b record; who text; cname text; paid_steps numeric; pay numeric;
+begin
+  if not public.is_staff() then raise exception 'Only the office can do that.'; end if;
+  select * into b from public.crew_bills where id = p_bill for update;
+  if b.id is null then raise exception 'Bill not found.'; end if;
+  select name into who from public.profiles where id = auth.uid();
+  select name into cname from public.contractors where id = b.contractor_id;
+  if p_action = 'approve' and b.status = 'submitted' then
+    update public.crew_bills set status = 'approved', resolved_at = now(), resolved_by = coalesce(who, 'Office') where id = b.id;
+    perform public.log_event(b.job_id, '🧾 Approved ' || coalesce(cname, 'crew') || '’s bill: ' || public.usd(b.amount) || ' “' || b.label || '”');
+  elsif p_action = 'decline' and b.status in ('submitted', 'approved') then
+    update public.crew_bills set status = 'declined', reason = left(trim(coalesce(p_reason, '')), 300), resolved_at = now(), resolved_by = coalesce(who, 'Office') where id = b.id;
+    perform public.log_event(b.job_id, '🧾 Declined ' || coalesce(cname, 'crew') || '’s bill: ' || public.usd(b.amount) || ' “' || b.label || '”');
+  elsif p_action = 'paid' and b.status in ('submitted', 'approved') then
+    if p_date is null then raise exception 'Pick the date you paid.'; end if;
+    update public.crew_bills set status = 'paid', paid_date = p_date, paid_method = left(coalesce(nullif(trim(p_method), ''), 'Other'), 40), resolved_at = now(), resolved_by = coalesce(who, 'Office') where id = b.id;
+    perform public.log_event(b.job_id, '💸 Paid ' || coalesce(cname, 'crew') || ' ' || public.usd(b.amount) || ' for “' || b.label || '”');
+    select coalesce(sum(amount), 0) into paid_steps from public.crew_bills where job_id = b.job_id and status = 'paid' and step is not null;
+    select crew_pay into pay from public.job_costs where job_id = b.job_id;
+    if pay is not null and paid_steps >= pay - 0.01 then
+      update public.job_costs set crew_paid_date = p_date, crew_paid_method = left(coalesce(nullif(trim(p_method), ''), 'Other'), 40), crew_paid_note = 'All crew bills paid'
+       where job_id = b.job_id and crew_paid_date is null;
+    end if;
+  else
+    raise exception 'That bill can’t be changed now.';
+  end if;
+end $$;
+
 -- Office: the money arrived (record it as a payment) or it didn't.
 create function public.resolve_payment_report(p_report uuid, p_received boolean) returns void
 language plpgsql security definer set search_path = '' as $$
@@ -889,6 +987,9 @@ begin
       'uploads', (select coalesce(jsonb_agg(jsonb_build_object('path', f.path, 'name', f.name, 'stage', f.stage, 'mime', f.mime, 'uploaded_at', f.uploaded_at) order by f.uploaded_at), '[]'::jsonb)
                     from public.job_files f where f.job_id = j.id and f.source = 'crew' and f.contractor_id = cid),
       'crew_paid_date', case when coalesce(show_pay, true) then (select k.crew_paid_date from public.job_costs k where k.job_id = j.id) end,
+      'bills', case when coalesce(show_pay, true) then (select coalesce(jsonb_agg(jsonb_build_object('id', cb.id, 'step', cb.step, 'label', cb.label, 'amount', cb.amount, 'note', cb.note,
+                  'status', cb.status, 'reason', cb.reason, 'paid_date', cb.paid_date, 'paid_method', cb.paid_method, 'created_at', cb.created_at) order by cb.created_at), '[]'::jsonb)
+                  from public.crew_bills cb where cb.job_id = j.id and cb.contractor_id = cid) else '[]'::jsonb end,
       'crew_paid_method', case when coalesce(show_pay, true) then (select k.crew_paid_method from public.job_costs k where k.job_id = j.id) end,
       'notes', (select coalesce(jsonb_agg(jsonb_build_object('id', n.id, 'text', n.text, 'created_at', n.created_at) order by n.created_at), '[]'::jsonb)
                   from public.crew_notes n where n.job_id = j.id and n.contractor_id = cid)
@@ -1085,7 +1186,8 @@ grant execute on function public.is_staff(), public.owns_job(text), public.custo
   public.crew_can_read_customer(text), public.my_sales(), public.can_access_job(uuid), public.office_can_see_profile(uuid),
   public.office_can_access_path(text), public.log_call(uuid, text, text), public.staff_invite_sales(uuid), public.staff_revoke_sales(uuid),
   public.claim_sales_invite(text), public.office_crew_list(), public.authorize_permit(uuid, text), public.can_design(uuid),
-  public.report_payment(uuid, numeric, text, text, text, text), public.resolve_payment_report(uuid, boolean) to authenticated;
+  public.report_payment(uuid, numeric, text, text, text, text), public.resolve_payment_report(uuid, boolean),
+  public.crew_bill(uuid, int, numeric, text), public.staff_crew_bill(uuid, text, text, date, text) to authenticated;
 grant execute on function public.sales_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_add_note(text, uuid, text) to anon, authenticated;

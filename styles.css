@@ -715,3 +715,8 @@ button.gold.block:has(.btn-sub) { flex-direction: column; height: auto; padding-
 :root[data-theme="dark"] .stepper .done .dot, :root[data-theme="dark"] .crew-progress .done .dot, :root[data-theme="dark"] .sched-list li.paid .n { color: #052e12; }
 :root[data-theme="dark"] .crew-paid.done, :root[data-theme="dark"] .callout.good, :root[data-theme="dark"] .flag.paid { background: #12351f; color: #b7f0c6; border-color: #1f5a33; }
 :root[data-theme="dark"] .crew-paid.done .link { color: #b7f0c6; }
+
+/* Crew bills */
+.crew-bill { border: 1px solid var(--border); border-radius: 12px; padding: 10px; display: grid; gap: 6px; background: var(--surface); }
+.crew-bill.new { border: 2px solid var(--gold); }
+.bill-form { border: 2px solid var(--gold); border-radius: 12px; padding: 12px; background: var(--surface); }

@@ -294,6 +294,54 @@ reset role;
 select set_config('request.jwt.claim.sub', :'C', false);
 set role authenticated;
 select t.ok((public.crew_my_jobs()->0->>'crew_paid_date') = '2026-11-10', 'crew sees the day they were paid');
+-- Crew bills: billing for a step and for extras
+reset role;
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+update public.job_costs set crew_paid_date = null, crew_paid_method = '' where job_id = current_setting('t.job')::uuid;
+update public.jobs set status = 'in_progress' where id = current_setting('t.job')::uuid;
+reset role;
+select set_config('request.jwt.claim.sub', :'C', false);
+set role authenticated;
+do $$ begin
+  begin perform public.crew_bill(current_setting('t.job')::uuid, 2, null, ''); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'crew cannot bill the finish step before finishing'); end;
+end $$;
+select t.ok((public.crew_bill(current_setting('t.job')::uuid, 0, 99999, 'Started')->>'amount')::numeric = 345.15, 'crew bill amount comes from the schedule, not what they type');
+do $$ begin
+  begin perform public.crew_bill(current_setting('t.job')::uuid, 0, null, ''); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'crew cannot bill the same step twice'); end;
+  begin perform public.crew_bill(current_setting('t.job')::uuid, null, 0, 'x'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'extra bill needs an amount'); end;
+end $$;
+select public.crew_bill(current_setting('t.job')::uuid, null, 120, 'Two extra bundles of shingles');
+select t.ok(jsonb_array_length(public.crew_my_jobs()->0->'bills') = 2, 'crew sees their bills');
+select t.ok((select count(*) from public.crew_bills) = 0, 'crew cannot read the bills table directly');
+do $$ begin
+  begin perform public.staff_crew_bill((select (public.crew_my_jobs()->0->'bills'->0->>'id')::uuid), 'paid', '', current_date, 'Zelle'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'crew cannot mark their own bill paid'); end;
+end $$;
+reset role;
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+select t.ok((select count(*) from public.crew_bills where status = 'submitted') = 2, 'office sees new crew bills');
+select public.staff_crew_bill((select id from public.crew_bills where step = 0), 'approve', '', null, '');
+select public.staff_crew_bill((select id from public.crew_bills where step = 0), 'paid', '', '2026-11-12', 'Zelle');
+select t.ok((select status from public.crew_bills where step = 0) = 'paid', 'office approves and pays a crew bill');
+select t.ok((select crew_paid_date from public.job_costs where job_id = current_setting('t.job')::uuid) is null, 'part-paid job is not marked fully paid');
+select public.staff_crew_bill((select id from public.crew_bills where step is null), 'decline', 'Not approved ahead of time', null, '');
+select t.ok(exists (select 1 from public.job_events where text like '🧾 Declined Ray Johnson’s bill%'), 'declined bill logged');
+reset role;
+select set_config('request.jwt.claim.sub', :'C', false);
+set role authenticated;
+select t.ok((select x->>'reason' from jsonb_array_elements(public.crew_my_jobs()->0->'bills') x where x->>'step' is null) = 'Not approved ahead of time', 'crew sees why a bill was declined');
+reset role;
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+update public.jobs set status = 'scheduled' where id = current_setting('t.job')::uuid;
+reset role;
+select set_config('request.jwt.claim.sub', :'C', false);
+set role authenticated;
 select t.ok(public.crew_my_jobs()->0 ? 'uploads', 'crew gets a list of their own photos for their records');
 select t.ok(public.crew_my_jobs()::text !~ '422.28|"price"|Gate code|ann@example|E-1001|INV-1001', 'crew never sees customer price, notes, email or documents');
 select t.ok((select count(*) from public.jobs) = 0 and (select count(*) from public.job_private) = 0 and (select count(*) from public.documents) = 0 and (select count(*) from public.contractors) = 0,

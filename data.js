@@ -169,6 +169,12 @@
     name: 'Top Hat Contracting', phone: '', email: '', address: '', license: '',
     taxRate: 0, dueDays: 14, showCrewPay: true,
     estimatePaymentInstructions: 'We accept Zelle, check, cash and card.',
+    // How a contractor's pay is split; they bill Top Hat at each step.
+    crewPaySchedule: [
+      { label: 'Work started', pct: 30, when: 'start' },
+      { label: 'Halfway done', pct: 30, when: 'mid' },
+      { label: 'Job finished', pct: 40, when: 'done' },
+    ],
     // When each payment is due. Invoices are made from it during the job.
     paymentSchedule: [
       { label: 'Deposit', pct: 50, when: 'sold' },
@@ -708,6 +714,28 @@
         d.jobs.push(rec); writeDb(d);
         return rec.id;
       },
+      // Office: approve, decline or pay a contractor's bill. When their pay is all paid, the job counts as crew paid.
+      async crewBill(jobId, billId, action, opts = {}) {
+        const u = await requireStaff();
+        const d = await db();
+        const j = d.jobs.find((x) => x.id === jobId);
+        const b = j && (j.crewBills || []).find((x) => x.id === billId);
+        if (!b) throw new Error('Bill not found.');
+        const name = d.contractors.find((x) => x.id === b.contractorId)?.name || 'Crew';
+        if (action === 'approve' && b.status === 'submitted') { b.status = 'approved'; j.log.push({ at: Date.now(), text: `🧾 Approved ${name}’s bill: ${usd(b.amount)} “${b.label}”` }); }
+        else if (action === 'decline' && ['submitted', 'approved'].includes(b.status)) {
+          b.status = 'declined'; b.reason = String(opts.reason || '').trim().slice(0, 300);
+          j.log.push({ at: Date.now(), text: `🧾 Declined ${name}’s bill: ${usd(b.amount)} “${b.label}”${b.reason ? ` (${b.reason})` : ''}` });
+        } else if (action === 'paid' && ['submitted', 'approved'].includes(b.status)) {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(opts.date || '')) throw new Error('Pick the date you paid.');
+          b.status = 'paid'; b.paidDate = opts.date; b.paidMethod = String(opts.method || 'Other').slice(0, 40);
+          j.log.push({ at: Date.now(), text: `💸 Paid ${name} ${usd(b.amount)} for “${b.label}” (${b.paidMethod}) on ${b.paidDate}` });
+          const paidSteps = j.crewBills.filter((x) => x.status === 'paid' && x.step != null).reduce((t, x) => t + x.amount, 0);
+          if (j.crewPay != null && paidSteps >= j.crewPay - 0.01 && !j.crewPaid) j.crewPaid = { date: b.paidDate, method: b.paidMethod, note: 'All crew bills paid' };
+        } else throw new Error('That bill can’t be changed now.');
+        b.resolvedAt = Date.now(); b.resolvedBy = u.name;
+        writeDb(d);
+      },
       // Customer: "Yes, apply for my building permit." Their typed name is their signature.
       async authorizePermit(jobId, name) {
         const u = await me();
@@ -759,7 +787,7 @@
         const { d, isStaff, salesId } = await requireOffice();
         return d.jobs.filter((j) => isStaff || j.salesId === salesId).sort((a, b) => b.created - a.created).map((j) => (
           // Salespeople never see crew pay (so never profit either).
-          { ...j, crewPay: isStaff ? j.crewPay : null, buyer: customerOf(d, j), hasAccount: !!j.buyerId }));
+          { ...j, crewPay: isStaff ? j.crewPay : null, crewBills: isStaff ? j.crewBills || [] : [], crewPaid: isStaff ? j.crewPaid || null : null, buyer: customerOf(d, j), hasAccount: !!j.buyerId }));
       },
       // Office or sales: record a phone call and how it went.
       async logCall(id, outcome, note = '') {
@@ -1316,9 +1344,42 @@
               const w = await withUrl(f); return { name: f.name, stage: f.stage || '', uploaded: f.uploaded, mime: f.mime, url: w.url };
             })),
             crewPaid: showPay && j.crewPaid ? { date: j.crewPaid.date, method: j.crewPaid.method } : null,
+            crewBills: showPay ? (j.crewBills || []).filter((x) => x.contractorId === c.id).map((x) => ({ ...x })) : [],
             notes: ownNotes(j),
           };
         }));
+      },
+      // Crew bills Top Hat for a step on the crew pay schedule, or for extra work/materials.
+      async bill(jobId, { step = null, amount, note = '' } = {}) {
+        const { d, c, u } = await requireCrew();
+        const j = d.jobs.find((x) => x.id === jobId && x.contractorId === c.id && ['scheduled', 'in_progress', 'completed'].includes(x.status));
+        if (!j) throw new Error('That job isn’t assigned to you.');
+        if (d.settings.showCrewPay === false) throw new Error('Ask the office about billing for this job.');
+        note = String(note || '').trim().slice(0, 500);
+        const bills = (j.crewBills ||= []);
+        let rec;
+        if (step == null) {
+          const amt = Math.round(Number(amount) * 100) / 100;
+          if (!(amt > 0) || amt > 100000) throw new Error('Enter the amount for the extra work or materials.');
+          if (note.length < 3) throw new Error('Say what the extra work or materials were.');
+          rec = { label: 'Extra work / materials', step: null, amount: amt };
+        } else {
+          if (j.crewPay == null) throw new Error('The office hasn’t set your pay for this job yet.');
+          const steps = (d.settings.crewPaySchedule && d.settings.crewPaySchedule.length ? d.settings.crewPaySchedule : DEFAULT_SETTINGS.crewPaySchedule);
+          const s = steps[step];
+          if (!s) throw new Error('That payment isn’t on the schedule.');
+          const reached = { start: ['in_progress', 'completed'], mid: ['in_progress', 'completed'], done: ['completed'] }[s.when] || ['completed'];
+          if (!reached.includes(j.status)) throw new Error(s.when === 'done' ? 'Finish the job first, then bill for it.' : 'Start the job first, then bill for it.');
+          if (bills.some((x) => x.step === step && x.status !== 'declined')) throw new Error('You’ve already billed for that.');
+          let left = Math.round(j.crewPay * 100) / 100; let amt = 0;
+          steps.forEach((x, i) => { const a = i === steps.length - 1 ? left : Math.round(j.crewPay * (Number(x.pct) || 0)) / 100; left = Math.round((left - a) * 100) / 100; if (i === step) amt = a; });
+          rec = { label: s.label, step, amount: amt };
+        }
+        const bill = { id: uid(), ...rec, note, contractorId: c.id, by: u.name, at: Date.now(), status: 'submitted', reason: '', paidDate: null, paidMethod: '' };
+        bills.push(bill);
+        j.log.push({ at: Date.now(), text: `🧾 ${u.name} billed ${usd(bill.amount)} for “${bill.label}”${note ? `: ${note}` : ''}` });
+        writeDb(d);
+        return { ...bill };
       },
       // Crew confirms they'll do the job, or tells the office they can't (with a reason).
       async respond(jobId, response, note = '') {
