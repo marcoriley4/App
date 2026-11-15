@@ -90,13 +90,13 @@ Right now all data is saved in the browser (`localStorage`, with files in Indexe
 
 Everyone uses **one login** (the **Log in** button on the customer site, or `admin.html` / `crew.html` directly). After signing in, each account goes to its own area: **staff → staff area, customers → My jobs, crew → their crew jobs**.
 
-In preview mode the login page has **"Try it as…"** buttons for three sample accounts:
+In preview mode the login page has **"Try it as…"** buttons for the four sample accounts:
 - **Top Hat office** (staff): **office@tophat.demo** / **tophat**
 - **Salesperson**: **maria@tophat.demo** / **sales1234**
 - **Customer**: **dana@example.com** / **demo1234**
 - **Contractor**: **ray@tophat.demo** / **crew1234**
 
-The preview opens as a **busy week**: about 20 jobs at every stage (new leads, customers thinking it over, hot leads, rep visits, a crew that can't make it, jobs on the way and waiting on materials, unpaid and overdue invoices, paid jobs and a closed lead), 7 contractors and 3 salespeople. Dates are relative to today, so it always looks current. Use **Reset preview data** at the bottom of the staff area to start over with a fresh busy week. (Automated tests set `localStorage['tophat.demo.quiet']` to get the small 3-job sample instead.)
+The preview starts **clean**: no jobs, just the four logins above (office, Maria the salesperson, Dana the customer, Ray the contractor). Ray is the only contractor and Maria the only salesperson until you add more. Use **Reset preview data** at the bottom of the staff area to go back to this clean start. (Automated tests set `localStorage['tophat.demo.quiet']` for a small 3-job sample or `localStorage['tophat.demo.busy']` for a busy week of about 20 jobs.)
 
 ## Going live (Supabase)
 

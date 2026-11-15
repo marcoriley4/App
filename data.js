@@ -192,7 +192,8 @@
   };
   const usd = (n) => '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
-  // Sample data so the staff area isn't empty in preview mode.
+  // Preview starts clean: just the four demo logins (office, salesperson, customer, contractor), no jobs.
+  // Automated tests can ask for sample jobs with localStorage 'tophat.demo.quiet' (small) or 'tophat.demo.busy' (a busy week).
   async function seed() {
     const now = Date.now();
     const H = 3600 * 1000;
@@ -210,14 +211,14 @@
         { id: b1, role: 'buyer', name: 'Dana Whitfield', email: 'dana@example.com', phone: '(555) 201-3344', password: buyerPw, created: now - 30 * H },
         { id: su1, role: 'sales', salesId: s1, name: 'Maria Lopez', email: 'maria@tophat.demo', phone: '(555) 444-1212', password: salesPw, created: now - 300 * H },
         { id: cu3, role: 'crew', contractorId: c3, name: 'Ray Johnson', email: 'ray@tophat.demo', phone: '(555) 300-4455', password: crewPw, created: now - 200 * H },
-        { id: b2, role: 'buyer', name: 'Luis Romero', email: 'luis@example.com', phone: '(555) 410-9821', password: buyerPw, created: now - 75 * H },
+        ...(sampleDemo() ? [{ id: b2, role: 'buyer', name: 'Luis Romero', email: 'luis@example.com', phone: '(555) 410-9821', password: buyerPw, created: now - 75 * H }] : []),
       ],
       contractors: [
-        { id: c1, name: 'Mike Alvarez', phone: '(555) 300-1122', trades: ['plumbing', 'hvac'], active: true },
-        { id: c2, name: 'Sarah Kim', phone: '(555) 300-7788', trades: ['painting', 'drywall', 'flooring'], active: true },
+        ...(sampleDemo() ? [{ id: c1, name: 'Mike Alvarez', phone: '(555) 300-1122', trades: ['plumbing', 'hvac'], active: true },
+          { id: c2, name: 'Sarah Kim', phone: '(555) 300-7788', trades: ['painting', 'drywall', 'flooring'], active: true }] : []),
         { id: c3, name: 'Ray Johnson', phone: '(555) 300-4455', trades: ['roofing', 'remodel', 'electrical'], active: true, userId: cu3, inviteCode: null },
       ],
-      jobs: [
+      jobs: !sampleDemo() ? [] : [
         {
           id: uid(), buyerId: b1, trade: 'plumbing', status: 'new', created: now - 2 * H,
           description: 'Kitchen sink is leaking under the cabinet. Water damage starting on the cabinet floor.',
@@ -253,18 +254,21 @@
           log: [{ at: now - 70 * H, text: 'Lead received' }, { at: now - 60 * H, text: 'Status → Qualifying' }, { at: now - 40 * H, text: 'Status → Scheduled · Ray Johnson' }],
         },
       ],
-      nextNumber: 1004,
+      nextNumber: sampleDemo() ? 1004 : 1001,
       team: [{ id: s1, name: 'Maria Lopez', phone: '(555) 444-1212', active: true, userId: su1, inviteCode: null }],
       settings: { ...DEFAULT_SETTINGS, phone: '(555) 867-5309', email: 'office@tophat.demo' },
     };
-    if (!quietDemo()) addBusyDemo(data, { c1, c2, c3, s1 });
+    if (busyDemo()) addBusyDemo(data, { c1, c2, c3, s1 });
     return data;
   }
 
   // A busy week, so the preview shows every stage without setting anything up.
   // Tests can ask for the small sample by setting localStorage 'tophat.demo.quiet'.
-  const quietDemo = () => { try { return !!localStorage.getItem('tophat.demo.quiet'); } catch (e) { return false; } };
-  const DEMO_VERSION = 4;
+  const flag = (k) => { try { return !!localStorage.getItem(k); } catch (e) { return false; } };
+  const quietDemo = () => flag('tophat.demo.quiet');
+  const busyDemo = () => flag('tophat.demo.busy') && !quietDemo();
+  const sampleDemo = () => quietDemo() || busyDemo();
+  const DEMO_VERSION = 5;
   function addBusyDemo(d, ids) {
     const now = Date.now();
     const H = 3600e3, DAY = 24 * H;
@@ -488,7 +492,7 @@
   function db() {
     if (!dbPromise) dbPromise = (async () => {
       let d = readDb();
-      if (d && (d.demoVersion || 1) < DEMO_VERSION && !quietDemo()) { d = null; setSession(null); } // old preview sample → the busy one
+      if (d && (d.demoVersion || 1) < DEMO_VERSION && !quietDemo()) { d = null; setSession(null); } // old preview sample → start clean
       if (!d) { d = await seed(); }
       migrate(d); await addMissingSamples(d); writeDb(d); return d;
     })();
