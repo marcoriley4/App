@@ -499,6 +499,8 @@ language sql stable security definer set search_path = '' as $$
     'permit_authorized_by', j.permit_authorized_by, 'permit_authorized_at', j.permit_authorized_at,
     'design_count', (select count(*) from public.design_versions v where v.job_id = j.id),
     'rep_name', case when j.status = 'hot' and j.visit_at is not null then split_part(sp.name, ' ', 1) end,
+    'pm_name', case when j.status <> 'lost' and sp.active then sp.name end,
+    'pm_phone', case when j.status <> 'lost' and sp.active then sp.phone end,
     'contractor_name', case when j.status in ('scheduled', 'in_progress', 'completed') then c.name end,
     'shared_files', (select coalesce(jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'kind', f.kind, 'size', f.size,
                        'path', f.path, 'uploaded_at', f.uploaded_at) order by f.uploaded_at), '[]'::jsonb)

@@ -249,7 +249,7 @@
       ],
       nextNumber: 1004,
       team: [{ id: s1, name: 'Maria Lopez', phone: '(555) 444-1212', active: true, userId: su1, inviteCode: null }],
-      settings: { ...DEFAULT_SETTINGS },
+      settings: { ...DEFAULT_SETTINGS, phone: '(555) 867-5309', email: 'office@tophat.demo' },
     };
     if (!quietDemo()) addBusyDemo(data, { c1, c2, c3, s1 });
     return data;
@@ -442,6 +442,7 @@
   // Bring older preview data up to date.
   function migrate(d) {
     d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
+    if (!d.settings.phone && !d.settings.email) Object.assign(d.settings, { phone: '(555) 867-5309', email: 'office@tophat.demo' }); // sample contact so the buttons show
     d.team = d.team || [];
     d.nextNumber = d.nextNumber || Math.max(1000, ...d.jobs.map((j) => j.number || 0)) + 1;
     d.jobs.slice().sort((a, b) => a.created - b.created).forEach((j) => {
@@ -734,6 +735,7 @@
             permit: j.permit ? { status: j.permit.status, number: j.permit.number || '', authorizedBy: j.permit.authorizedBy || '', authorizedAt: j.permit.authorizedAt || null } : { status: 'none' },
             designCount: (j.designs || []).length,
             repName: j.status === 'hot' && j.visitAt ? ((d.team || []).find((x) => x.id === j.salesId)?.name || '').split(' ')[0] || null : null,
+            pm: (() => { const sp = j.status !== 'lost' && (d.team || []).find((x) => x.id === j.salesId && x.active !== false); return sp ? { name: sp.name, phone: sp.phone || '' } : null; })(),
             contractorName: c && ['scheduled', 'in_progress', 'completed'].includes(j.status) ? c.name : null,
             stage: j.stage || null,
             sharedFiles: j.files.filter((f) => f.shared).length,

@@ -166,6 +166,7 @@
           description: j.description, address: j.address, zip: j.zip || '', timeframe: j.timeframe, budget: j.budget, photos: [],
           scheduledFor: local16(j.scheduled_for), contractorName: j.contractor_name || null, stage: j.stage || null,
           visitAt: local16(j.visit_at), repName: j.rep_name || null,
+          pm: j.pm_name ? { name: j.pm_name, phone: j.pm_phone || '' } : null,
           permit: { status: j.permit_status || 'none', number: j.permit_number || '', authorizedBy: j.permit_authorized_by || '', authorizedAt: ms(j.permit_authorized_at) || null },
           designCount: Number(j.design_count) || 0,
           sharedFiles: (j.shared_files || []).length,

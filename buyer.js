@@ -379,6 +379,7 @@
     };
     view.append(el('div', { class: 'stack', style: 'margin-top:24px' },
       el('div', { class: 'row' }, el('h1', {}, 'My jobs'), el('span', { class: 'spacer' }), el('a', { class: 'btn gold small', href: '#/request' }, '+ New request')),
+      contactCard(jobs, company),
       jobs.length ? null : el('div', { class: 'card muted' }, "You haven't requested any jobs yet."),
       ...jobs.map((j) => {
         const trade = find(TRADES, j.trade) || TRADES.at(-1);
@@ -438,6 +439,25 @@
       el('h1', {}, '🎨 Design studio'),
       el('p', { class: 'muted' }, `${trade.icon} ${trade.label} · TH-${j.number} · ${j.address}`),
       TH.studio({ jobId: j.id, trade: j.trade, photos: j.photos || [] })));
+  }
+
+  // "Questions? Reach us": their project manager (if one's assigned) and the office, one tap each.
+  const tel = (p) => 'tel:' + String(p).replace(/[^\d+]/g, '');
+  const sms = (p) => 'sms:' + String(p).replace(/[^\d+]/g, '');
+  function contactCard(jobs, company) {
+    const pm = jobs.map((j) => j.pm).find((x) => x && x.phone);
+    const rows = [];
+    if (pm) rows.push(el('div', { class: 'contact-row' },
+      el('span', { class: 'who' }, el('b', {}, pm.name.split(' ')[0]), el('span', {}, 'Your project manager')),
+      el('a', { class: 'btn gold small', href: tel(pm.phone) }, '📞 Call'),
+      el('a', { class: 'btn ghost small', href: sms(pm.phone) }, '💬 Text')));
+    if (company.phone || company.email) rows.push(el('div', { class: 'contact-row' },
+      el('span', { class: 'who' }, el('b', {}, company.name || 'Top Hat Contracting'), el('span', {}, 'The office')),
+      company.phone ? el('a', { class: 'btn ' + (pm ? 'ghost' : 'gold') + ' small', href: tel(company.phone) }, '📞 Call') : null,
+      company.phone ? el('a', { class: 'btn ghost small', href: sms(company.phone) }, '💬 Text') : null,
+      !company.phone && company.email ? el('a', { class: 'btn gold small', href: `mailto:${company.email}` }, '✉️ Email') : null));
+    if (!rows.length) return null;
+    return el('section', { class: 'contact-card' }, el('span', { class: 'contact-title' }, 'Questions? We’re one tap away'), ...rows);
   }
 
   // Building permit: the customer tells Top Hat to apply, and signs with their name.

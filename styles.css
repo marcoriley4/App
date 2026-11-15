@@ -689,3 +689,12 @@ button.ghost, .btn.ghost { border-width: 1.5px; }
 .btn-sub { display: block; font-size: .8rem; font-weight: 600; opacity: .8; }
 button.gold.block:has(.btn-sub) { flex-direction: column; height: auto; padding-top: 10px; padding-bottom: 10px; }
 .doc-actions .pay-area { background: var(--surface); color: var(--text); border-radius: 16px; padding: 16px; border: 2px solid var(--gold); }
+
+/* Customer: reach the project manager or office */
+.contact-card { background: var(--ink); color: #fff; border-radius: 16px; padding: 12px 14px; display: grid; gap: 10px; }
+.contact-title { color: var(--gold); font-weight: 800; font-size: .95rem; }
+.contact-row { display: flex; align-items: center; gap: 8px; }
+.contact-row .who { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
+.contact-row .who span { font-size: .8rem; color: #c9c9cf; }
+.contact-row .btn { flex: none; }
+.contact-card .btn.ghost { background: transparent; color: #fff; border-color: #55555c; }
