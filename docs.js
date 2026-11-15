@@ -147,5 +147,17 @@
     return close;
   }
 
-  TH.docs = { METHODS, LABELS, WHEN, DEFAULT_SCHEDULE, scheduleOf, schedule, totals, state, label, pillClass, editable, owed, usd, fmtDate, todayKey, render, view, round2 };
+  // Any printable sheet (e.g. the permit packet) in the same viewer.
+  function viewSheet(sheet, label) {
+    const close = () => { overlay.remove(); document.body.classList.remove('doc-open'); document.removeEventListener('keydown', onKey); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    const overlay = el('div', { class: 'doc-viewer', role: 'dialog', 'aria-modal': 'true', 'aria-label': label },
+      el('div', { class: 'doc-toolbar' }, el('button', { class: 'ghost small', onclick: close }, '← Close'), el('span', { class: 'spacer' }),
+        el('button', { class: 'ghost small', onclick: () => window.print() }, '🖨 Print / Save PDF')),
+      el('div', { class: 'doc-scroll' }, sheet));
+    document.body.append(overlay); document.body.classList.add('doc-open'); document.addEventListener('keydown', onKey);
+    return close;
+  }
+
+  TH.docs = { viewSheet, METHODS, LABELS, WHEN, DEFAULT_SCHEDULE, scheduleOf, schedule, totals, state, label, pillClass, editable, owed, usd, fmtDate, todayKey, render, view, round2 };
 })();

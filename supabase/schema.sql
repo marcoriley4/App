@@ -28,7 +28,7 @@ end $$;
 
 -- ---------- clean slate for re-runs ----------
 drop trigger if exists on_auth_user_created on auth.users;
-drop table if exists public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
+drop table if exists public.design_versions, public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
 drop function if exists public.handle_new_user, public.is_staff, public.new_crew_token, public.owns_job,
   public.customer_can_read, public.crew_token_active, public.create_job, public.add_customer_file, public.my_jobs,
   public.crew_job, public.crew_add_file, public.jobs_after_insert, public.jobs_before_update, public.jobs_after_update,
@@ -39,7 +39,8 @@ drop function if exists public.handle_new_user, public.is_staff, public.new_crew
   public.jobs_before_update, public.stage_label, public.crew_respond, public.crew_can_read_customer,
   public.my_sales, public.can_access_job, public.office_can_see_profile, public.office_can_access_path, public.sales_guard,
   public.private_guard, public.costs_after_update, public.log_call, public.staff_invite_sales, public.staff_revoke_sales,
-  public.sales_invite_info, public.claim_sales_invite, public.office_crew_list cascade;
+  public.sales_invite_info, public.claim_sales_invite, public.office_crew_list,
+  public.authorize_permit, public.can_design, public.permit_label cascade;
 
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
@@ -141,6 +142,11 @@ create table public.jobs (
   sales_id uuid references public.salespeople(id) on delete set null,   -- the salesperson who owns this client
   scheduled_for timestamp,
   visit_at timestamp,   -- the sales rep's walkthrough with a hot lead
+  -- Building permit: the customer's OK (typed-name signature) and the status/number they can see.
+  permit_status text not null default 'none' check (permit_status in ('none', 'authorized', 'preparing', 'applied', 'approved', 'inspections', 'closed', 'not_needed')),
+  permit_number text not null default '' check (length(permit_number) <= 60),
+  permit_authorized_by text not null default '',
+  permit_authorized_at timestamptz,
   -- Extra progress detail shared by office and crew, and who last changed progress.
   stage text check (stage in ('on_the_way', 'waiting_parts', 'return_visit')),
   progress_at timestamptz,
@@ -164,8 +170,26 @@ create table public.job_private (
   price numeric(12, 2) check (price >= 0),
   notes text not null default '',
   crew_token text unique,
-  crew_notes_seen_at timestamptz                      -- when the office last opened the crew notes
+  crew_notes_seen_at timestamptz,                     -- when the office last opened the crew notes
+  permit_portal text not null default '' check (permit_portal = '' or permit_portal ~* '^https?://'),
+  permit_fee numeric(10, 2) check (permit_fee >= 0)
 );
+
+-- Design studio pictures. They live in storage at <job>/design/<id>.<ext>.
+-- Only the design Edge Function writes them (it checks can_design first).
+create table public.design_versions (
+  id uuid primary key default gen_random_uuid(),
+  job_id uuid not null references public.jobs(id) on delete cascade,
+  parent_id uuid references public.design_versions(id) on delete set null,
+  source text not null check (source in ('photo', 'ai')),
+  prompt text not null default '' check (length(prompt) <= 1500),
+  path text not null,
+  by_name text not null default '',
+  by_user uuid references auth.users(id) on delete set null,
+  chosen boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index on public.design_versions (job_id, created_at);
 
 -- Owner/office only: what the crew is paid. Kept apart so salespeople can work with prices but never see it.
 create table public.job_costs (
@@ -234,6 +258,13 @@ begin
 end $$;
 create trigger jobs_after_insert after insert on public.jobs
   for each row execute function public.jobs_after_insert();
+
+create function public.permit_label(st text) returns text
+language sql immutable set search_path = '' as $$
+  select case st when 'none' then 'Not started' when 'authorized' then 'Customer approved: apply' when 'preparing' then 'Preparing the application'
+    when 'applied' then 'Applied: waiting on the town' when 'approved' then 'Approved' when 'inspections' then 'Inspections'
+    when 'closed' then 'Closed (final inspection passed)' when 'not_needed' then 'Not needed' else st end;
+$$;
 
 create function public.stage_label(st text) returns text
 language sql immutable set search_path = '' as $$
@@ -330,6 +361,12 @@ begin
   end if;
   if new.scheduled_for is distinct from old.scheduled_for and new.scheduled_for is not null then
     perform public.log_event(new.id, 'Scheduled for ' || to_char(new.scheduled_for, 'Mon FMDD, YYYY FMHH12:MI AM'));
+  end if;
+  if new.permit_status is distinct from old.permit_status and new.permit_authorized_at is not distinct from old.permit_authorized_at then
+    perform public.log_event(new.id, '📋 Permit → ' || public.permit_label(new.permit_status));
+  end if;
+  if new.permit_number is distinct from old.permit_number and new.permit_number <> '' then
+    perform public.log_event(new.id, '📋 Permit # ' || new.permit_number);
   end if;
   if new.visit_at is distinct from old.visit_at then
     perform public.log_event(new.id, case when new.visit_at is null then '🤝 Rep visit cleared'
@@ -458,6 +495,9 @@ language sql stable security definer set search_path = '' as $$
     'description', j.description, 'address', j.address, 'zip', j.zip, 'timeframe', j.timeframe, 'budget', j.budget,
     'scheduled_for', j.scheduled_for, 'stage', j.stage,
     'visit_at', case when j.status = 'hot' then j.visit_at end,
+    'permit_status', j.permit_status, 'permit_number', j.permit_number,
+    'permit_authorized_by', j.permit_authorized_by, 'permit_authorized_at', j.permit_authorized_at,
+    'design_count', (select count(*) from public.design_versions v where v.job_id = j.id),
     'rep_name', case when j.status = 'hot' and j.visit_at is not null then split_part(sp.name, ' ', 1) end,
     'contractor_name', case when j.status in ('scheduled', 'in_progress', 'completed') then c.name end,
     'shared_files', (select coalesce(jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'kind', f.kind, 'size', f.size,
@@ -864,6 +904,26 @@ begin
   perform public.log_event(p_job, '📞 Call (' || coalesce(who, 'office') || '): ' || left(trim(p_outcome), 40) || case when note <> '' then '. ' || note else '' end);
 end $$;
 
+-- Customer: "apply for my building permit". Their typed full name is the signature.
+create function public.authorize_permit(p_job uuid, p_name text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare nm text := left(trim(coalesce(p_name, '')), 120); who text;
+begin
+  if not public.owns_job(p_job::text) then raise exception 'Job not found.'; end if;
+  if length(nm) < 3 then raise exception 'Type your full name to sign.'; end if;
+  select name into who from public.profiles where id = auth.uid();
+  update public.jobs set permit_authorized_by = nm, permit_authorized_at = now(),
+    permit_status = case when permit_status in ('none', 'not_needed') then 'authorized' else permit_status end
+   where id = p_job;
+  perform public.log_event(p_job, '📋 ' || coalesce(who, 'Customer') || ' approved applying for the building permit (signed “' || nm || '”)');
+end $$;
+
+-- Design studio: the customer on their own job, or office/sales on theirs. Checked by the design Edge Function.
+create function public.can_design(p_job uuid) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select public.owns_job(p_job::text) or public.can_access_job(p_job);
+$$;
+
 create function public.staff_invite_sales(p_sales uuid) returns text
 language plpgsql security definer set search_path = '' as $$
 declare code text;
@@ -924,6 +984,12 @@ language sql stable security definer set search_path = '' as $$
           and public.can_access_job(split_part(p, '/', 1)::uuid));
 $$;
 
+-- ---------- design studio pictures: read-only to the people on the job ----------
+alter table public.design_versions enable row level security;
+create policy "design read" on public.design_versions for select to authenticated using (public.can_design(job_id));
+revoke all on public.design_versions from anon;
+revoke insert, update, delete on public.design_versions from authenticated;
+
 -- ---------- function permissions ----------
 revoke execute on all functions in schema public from public, anon, authenticated;
 grant execute on function public.is_staff(), public.owns_job(text), public.customer_can_read(text),
@@ -933,7 +999,7 @@ grant execute on function public.is_staff(), public.owns_job(text), public.custo
   public.crew_my_jobs(), public.crew_set_progress(uuid, text, text), public.crew_respond(uuid, text, text),
   public.crew_can_read_customer(text), public.my_sales(), public.can_access_job(uuid), public.office_can_see_profile(uuid),
   public.office_can_access_path(text), public.log_call(uuid, text, text), public.staff_invite_sales(uuid), public.staff_revoke_sales(uuid),
-  public.claim_sales_invite(text), public.office_crew_list() to authenticated;
+  public.claim_sales_invite(text), public.office_crew_list(), public.authorize_permit(uuid, text), public.can_design(uuid) to authenticated;
 grant execute on function public.sales_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_add_note(text, uuid, text) to anon, authenticated;

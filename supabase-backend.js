@@ -19,6 +19,16 @@
   const { guessKind, normEmail, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS } = TH._util;
 
   /* ---------- helpers ---------- */
+  const mapDesign = (v) => v && ({ id: v.id, parentId: v.parent_id || null, source: v.source, prompt: v.prompt || '', by: v.by_name || '', at: Date.parse(v.created_at) || Date.now(), chosen: !!v.chosen, url: v.url || null });
+  async function designCall(body) {
+    const { data, error } = await sb.functions.invoke('design', { body });
+    if (error) {
+      let msg = error.message;
+      try { const j = await error.context.json(); if (j && j.error) msg = j.error; } catch (e) { /* not JSON */ }
+      throw new Error(/Failed to send|fetch/i.test(msg) ? 'Can\'t reach the design studio. Check your connection and try again.' : msg);
+    }
+    return data || {};
+  }
   function friendly(err) {
     const m = (err && (err.message || err.error_description || err.msg)) || String(err);
     if (/Invalid login credentials/i.test(m)) return 'That email and password don\'t match.';
@@ -154,6 +164,8 @@
           description: j.description, address: j.address, zip: j.zip || '', timeframe: j.timeframe, budget: j.budget, photos: [],
           scheduledFor: local16(j.scheduled_for), contractorName: j.contractor_name || null, stage: j.stage || null,
           visitAt: local16(j.visit_at), repName: j.rep_name || null,
+          permit: { status: j.permit_status || 'none', number: j.permit_number || '', authorizedBy: j.permit_authorized_by || '', authorizedAt: ms(j.permit_authorized_at) || null },
+          designCount: Number(j.design_count) || 0,
           sharedFiles: (j.shared_files || []).length,
         }));
       },
@@ -168,6 +180,9 @@
           fetchAll(() => sb.from('crew_notes').select('id, job_id, created_at')),
           u.role === 'staff' ? fetchAll(() => sb.from('job_costs').select('job_id, crew_pay')) : Promise.resolve([]),
         ]);
+        const designRows = await fetchAll(() => sb.from('design_versions').select('id, job_id, chosen, source'));
+        const designsBy = {};
+        designRows.forEach((v) => { (designsBy[v.job_id] ||= []).push({ id: v.id, chosen: v.chosen, source: v.source }); });
         const costBy = Object.fromEntries(costs.map((c) => [c.job_id, c.crew_pay]));
         const notesBy = {};
         cnotes.forEach((n) => { (notesBy[n.job_id] ||= []).push({ id: n.id, at: ms(n.created_at) }); });
@@ -183,6 +198,9 @@
             id: j.id, number: j.number, buyerId: j.buyer_id, trade: j.trade, status: j.status, created: ms(j.created_at),
             description: j.description, address: j.address, zip: j.zip, timeframe: j.timeframe, budget: j.budget, photos: [],
             contractorId: j.contractor_id, scheduledFor: local16(j.scheduled_for), visitAt: local16(j.visit_at),
+            permit: { status: j.permit_status || 'none', number: j.permit_number || '', authorizedBy: j.permit_authorized_by || '', authorizedAt: ms(j.permit_authorized_at) || null,
+              portalUrl: p.permit_portal || '', fee: p.permit_fee == null ? null : Number(p.permit_fee) },
+            designs: designsBy[j.id] || [],
             salesId: j.sales_id || null,
             price: num(p.price), crewPay: num(costBy[j.id]), notes: p.notes || '', crewToken: p.crew_token || null,
             files: filesBy[j.id] || [], docs: docsBy[j.id] || [],
@@ -229,6 +247,10 @@
         }
         return row.id;
       },
+      async authorizePermit(jobId, name) {
+        if (!(await me())) throw new Error('Please log in.');
+        must(await sb.rpc('authorize_permit', { p_job: jobId, p_name: name || '' }));
+      },
       async logCall(id, outcome, note = '') {
         await requireOffice();
         if (!outcome) throw new Error('Pick how the call went.');
@@ -252,6 +274,16 @@
         if ('contractorId' in patch) jobPatch.contractor_id = patch.contractorId;
         if ('scheduledFor' in patch) jobPatch.scheduled_for = patch.scheduledFor;
         if ('visitAt' in patch) jobPatch.visit_at = patch.visitAt || null;
+        if (patch.permit) {
+          const pm = patch.permit;
+          if ('status' in pm) jobPatch.permit_status = pm.status;
+          if ('number' in pm) jobPatch.permit_number = String(pm.number || '').trim();
+          if ('portalUrl' in pm) {
+            if (pm.portalUrl && !/^https?:\/\//i.test(pm.portalUrl)) throw new Error('The building department link must start with https://');
+            privPatch.permit_portal = pm.portalUrl || '';
+          }
+          if ('fee' in pm) privPatch.permit_fee = pm.fee === '' || pm.fee == null ? null : Number(pm.fee);
+        }
         if ('price' in patch) privPatch.price = patch.price;
         if ('crewPay' in patch) must(await sb.from('job_costs').update({ crew_pay: patch.crewPay }).eq('job_id', id));
         if ('notes' in patch) privPatch.notes = patch.notes;
@@ -428,6 +460,21 @@
         await requireStaff();
         must(await sb.rpc('staff_revoke_crew', { p_contractor: id }));
       },
+    },
+
+    // Design studio: the design Edge Function checks access, calls the image AI with the server's key,
+    // and stores the pictures. The key never reaches the browser.
+    designs: {
+      async list(jobId) { return ((await designCall({ action: 'list', job: jobId })).versions || []).map(mapDesign); },
+      async addPhoto(jobId, photo) {
+        const image = photo instanceof Blob ? await TH.shrinkImage(photo, 1280, 0.82) : photo;
+        return mapDesign((await designCall({ action: 'photo', job: jobId, image })).version);
+      },
+      async generate(jobId, fromId, prompt) {
+        if (String(prompt || '').trim().length < 3) throw new Error('Tell us what you want changed.');
+        return mapDesign((await designCall({ action: 'generate', job: jobId, from: fromId, prompt })).version);
+      },
+      async choose(jobId, id) { await designCall({ action: 'choose', job: jobId, id }); },
     },
 
     crewPortal: {

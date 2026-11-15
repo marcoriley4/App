@@ -143,6 +143,8 @@
         list: open.filter(needsScheduling), line: (j) => `${tradeOf(j.trade).label}${j.price != null ? ' · ' + money(j.price) : ''}` },
       { id: 'invoice', icon: '🧾', title: 'Invoices to send', why: 'The next payment on the schedule is due.',
         list: jobs.filter(needsInvoice), line: (j) => { const p = nextDue(j); return `${p.label} · ${docs.usd(p.amount)}${p.inv ? ' · draft' : ''}`; } },
+      { id: 'permits', icon: '📋', title: 'Permits to apply for', why: 'The customer approved it. Apply on the building department’s website.',
+        list: open.filter((j) => j.permit?.status === 'authorized'), line: (j) => `${TH.placeOf(j.address) || j.zip} · signed by ${j.permit.authorizedBy}` },
       { id: 'unpaid', icon: '💵', title: 'Waiting for payment', why: 'Invoices with money still owed.',
         list: jobs.filter((j) => owedOn(j) > 0).sort((a, b) => owedOn(b) - owedOn(a)),
         line: (j) => `${docs.usd(owedOn(j))} due${liveInvoices(j).some((d) => docs.state(d) === 'overdue') ? ' · OVERDUE' : ''}` },
@@ -244,6 +246,8 @@
       hasCrewNews(j) ? ['👷 New crew update', 'hot'] : null,
       j.stage ? [`${stageOf(j.stage).icon} ${stageOf(j.stage).label}`, ''] : null,
       needsVisit(j) ? ['🔥 Book the rep visit', 'hot'] : null,
+      j.permit?.status === 'authorized' ? ['📋 Apply for permit', 'hot'] : null,
+      (j.designs || []).some((v) => v.chosen) ? ['🎨 Design picked', ''] : null,
       j.status === 'hot' && j.visitAt && !visitPassed(j) ? [`🤝 Visit ${fmtWhen(j.visitAt)}`, ''] : null,
       needsScheduling(j) ? ['✅ Sold? Schedule the crew', 'hot'] : null,
       needsInvoice(j) ? [`🧾 ${nextDue(j).label} invoice due`, 'hot'] : null,
@@ -269,9 +273,9 @@
     if (tabName) leadTab = tabName; else if (openId !== id) leadTab = 'overview';
     openId = id;
     releaseUrls();
-    const [files, history, jobDocs, crewNotes] = await Promise.all([api.files.list(j.id), api.jobs.log(j.id), api.docs.list(j.id), api.jobs.crewNotes(j.id)]);
+    const [files, history, jobDocs, crewNotes, designs] = await Promise.all([api.files.list(j.id), api.jobs.log(j.id), api.docs.list(j.id), api.jobs.crewNotes(j.id), api.designs.list(j.id).catch(() => [])]);
     j.crewNotesSeenAt = Date.now(); // opened → no longer "new"
-    fileUrls = files.map((f) => f.url).filter(Boolean);
+    fileUrls = [...files.map((f) => f.url), ...designs.map((v) => v.url)].filter(Boolean);
     const t = tradeOf(j.trade);
     const close = closeDrawer;
     const b = j.buyer;
@@ -337,6 +341,48 @@
     );
 
     // What the customer asked for
+    // Design studio: the customer's AI pictures, and the one they picked.
+    const chosen = designs.find((v) => v.chosen);
+    const aiCount = designs.filter((v) => v.source === 'ai').length;
+    const designCard = el('section', { class: 'card stack' },
+      el('div', { class: 'row' }, el('h3', {}, '🎨 Design studio'), el('span', { class: 'spacer' }), aiCount ? el('span', { class: 'pill' }, `${aiCount} design${aiCount === 1 ? '' : 's'}`) : null),
+      chosen ? el('figure', { class: 'design-chosen' }, el('a', { href: chosen.url, target: '_blank', rel: 'noopener' }, el('img', { src: chosen.url, alt: 'The customer’s chosen design' })),
+        el('figcaption', {}, el('b', {}, '⭐ The one they picked'), el('ol', { class: 'studio-steps' },
+          ...(() => { const out = []; for (let x = chosen; x && x.source === 'ai'; x = designs.find((y) => y.id === x.parentId)) out.unshift(x); return out; })().map((v) => el('li', {}, v.prompt)))))
+        : el('p', { class: 'muted small' }, designs.length ? `${designs.length} picture${designs.length === 1 ? '' : 's'} so far. They haven’t picked one yet.` : `${j.hasAccount ? first + ' can' : 'You can'} upload a photo of the space and describe the remodel. The AI shows a picture of it, and you keep changing it until it’s right.`),
+      el('button', { type: 'button', class: 'ghost', onclick: () => openStudio(j) }, designs.length ? 'Open the design studio' : '🎨 Start a design'),
+    );
+
+    // Building permit: customer's OK, the town's website, the packet, and the permit number.
+    const pm = j.permit || { status: 'none' };
+    const place = TH.placeOf(j.address);
+    const savedPortal = (settings.permitPortals || {})[place.toLowerCase()] || '';
+    const portalIn = el('input', { type: 'url', inputmode: 'url', placeholder: 'https://… the building department’s permit website', value: pm.portalUrl || savedPortal });
+    const permitSel = el('select', { 'aria-label': 'Permit status' }, ...TH.PERMIT_STATUSES.map((x) => el('option', { value: x.id, selected: x.id === pm.status }, x.label)));
+    const numIn = el('input', { placeholder: 'e.g. BP-2026-01542', value: pm.number || '', 'aria-label': 'Permit number' });
+    const feeIn = el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01', placeholder: 'e.g. 185', value: pm.fee ?? '', 'aria-label': 'Permit fee' });
+    const remember = place && isStaff ? el('input', { type: 'checkbox', checked: !savedPortal }) : null;
+    const portalNow = pm.portalUrl || savedPortal;
+    const permitCard = el('section', { class: 'card stack' },
+      el('div', { class: 'row' }, el('h3', {}, '📋 Building permit'), el('span', { class: 'spacer' }), el('span', { class: 'pill' + (pm.status === 'authorized' ? ' s-hot' : '') }, (TH.PERMIT_STATUSES.find((x) => x.id === pm.status) || {}).label || pm.status)),
+      pm.authorizedAt ? el('p', { class: 'small' }, `✅ ${pm.authorizedBy} approved applying on ${new Date(pm.authorizedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}.`)
+        : el('p', { class: 'muted small' }, j.hasAccount ? `Waiting for ${first}’s OK. They approve it on their My jobs page (“Apply for me”), or sign the packet below.` : `${first} doesn’t use the app: have them sign the permit packet below.`),
+      el('div', { class: 'row', style: 'flex-wrap:wrap' },
+        el('a', { class: 'btn ghost small', target: '_blank', rel: 'noopener', href: 'https://www.google.com/search?q=' + encodeURIComponent(`${place || ''} ${j.zip || ''} building department permit apply online`.trim()) }, '🔎 Find the building department'),
+        portalNow ? el('a', { class: 'btn ghost small', target: '_blank', rel: 'noopener', href: portalNow }, '🏛 Open their permit website') : null,
+        el('button', { type: 'button', class: 'ghost small', onclick: () => permitPacket(j, chosen) }, '📄 Permit packet (PDF)')),
+      el('label', { class: 'field' }, `Building department website${place ? ` for ${place}` : ''}`, portalIn),
+      remember ? el('label', { class: 'row small', style: 'font-weight:600' }, remember, `Use this website for every job in ${place}`) : null,
+      el('div', { class: 'two' }, el('label', { class: 'field' }, 'Status', permitSel), el('label', { class: 'field' }, 'Permit #', numIn)),
+      el('label', { class: 'field' }, 'Permit fee ($)', feeIn),
+      el('button', { type: 'button', onclick: async () => {
+        const url = portalIn.value.trim();
+        await update({ permit: { status: permitSel.value, number: numIn.value.trim(), fee: feeIn.value, portalUrl: url } });
+        if (remember?.checked && url && /^https?:\/\//i.test(url)) settings = await api.settings.save({ permitPortals: { ...(settings.permitPortals || {}), [place.toLowerCase()]: url } });
+      } }, 'Save permit'),
+      el('p', { class: 'muted small' }, 'Every town has its own permit website and account, so the application is submitted there. The packet has everything it asks for, and the customer sees the status and permit number in the app.'),
+    );
+
     const details = el('section', { class: 'card stack' },
       el('h3', {}, 'What the customer asked for'),
       el('p', { style: 'white-space:pre-wrap' }, j.description),
@@ -647,7 +693,7 @@
     function renderTab() {
       tabsBar.replaceChildren(...TABS.map(([id, label]) => el('button', { role: 'tab', 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } }, label)));
       const content = {
-        overview: [nextCard, progress, crewNotes.length ? crewNotesCard() : null, setup, details],
+        overview: [nextCard, progress, crewNotes.length ? crewNotesCard() : null, setup, designCard, details, permitCard],
         money: [scheduleCard, docsCard, moneyCard],
         files: [filesCard],
         history: [notesCard, crewNotesCard(), log],
@@ -667,6 +713,52 @@
     drawerRoot.replaceChildren(el('div', { class: 'drawer', onclick: (e) => { if (e.target === e.currentTarget) close(); } }, panel));
     panel.scrollTop = scroll;
     document.body.style.overflow = 'hidden';
+  }
+
+  /* ---------- design studio for a job (office, or a rep with the customer) ---------- */
+  function openStudio(j) {
+    releaseUrls();
+    const panel = el('div', { class: 'panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Design studio for ${jobNo(j)}` },
+      el('div', { class: 'panel-head' },
+        el('button', { class: 'ghost small', onclick: async () => { await load(); openLead(j.id); } }, `← ${jobNo(j)}`),
+        el('b', { style: 'flex:1' }, '🎨 Design studio')),
+      el('div', { class: 'panel-body' }, TH.studio({ jobId: j.id, trade: j.trade, photos: j.photos || [] })));
+    drawerRoot.replaceChildren(el('div', { class: 'drawer' }, panel));
+    document.body.style.overflow = 'hidden';
+  }
+
+  /* ---------- building permit packet: everything the town's application asks for ---------- */
+  function permitPacket(j, chosen) {
+    const b = j.buyer;
+    const est = approvedEstOf(j);
+    const value = jobTotal(j);
+    const pm = j.permit || {};
+    const row = (k, v) => [el('dt', {}, k), el('dd', {}, v || '—')];
+    const sheet = el('article', { class: 'doc-sheet permit-sheet' },
+      el('header', { class: 'doc-head' },
+        el('div', { class: 'doc-co' }, el('img', { class: 'doc-logo-img', src: 'img/logo.jpg', alt: '' }), el('div', { class: 'doc-logo' }, el('b', {}, settings.name || 'Top Hat Contracting'))),
+        el('div', { class: 'doc-title' }, el('h1', {}, 'Building permit'), el('dl', {}, ...row('Packet date', docs.fmtDate(Date.now())), ...row('Job', jobNo(j))))),
+      el('section', { class: 'doc-notes' }, el('h4', {}, 'Property'), el('dl', { class: 'dl' },
+        ...row('Address', `${j.address}${j.zip ? ' ' + j.zip : ''}`), ...row('Building department', TH.placeOf(j.address)),
+        ...row('Department website', pm.portalUrl || (settings.permitPortals || {})[TH.placeOf(j.address).toLowerCase()]))),
+      el('section', { class: 'doc-notes' }, el('h4', {}, 'Owner'), el('dl', { class: 'dl' }, ...row('Name', b.name), ...row('Phone', b.phone), ...row('Email', b.email))),
+      el('section', { class: 'doc-notes' }, el('h4', {}, 'Contractor'), el('dl', { class: 'dl' },
+        ...row('Company', settings.name || 'Top Hat Contracting'), ...row('License #', settings.license), ...row('Phone', settings.phone), ...row('Email', settings.email), ...row('Address', settings.address))),
+      el('section', { class: 'doc-notes' }, el('h4', {}, 'Scope of work'), el('dl', { class: 'dl' },
+        ...row('Type of work', tradeOf(j.trade).label), ...row('Estimated job value', value ? docs.usd(value) + (est ? ` (estimate ${est.number})` : '') : ''),
+        ...row('Planned start', j.scheduledFor ? fmtWhen(j.scheduledFor) : ''), ...row('Permit #', pm.number)),
+        el('p', { style: 'white-space:pre-wrap' }, j.description),
+        est ? el('ul', {}, ...est.items.filter((i) => i.desc).map((i) => el('li', {}, i.desc))) : null),
+      chosen?.url ? el('section', { class: 'doc-notes' }, el('h4', {}, 'Design the owner picked (illustration)'), el('img', { class: 'permit-design', src: chosen.url, alt: '' })) : null,
+      el('section', { class: 'doc-notes' }, el('h4', {}, 'Owner authorization'),
+        el('p', {}, `I authorize ${settings.name || 'Top Hat Contracting'} to apply for the building permit for the work above at my property, and to act for me with the building department on this permit.`),
+        pm.authorizedAt ? el('p', {}, el('b', {}, `Signed electronically: ${pm.authorizedBy}`), ` · ${new Date(pm.authorizedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })} (in the Top Hat app)`)
+          : el('div', { class: 'sign-lines' }, el('div', {}, 'Owner signature'), el('div', {}, 'Printed name'), el('div', {}, 'Date'))),
+      el('section', { class: 'doc-notes' }, el('h4', {}, 'Usually needed with the application'),
+        el('ul', {}, ...['Site plan or drawing of the work (with measurements)', 'Contractor license and proof of insurance', 'Signed estimate or contract', 'Photos of the existing space', 'Product or material specs (e.g. cabinets, windows, roofing)'].map((x) => el('li', {}, '☐ ' + x)))),
+      el('footer', { class: 'doc-foot' }, `${settings.name || 'Top Hat Contracting'} · Permit packet for ${jobNo(j)}`),
+    );
+    docs.viewSheet(sheet, `Permit packet ${jobNo(j)}`);
   }
 
   /* ---------- office enters a new job (phone call, walk-in…) ---------- */
@@ -971,7 +1063,23 @@
       f('invoiceTerms', 'Notes on invoices', { rows: 2 }),
       el('button', { type: 'submit' }, 'Save'),
     );
-    return [form];
+    // AI design studio switch. Preview: the key lives in this browser only. Live: it's a server secret.
+    const ai = TH.ai.config();
+    const aiKey = el('input', { type: 'password', autocomplete: 'off', placeholder: 'Paste your Google AI Studio API key', value: ai.key || '' });
+    const aiModel = el('input', { value: ai.model || TH.ai.DEFAULT_IMAGE_MODEL, autocomplete: 'off', spellcheck: 'false' });
+    const aiSaved = el('span', { class: 'saved-note', hidden: true }, 'Saved ✓');
+    const aiCard = el('section', { class: 'card stack' },
+      el('div', { class: 'row' }, el('h2', {}, '🎨 AI design studio'), el('span', { class: 'spacer' }), aiSaved),
+      el('p', { class: 'muted small' }, 'Customers (and your reps at the visit) upload a photo and describe the remodel. Google’s Gemini image AI draws it, and they keep changing it until it’s right. Each picture costs a few cents on your Google account.'),
+      api.mode === 'preview'
+        ? el('div', { class: 'stack' },
+          el('p', { class: 'small' }, 'To try it in preview: get a key at ', el('a', { href: 'https://aistudio.google.com/apikey', target: '_blank', rel: 'noopener' }, 'aistudio.google.com/apikey'), ' and paste it here. In preview it’s saved in this browser only. When the app goes live, the key is kept on the server instead, never in the app.'),
+          el('label', { class: 'field' }, 'API key', aiKey),
+          el('label', { class: 'field' }, 'Image model', el('span', { class: 'hint' }, 'Google renames these now and then. Leave as is unless a newer image model is out.'), aiModel),
+          el('button', { type: 'button', onclick: () => { TH.ai.set({ key: aiKey.value, model: aiModel.value }); aiSaved.hidden = false; setTimeout(() => { aiSaved.hidden = true; }, 1600); } }, 'Save'))
+        : el('p', { class: 'small' }, 'Live: the API key is set on the server (Supabase → Edge Functions → Secrets → GEMINI_API_KEY). Customers never see it.'),
+    );
+    return [form, aiCard];
   }
 
   /* ---------- sales team (owner/office) ---------- */

@@ -11,6 +11,10 @@ Reps and crews only go out to customers who have already agreed to the price, so
 3. **Rep visit:** for a hot lead, pick a sales rep and a date and time for the walkthrough, then text the customer the visit time in one tap.
 4. **Sold:** after the visit, tap **✅ Sold: pick crew & date** (or **Didn't close**). The crew takes it from there.
 
+**🎨 Design studio (AI remodel pictures):** on **My jobs**, customers tap **Design studio**, take or upload a photo of the space, and describe what they want ("take out the center island, L-shaped kitchen along the north and south walls, white shaker cabinets, quartz counters"). Google's Gemini image AI returns a picture of the remodel. They keep asking for changes (each starts from the picture on screen, or any earlier one) until it's right, then tap **⭐ This is the one**. The office sees the chosen picture and every change on the job, and reps can open the same studio with the customer at the visit. Turn it on in **Business → AI design studio** (preview: paste a Google AI Studio API key, kept in that browser only; live: the key is a server secret, see Going live). Pictures are capped at 40 per job per day to keep costs down.
+
+**📋 Building permits:** customers tap **Apply for me** on their job, tick the box and type their name to authorize Top Hat to apply. The job then shows on **Today → Permits to apply for**. Each job's **Building permit** card has **Find the building department** (a search for that town's permit site), the department's website (remembered for every job in that town), a printable **permit packet** with the property, owner, contractor, scope, job value, the chosen design and the owner's signature, and the status and permit number, which the customer sees. Every town has its own permit website and account (and many require the licensed contractor to apply), so the application itself is submitted on that site; there's no single national system to send it to automatically.
+
 **Payment schedule:** the job total is split into payments (default: **Deposit 50%** when the job is sold, **Progress payment 25%** when work starts, **Final payment 25%** when the job is finished). Change the names, percentages and timing in **Business → Payment schedule**; it has to add up to 100%. Every job's **Money** tab shows each payment with its invoice and status, and the job's **Next step** asks for each invoice as the job reaches that point (**Send the deposit invoice: $925**). One tap fills in the invoice for that payment. Estimates print the schedule, and each schedule invoice prints "Payment 1 of 3" with the full schedule. **Today → Invoices to send** lists every payment that's due.
 
 Today shows each stage: new leads to call, **🔥 hot leads that need a rep visit**, **🤝 rep visits today and tomorrow**, **🤔 customers thinking it over**, and **visits done that need a crew**.
@@ -100,6 +104,13 @@ Who-sees-what is enforced by the database (row-level security and storage polici
 - Crew reach a job only through its private upload code.
 
 `supabase/` also holds the security test that runs the schema against Postgres and checks each rule (166 checks).
+
+### Turning on the AI design studio (live)
+
+1. Get an API key at https://aistudio.google.com/apikey (Google account; billing on for image generation).
+2. Deploy the server function and save the key as a secret (never in the code):
+   `supabase functions deploy design` and `supabase secrets set GEMINI_API_KEY=...`
+3. Optional secrets: `DESIGN_MODEL` (default `gemini-2.5-flash-image`; Google renames image models now and then) and `DESIGN_DAILY_LIMIT` (default 40 pictures per job per day).
 
 ## Run it locally
 

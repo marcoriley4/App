@@ -533,6 +533,74 @@
     return { ...ctx, j };
   }
 
+  /* ---------- AI design studio ---------- */
+  // The image model can change as Google releases new ones: set it in Business → AI design studio.
+  const DEFAULT_IMAGE_MODEL = 'gemini-2.5-flash-image';
+  const AI_KEY = 'tophat.ai.v1';
+  // Preview only: the API key is kept in this browser. When live, the key is a server secret instead.
+  function aiConfig() { try { return { model: DEFAULT_IMAGE_MODEL, ...(JSON.parse(localStorage.getItem(AI_KEY)) || {}) }; } catch (e) { return { model: DEFAULT_IMAGE_MODEL }; } }
+  function setAiConfig(cfg) { try { localStorage.setItem(AI_KEY, JSON.stringify({ key: String(cfg.key || '').trim(), model: String(cfg.model || '').trim() || DEFAULT_IMAGE_MODEL })); } catch (e) { /* ignore */ } }
+  const blobToDataUrl = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
+  // What we ask the image model. Kept the same in supabase/functions/design so preview and live behave alike.
+  function designPrompt({ trade, description, earlier, request }) {
+    return [
+      'You are a photorealistic home remodeling visualizer for a contracting company.',
+      'Edit the attached photo of the customer\'s space to show the remodel they describe.',
+      'Keep the same room, camera angle, walls, windows, doors, ceiling and lighting unless they ask to change them. Make it look like a real photo of finished, buildable work with real materials. No text, labels or people in the picture.',
+      trade ? `Type of project: ${trade}.` : '',
+      description ? `What they told us about the job: ${String(description).slice(0, 600)}` : '',
+      earlier && earlier.length ? `Changes already made in this picture: ${earlier.join(' | ').slice(0, 1500)}` : '',
+      `Now make this change: ${request}`,
+    ].filter(Boolean).join('\n');
+  }
+  async function callImageAI(ai, dataUrl, text) {
+    const [, mime, b64] = String(dataUrl).match(/^data:([^;]+);base64,(.*)$/) || [];
+    if (!b64) throw new Error('That picture couldn’t be read.');
+    let res;
+    try {
+      res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(ai.model || DEFAULT_IMAGE_MODEL)}:generateContent`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': ai.key },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ inline_data: { mime_type: mime, data: b64 } }, { text }] }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } }),
+      });
+    } catch (e) { throw new Error('Couldn’t reach the AI service. Check your internet connection and try again.'); }
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error('The AI service said: ' + (out.error?.message || `error ${res.status}`));
+    const parts = out.candidates?.[0]?.content?.parts || [];
+    const img = parts.map((p) => p.inlineData || p.inline_data).find((x) => x && x.data);
+    if (!img) {
+      const said = parts.map((p) => p.text).filter(Boolean).join(' ').slice(0, 200);
+      throw new Error(said ? 'The AI couldn’t make that picture: ' + said : 'The AI didn’t send back a picture. Try saying it a different way.');
+    }
+    return `data:${img.mimeType || img.mime_type || 'image/png'};base64,${img.data}`;
+  }
+  // Customers reach their own jobs; office and sales the jobs they can see.
+  async function designJob(jobId) {
+    const u = await me();
+    if (!u) throw new Error('Please log in.');
+    if (u.role === 'buyer') {
+      const d = await db();
+      const j = d.jobs.find((x) => x.id === jobId && x.buyerId === u.id);
+      if (!j) throw new Error('Job not found.');
+      return { d, j, u };
+    }
+    const { d, j } = await officeJob(jobId);
+    return { d, j, u };
+  }
+
+  /* ---------- building permits ---------- */
+  const PERMIT_STATUSES = [
+    { id: 'none', label: 'Not started', buyer: '' },
+    { id: 'authorized', label: 'Customer approved: apply', buyer: 'You approved it. We’ll apply for you.' },
+    { id: 'preparing', label: 'Preparing the application', buyer: 'We’re getting the application ready.' },
+    { id: 'applied', label: 'Applied: waiting on the town', buyer: 'Applied. Waiting on the building department.' },
+    { id: 'approved', label: 'Approved', buyer: 'Approved' },
+    { id: 'inspections', label: 'Inspections', buyer: 'Inspections underway' },
+    { id: 'closed', label: 'Closed (final inspection passed)', buyer: 'Closed: final inspection passed' },
+    { id: 'not_needed', label: 'Not needed', buyer: 'No permit needed for this job' },
+  ];
+  // The town or city, from "Street, City" addresses. Used to remember each building department's website.
+  const placeOf = (address) => { const parts = String(address || '').split(',').map((x) => x.trim()).filter(Boolean); return parts.length > 1 ? parts[parts.length - 1].replace(/\s+\d{5}(-\d{4})?$/, '') : ''; };
+
   async function withUrl(f) {
     const blob = await blobs.get(f.id).catch(() => null);
     return { ...f, url: blob ? URL.createObjectURL(blob) : null };
@@ -629,6 +697,19 @@
         d.jobs.push(rec); writeDb(d);
         return rec.id;
       },
+      // Customer: "Yes, apply for my building permit." Their typed name is their signature.
+      async authorizePermit(jobId, name) {
+        const u = await me();
+        const d = await db();
+        const j = u && d.jobs.find((x) => x.id === jobId && x.buyerId === u.id);
+        if (!j) throw new Error('Job not found.');
+        name = String(name || '').trim();
+        if (name.length < 3) throw new Error('Type your full name to sign.');
+        const was = j.permit || { status: 'none' };
+        j.permit = { ...was, status: ['none', 'not_needed'].includes(was.status) ? 'authorized' : was.status, authorizedBy: name, authorizedAt: Date.now() };
+        j.log.push({ at: Date.now(), text: `📋 ${u.name} approved applying for the building permit (signed “${name}”)` });
+        writeDb(d);
+      },
       // Buyer view: their own jobs, without internal notes.
       async mine() {
         const u = await me();
@@ -640,6 +721,8 @@
             id: j.id, number: j.number, trade: j.trade, status: j.status, created: j.created, description: j.description, address: j.address, zip: j.zip,
             timeframe: j.timeframe, budget: j.budget, photos: j.photos, scheduledFor: j.scheduledFor,
             visitAt: j.status === 'hot' ? j.visitAt || null : null,
+            permit: j.permit ? { status: j.permit.status, number: j.permit.number || '', authorizedBy: j.permit.authorizedBy || '', authorizedAt: j.permit.authorizedAt || null } : { status: 'none' },
+            designCount: (j.designs || []).length,
             repName: j.status === 'hot' && j.visitAt ? ((d.team || []).find((x) => x.id === j.salesId)?.name || '').split(' ')[0] || null : null,
             contractorName: c && ['scheduled', 'in_progress', 'completed'].includes(j.status) ? c.name : null,
             stage: j.stage || null,
@@ -701,6 +784,17 @@
         const usd = (n) => n == null ? 'cleared' : '$' + Number(n).toLocaleString();
         if ('price' in patch && patch.price !== j.price) j.log.push({ at: Date.now(), text: `Customer price → ${usd(patch.price)}` });
         if ('crewPay' in patch && patch.crewPay !== j.crewPay) j.log.push({ at: Date.now(), text: `Crew pay → ${usd(patch.crewPay)}` });
+        if (patch.permit) {
+          const was = j.permit || { status: 'none' };
+          const next = { ...was };
+          for (const k of ['status', 'number', 'portalUrl', 'fee', 'notes']) if (k in patch.permit) next[k] = patch.permit[k];
+          if (!PERMIT_STATUSES.some((x) => x.id === next.status)) throw new Error('Pick a permit status.');
+          if (next.portalUrl && !/^https?:\/\//i.test(next.portalUrl)) throw new Error('The building department link must start with https://');
+          next.fee = next.fee === '' || next.fee == null ? null : Number(next.fee);
+          if (next.status !== was.status) j.log.push({ at: Date.now(), text: `📋 Permit → ${PERMIT_STATUSES.find((x) => x.id === next.status).label}` });
+          if ((next.number || '') !== (was.number || '') && next.number) j.log.push({ at: Date.now(), text: `📋 Permit # ${next.number}` });
+          j.permit = next;
+        }
         for (const k of ['contractorId', 'scheduledFor', 'visitAt', 'price', 'crewPay', 'notes']) if (k in patch) j[k] = patch[k] || (k === 'notes' ? '' : patch[k] === 0 ? 0 : null);
         writeDb(d);
         return j;
@@ -1077,6 +1171,59 @@
     },
 
     // Crew login: invite → own password → see only their own assigned jobs. Never customer prices.
+    // Design studio: photos of a space, and AI pictures of the remodel the customer describes.
+    // Customers use it on their own jobs; the office and reps on theirs (e.g. at the rep visit).
+    designs: {
+      async list(jobId) {
+        const { j } = await designJob(jobId);
+        return Promise.all((j.designs || []).map(async (v) => {
+          const blob = await blobs.get('design:' + v.id).catch(() => null);
+          return { ...v, url: blob ? URL.createObjectURL(blob) : null };
+        }));
+      },
+      // Start from a photo: the customer's request photo (data URL) or a new upload (File).
+      async addPhoto(jobId, photo) {
+        const { d, j, u } = await designJob(jobId);
+        const blob = photo instanceof Blob ? await (await fetch(await shrinkImage(photo, 1280, 0.82))).blob() : await (await fetch(photo)).blob();
+        const v = { id: uid(), parentId: null, source: 'photo', prompt: '', by: u.name, at: Date.now(), chosen: false };
+        await blobs.put('design:' + v.id, blob);
+        (j.designs ||= []).push(v);
+        j.log.push({ at: Date.now(), text: `🎨 Design studio: photo added by ${u.name}` });
+        writeDb(d);
+        return v;
+      },
+      // Make a new picture from an earlier one, following the customer's words.
+      async generate(jobId, fromId, prompt) {
+        const { d, j, u } = await designJob(jobId);
+        prompt = String(prompt || '').trim().slice(0, 1500);
+        if (prompt.length < 3) throw new Error('Tell us what you want changed.');
+        const from = (j.designs || []).find((v) => v.id === fromId);
+        const src = from && await blobs.get('design:' + from.id).catch(() => null);
+        if (!src) throw new Error('Pick a photo to start from.');
+        const ai = aiConfig();
+        if (!ai.key && !window.TH_AI_MOCK) throw new Error('The AI design studio isn’t turned on yet. The office can turn it on in Business → AI design studio.');
+        const steps = [];
+        for (let v = from; v && v.source === 'ai'; v = j.designs.find((x) => x.id === v.parentId)) steps.unshift(v.prompt);
+        const instruction = designPrompt({ trade: (TRADES.find((t) => t.id === j.trade) || {}).label, description: j.description, earlier: steps, request: prompt });
+        const out = window.TH_AI_MOCK ? await window.TH_AI_MOCK(await blobToDataUrl(src), instruction) : await callImageAI(ai, await blobToDataUrl(src), instruction);
+        const blob = await (await fetch(out)).blob();
+        const v = { id: uid(), parentId: from.id, source: 'ai', prompt, by: u.name, at: Date.now(), chosen: false };
+        await blobs.put('design:' + v.id, blob);
+        j.designs.push(v);
+        writeDb(d);
+        return v;
+      },
+      // "This is the one": the design the office should quote and build.
+      async choose(jobId, id) {
+        const { d, j, u } = await designJob(jobId);
+        const v = (j.designs || []).find((x) => x.id === id);
+        if (!v) throw new Error('Not found.');
+        j.designs.forEach((x) => { x.chosen = x.id === id; });
+        j.log.push({ at: Date.now(), text: `⭐ Design picked by ${u.name}${v.prompt ? `: “${v.prompt.slice(0, 120)}”` : ''}` });
+        writeDb(d);
+      },
+    },
+
     crewPortal: {
       async inviteInfo(code) {
         const d = await db();
@@ -1284,5 +1431,5 @@
           el('span', { class: 'muted' }, '→')))));
   }
 
-  window.TH = { STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+  window.TH = { PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();

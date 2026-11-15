@@ -589,6 +589,64 @@ set role authenticated;
 select t.ok(public.my_documents()::text ~ '"schedule_step": 0', 'customer sees which payment the invoice is for');
 reset role;
 
+-- ========== Building permit + design studio ==========
+select set_config('request.jwt.claim.sub', :'B', false);
+set role authenticated;
+do $$ begin
+  begin perform public.authorize_permit(current_setting('t.job')::uuid, 'Bob Buyer'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'other customer cannot approve a permit on someone else''s job'); end;
+end $$;
+select t.ok(not public.can_design(current_setting('t.job')::uuid), 'other customer cannot use the design studio on A''s job');
+reset role;
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+do $$ begin
+  begin perform public.authorize_permit(current_setting('t.job')::uuid, ' '); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'permit approval needs a typed name'); end;
+end $$;
+select public.authorize_permit(current_setting('t.job')::uuid, 'Ann Buyer');
+select t.ok((select x->>'permit_status' from jsonb_array_elements(public.my_jobs()) x where x->>'id' = current_setting('t.job')) = 'authorized', 'customer approves the permit');
+select t.ok((select x->>'permit_authorized_by' from jsonb_array_elements(public.my_jobs()) x where x->>'id' = current_setting('t.job')) = 'Ann Buyer', 'signature saved');
+update public.jobs set permit_status = 'approved';
+select t.ok((select x->>'permit_status' from jsonb_array_elements(public.my_jobs()) x where x->>'id' = current_setting('t.job')) = 'authorized', 'customer cannot set the permit status');
+select t.ok(public.can_design(current_setting('t.job')::uuid), 'customer can use the design studio on own job');
+do $$ begin
+  begin insert into public.design_versions (job_id, source, path) values (current_setting('t.job')::uuid, 'photo', 'x'); perform t.ok(false, 'x');
+  exception when insufficient_privilege then perform t.ok(true, 'customer cannot write design rows directly'); end;
+end $$;
+reset role;
+-- The design Edge Function writes with the service role (here: the table owner).
+insert into public.design_versions (job_id, source, path, prompt) values (current_setting('t.job')::uuid, 'ai', current_setting('t.job') || '/design/a.png', 'L-shaped kitchen');
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+select t.ok((select count(*) from public.design_versions) = 1, 'customer sees own design pictures');
+select t.ok((select (x->>'design_count')::int from jsonb_array_elements(public.my_jobs()) x where x->>'id' = current_setting('t.job')) = 1, 'my_jobs counts design pictures');
+reset role;
+select set_config('request.jwt.claim.sub', :'B', false);
+set role authenticated;
+select t.ok((select count(*) from public.design_versions) = 0, 'other customer sees no design pictures');
+reset role;
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+select t.ok((select count(*) from public.design_versions) = 1, 'office sees design pictures');
+do $$ begin
+  begin update public.design_versions set chosen = true; perform t.ok(false, 'x');
+  exception when insufficient_privilege then perform t.ok(true, 'office cannot change design rows directly either'); end;
+end $$;
+update public.jobs set permit_status = 'applied', permit_number = 'BP-77' where id = current_setting('t.job')::uuid;
+update public.job_private set permit_portal = 'https://permits.example.gov', permit_fee = 185 where job_id = current_setting('t.job')::uuid;
+select t.ok(exists (select 1 from public.job_events where text = '📋 Permit → Applied: waiting on the town'), 'permit status change logged');
+select t.ok(exists (select 1 from public.job_events where text = '📋 Permit # BP-77'), 'permit number logged');
+do $$ begin
+  begin update public.job_private set permit_portal = 'javascript:alert(1)' where job_id = current_setting('t.job')::uuid; perform t.ok(false, 'x');
+  exception when check_violation then perform t.ok(true, 'permit website must be a web link'); end;
+end $$;
+reset role;
+set role anon;
+select set_config('t.cj', coalesce(public.crew_job(current_setting('t.token2'))::text, ''), false);
+reset role;
+select t.ok(current_setting('t.cj') !~ 'permit|BP-77|design', 'crew link shows no permit or design details');
+
 -- ========== Hot lead: phone estimate agreed, rep visit booked ==========
 select set_config('request.jwt.claim.sub', :'S', false);
 set role authenticated;

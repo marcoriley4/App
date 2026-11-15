@@ -67,7 +67,7 @@
   function clearDraft() { draft = emptyDraft(); try { localStorage.removeItem(DRAFT_KEY); } catch (e) { /* ignore */ } }
 
   /* ---------- routing ---------- */
-  const routes = { '': home, request, done, jobs: myJobs, login };
+  const routes = { '': home, request, done, jobs: myJobs, login, design };
   async function route() {
     const name = location.hash.replace(/^#\/?/, '').split('?')[0];
     const fn = routes[name] || home;
@@ -345,6 +345,10 @@
           j.stage && (TH.STAGES || []).find((x) => x.id === j.stage)
             ? el('div', { class: 'callout stage' }, `${TH.STAGES.find((x) => x.id === j.stage).icon} ${TH.STAGES.find((x) => x.id === j.stage).buyer}`)
             : null,
+          j.status !== 'lost' ? el('a', { class: 'btn studio-btn', href: `#/design?job=${j.id}` },
+            el('span', {}, '🎨 Design studio'),
+            el('span', { class: 'small' }, j.designCount ? `${j.designCount} picture${j.designCount === 1 ? '' : 's'} · keep changing it` : 'See your remodel before we build it')) : null,
+          j.status !== 'lost' ? permitBox(j, me) : null,
           (paper[j.id] || []).length ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Estimates & invoices'),
             el('div', { class: 'doc-list' }, ...paper[j.id].map((dc) => el('button', { type: 'button', class: 'doc-row', onclick: () => openPaper(j, dc) },
               el('span', { class: 'ic' }, dc.type === 'invoice' ? '🧾' : '📝'),
@@ -358,6 +362,50 @@
         );
       }),
     ));
+  }
+
+  /* ---------- design studio: photos + "here's what I want" → AI pictures ---------- */
+  async function design() {
+    const me = await api.auth.me();
+    const jobId = new URLSearchParams(location.hash.split('?')[1] || '').get('job');
+    if (!me) return go('login?next=jobs');
+    const j = (await api.jobs.mine()).find((x) => x.id === jobId);
+    if (!j) { view.append(el('div', { class: 'card', style: 'margin-top:24px' }, 'Job not found. ', el('a', { href: '#/jobs' }, 'Back to My jobs'))); return; }
+    const trade = find(TRADES, j.trade) || TRADES.at(-1);
+    view.append(el('div', { class: 'stack', style: 'margin-top:16px' },
+      el('a', { href: '#/jobs', class: 'small' }, '← My jobs'),
+      el('h1', {}, '🎨 Design studio'),
+      el('p', { class: 'muted' }, `${trade.icon} ${trade.label} · TH-${j.number} · ${j.address}`),
+      TH.studio({ jobId: j.id, trade: j.trade, photos: j.photos || [] })));
+  }
+
+  // Building permit: the customer tells Top Hat to apply, and signs with their name.
+  function permitBox(j, me) {
+    const p = j.permit || { status: 'none' };
+    const st = (TH.PERMIT_STATUSES || []).find((x) => x.id === p.status);
+    if (p.status !== 'none') {
+      return el('div', { class: 'callout permit' }, '📋 ', el('b', {}, 'Building permit: '), st ? st.buyer : p.status,
+        p.number ? el('span', {}, ` · Permit # ${p.number}`) : null,
+        p.authorizedAt ? el('span', { class: 'muted small', style: 'display:block' }, `You approved applying on ${new Date(p.authorizedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} (signed “${p.authorizedBy}”).`) : null);
+    }
+    const err = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const nameIn = el('input', { autocomplete: 'name', placeholder: 'Your full name', value: '', 'aria-label': 'Type your full name to sign' });
+    const ok = el('input', { type: 'checkbox' });
+    const form = el('div', { class: 'stack', hidden: true },
+      el('label', { class: 'match-box' }, ok, el('span', { class: 'small' },
+        'I ask Top Hat Contracting to apply for the building permit for this job on my behalf, and to share my name, address and the project details with the local building department.')),
+      el('label', { class: 'field' }, 'Sign by typing your full name', nameIn),
+      err,
+      el('button', { type: 'button', class: 'gold', onclick: async (e) => {
+        if (!ok.checked) { err.textContent = 'Tick the box to say you approve.'; err.hidden = false; return; }
+        e.currentTarget.disabled = true;
+        try { await api.jobs.authorizePermit(j.id, nameIn.value); route(); }
+        catch (ex) { err.textContent = ex.message; err.hidden = false; e.currentTarget.disabled = false; }
+      } }, 'Yes, apply for my permit'));
+    return el('div', { class: 'permit-ask stack' },
+      el('div', { class: 'row' }, el('span', {}, '📋'), el('span', { class: 'small', style: 'flex:1' }, 'Need a building permit? We can apply for you.'),
+        el('button', { type: 'button', class: 'ghost small', onclick: (e) => { form.hidden = false; e.currentTarget.hidden = true; if (!nameIn.value) nameIn.value = me?.name || ''; } }, 'Apply for me')),
+      form);
   }
 
   /* ---------- log in ---------- */

@@ -599,3 +599,33 @@ button.ghost, .btn.ghost { border-width: 1.5px; }
 /* Back one step on the Next step card */
 .next-step .back-step { display: block; margin: 14px 0 0; padding: 10px 14px; min-height: 44px; width: auto; background: var(--surface); color: var(--text); border: 1.5px dashed var(--border); border-radius: 12px; font-weight: 700; font-size: .92rem; text-align: left; box-shadow: none; }
 .next-step .back-step:hover { border-color: var(--ink); }
+
+/* Design studio */
+.studio-main { margin: 0; background: #000; border-radius: 16px; overflow: hidden; }
+.studio-main img { display: block; width: 100%; max-height: 70vh; object-fit: contain; background: #000; }
+.studio-main figcaption { background: var(--surface); padding: 10px 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.studio-steps { margin: 0; padding-left: 22px; display: grid; gap: 4px; font-size: .92rem; }
+.studio-steps li::marker { font-weight: 800; }
+.studio-ask { border: 2px solid var(--gold); }
+.studio-strip { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+.studio-strip button { flex: none; width: 96px; padding: 4px; border-radius: 12px; border: 2px solid var(--border); background: var(--surface); display: flex; flex-direction: column; gap: 4px; font-size: .72rem; font-weight: 700; color: var(--text); min-height: 0; }
+.studio-strip button.on { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold); }
+.studio-strip img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; }
+.studio-pick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.studio-pick button { padding: 0; border: 2px solid var(--border); border-radius: 12px; overflow: hidden; min-height: 0; background: none; }
+.studio-pick img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+.spinner { display: inline-block; width: 16px; height: 16px; border: 3px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -3px; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.studio-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; border: 2px solid var(--gold); background: var(--gold-soft); color: var(--text); }
+.studio-btn > span:first-child { font-weight: 800; }
+.design-chosen { margin: 0; display: grid; gap: 8px; }
+.design-chosen img { width: 100%; border-radius: 12px; display: block; }
+/* Permits */
+.permit-ask { border: 1px dashed var(--border); border-radius: 12px; padding: 10px; }
+.callout.permit { background: var(--surface-2); }
+.permit-sheet .dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
+.permit-sheet .dl dt { color: #555; }
+.permit-sheet .dl dd { margin: 0; }
+.permit-design { max-width: 100%; max-height: 320px; border-radius: 8px; }
+.sign-lines { display: grid; grid-template-columns: 2fr 2fr 1fr; gap: 16px; margin-top: 28px; }
+.sign-lines div { border-top: 1px solid #333; padding-top: 4px; font-size: .8rem; color: #555; }
