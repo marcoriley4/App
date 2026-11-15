@@ -98,6 +98,17 @@
 
   /* ---------- home ---------- */
   async function home() {
+    // The 4 steps: a short line each, tap one for the full story.
+    const STEPS = [
+      ['🎨', 'Design it & agree on a price', 'Share photos or describe it. Pick the design, colors and details.',
+        'Upload pictures of your space or describe the project you’d like done. Finalize the design, colors and details, then agree on an estimated price.'],
+      ['📐', 'Meet your project manager', 'We measure, finalize the estimate and put you on the calendar.',
+        'Your Top Hat project manager comes out to field-verify measurements, go over the details, finalize the estimate and collect your deposit. Your project goes on the Top Hat calendar and is assigned to a contractor.'],
+      ['🏗️', 'Permits, materials & we begin', 'Permits pulled, materials delivered, work starts.',
+        'Your contractor applies for the local building permits if required and visits the site. Materials are ordered and delivered, and your project begins.'],
+      ['🥤', 'Relax & watch the magic happen', 'Sit back while Top Hat handles the rest.',
+        'Grab a cold beverage and sit back while Top Hat handles all the things most people don’t want to do.'],
+    ];
     view.append(el('div', { class: 'stack' },
       el('section', { class: 'hero' },
         el('span', { class: 'hero-tag' }, 'Premier residential contracting'),
@@ -105,23 +116,24 @@
         el('a', { class: 'btn gold block hero-cta', href: '#/request', onclick: () => { if (draft.step > 4) clearDraft(); } },
           el('h1', {}, 'Start your project the right way, right now.')),
         el('p', { class: 'cta-note' }, 'Tap to start'),
-        el('p', { class: 'hero-pitch' },
-          el('span', { class: 'hl' }, 'Get a free estimate for your project.'),
-          'Tell us about it, add your measurements and photos, and we’ll call you with an estimate over the phone.',
-          el('span', { class: 'pitch-close' }, 'Like the price? Book your spot.',
-            el('small', {}, 'Your ', el('span', { class: 'brand-hl' }, 'Top Hat'), ' project manager comes out, goes over every detail with you, and gets you on the schedule.'))),
       ),
-      el('h2', { class: 'how-title' }, 'How it works'),
-      el('ol', { class: 'how-steps' },
-        el('li', {}, el('span', { class: 'n' }, '1'), el('div', {}, el('b', {}, 'Design it and agree on a price'),
-          el('span', {}, 'Upload pictures of your space or describe the project you’d like done. Finalize the design, colors and details, then agree on an estimated price.'))),
-        el('li', {}, el('span', { class: 'n' }, '2'), el('div', {}, el('b', {}, 'Meet your Top Hat project manager'),
-          el('span', {}, 'Your project manager comes out to field-verify measurements, go over the details, finalize the estimate and collect your deposit. Your project goes on the Top Hat calendar and is assigned to a contractor.'))),
-        el('li', {}, el('span', { class: 'n' }, '3'), el('div', {}, el('b', {}, 'Permits, materials, and we begin'),
-          el('span', {}, 'Your contractor applies for the local building permits if required and visits the site. Materials are ordered and delivered, and your project begins.'))),
-        el('li', {}, el('span', { class: 'n' }, '4'), el('div', {}, el('b', {}, 'Relax and watch the magic happen'),
-          el('span', {}, 'Grab a cold beverage and sit back while Top Hat handles all the things most people don’t want to do.'))),
+      el('section', { class: 'four-steps' },
+        el('h2', {}, 'It’s simple: ', el('span', { class: 'hl' }, '4 steps'), ' and you’re on your way'),
+        el('ol', {}, ...STEPS.map(([ic, title, short, long], i) => el('li', {},
+          el('details', {},
+            el('summary', {},
+              el('span', { class: 'n' }, String(i + 1)),
+              el('span', { class: 'ic', 'aria-hidden': 'true' }, ic),
+              el('span', { class: 'txt' }, el('b', {}, title), el('span', {}, short)),
+              el('span', { class: 'more', 'aria-hidden': 'true' })),
+            el('p', {}, long))))),
       ),
+      el('section', { class: 'hero hero-bottom' }, el('p', { class: 'hero-pitch' },
+        el('span', { class: 'hl' }, 'Get a free estimate for your project.'),
+        'Tell us about it, add your measurements and photos, and we’ll call you with an estimate over the phone.',
+        el('span', { class: 'pitch-close' }, 'Like the price? Book your spot.',
+          el('small', {}, 'Your ', el('span', { class: 'brand-hl' }, 'Top Hat'), ' project manager comes out, goes over every detail with you, and gets you on the schedule.')))),
+      el('a', { class: 'btn gold block', href: '#/request', onclick: () => { if (draft.step > 4) clearDraft(); } }, 'Get my free estimate'),
     ));
   }
 
