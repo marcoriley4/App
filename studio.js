@@ -90,7 +90,7 @@
           el('div', { class: 'studio-strip' }, ...versions.slice().reverse().map((v) => el('button', { type: 'button', class: v.id === cur.id ? 'on' : '', 'aria-label': nameOf(v), onclick: () => { currentId = v.id; draw(); } },
             v.url ? el('img', { src: v.url, alt: '' }) : null, el('span', {}, (v.chosen ? '⭐ ' : '') + nameOf(v)))))) : null,
         uploadBtn('📷 Start from a different photo', 'ghost small'),
-        el('p', { class: 'muted small' }, 'Pictures are made by AI to help you picture the idea. Final materials, sizes and layout are confirmed with your Top Hat rep.'),
+        el('p', { class: 'muted small' }, 'Pictures are made by AI to help you picture the idea. Final materials, sizes and layout are confirmed with your Top Hat project manager.'),
       ].filter(Boolean));
     }
 
