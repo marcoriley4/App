@@ -595,3 +595,7 @@ button.ghost, .btn.ghost { border-width: 1.5px; }
 .sched-list .amt { font-weight: 800; font-size: 1.05rem; }
 .sched-edit { grid-template-columns: 28px 84px minmax(0, 1fr) 32px; grid-template-areas: "n name name x" ". pct when when"; border: 1px solid var(--border); border-radius: 12px; padding: 8px; background: var(--surface); }
 .sched-edit .n { grid-area: n; } .sched-edit .name { grid-area: name; } .sched-edit .pct { grid-area: pct; } .sched-edit .when { grid-area: when; } .sched-edit .x { grid-area: x; }
+
+/* Back one step on the Next step card */
+.next-step .back-step { display: block; margin: 14px 0 0; padding: 10px 14px; min-height: 44px; width: auto; background: var(--surface); color: var(--text); border: 1.5px dashed var(--border); border-radius: 12px; font-weight: 700; font-size: .92rem; text-align: left; box-shadow: none; }
+.next-step .back-step:hover { border-color: var(--ink); }

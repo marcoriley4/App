@@ -339,20 +339,22 @@
       step = { icon: '🙅', title: 'You told the office you can’t make it', why: j.crewResponseNote ? `“${j.crewResponseNote}”` : '', btn: ['Actually, I can make it', (e) => respond('confirmed', '', e.currentTarget)], ghost: true };
     } else if (j.status === 'scheduled' && j.stage === 'on_the_way') {
       step = { icon: '📍', title: 'When you get there', why: 'Tap Start work when you arrive.', btn: ['▶ Start work', (e) => go({ status: 'in_progress' }, `▶ ${n} started.`, e.currentTarget)],
-        second: ['↩ Not on my way', () => go({ stage: null }, `↩ ${n}: back to scheduled.`)] };
+        back: ['Not on my way yet', () => go({ stage: null }, `↩ ${n}: back to scheduled.`)] };
     } else if (j.status === 'scheduled') {
       step = { icon: '🚚', title: 'Head out when it’s time', why: j.scheduledFor ? `Scheduled ${fmtWhen(j.scheduledFor)}` : '',
         btn: ['🚚 On my way', (e) => go({ stage: 'on_the_way' }, 'on_the_way', e.currentTarget)],
-        second: ['▶ I’m already here: start work', () => go({ status: 'in_progress' }, `▶ ${n} started.`)] };
+        second: ['▶ I’m already here: start work', () => go({ status: 'in_progress' }, `▶ ${n} started.`)],
+        back: ['Can’t make it after all', () => { declineBox.hidden = false; declineBox.querySelector('textarea').focus(); }] };
     } else if (j.status === 'in_progress' && st) {
       step = { icon: st.icon, title: st.label, why: 'Add a note so the office knows what’s needed.', btn: ['▶ Back to work', (e) => go({ stage: null }, `▶ ${n}: back to work.`, e.currentTarget)],
         second: ['✓ Finish job', () => finish()] };
     } else if (j.status === 'in_progress') {
       step = { icon: '🔨', title: 'Working on it', why: j.startedAt ? `Started ${timeOf(new Date(j.startedAt).toISOString())} · ${dur(j.startedAt, Date.now())} so far` : '',
-        btn: ['✓ Finish job', () => finish()] };
+        btn: ['✓ Finish job', () => finish()],
+        back: ['Undo start', () => { if (confirm('Undo start? The job goes back to Scheduled.')) go({ status: 'scheduled' }, `↩ ${n}: back to scheduled.`); }] };
     } else {
       step = { icon: '🎉', title: 'Job done. Thanks!', why: [j.crewPay != null ? `Your pay: ${usd(j.crewPay)}` : null, j.startedAt && j.finishedAt ? `Time on job: ${dur(j.startedAt, j.finishedAt)}` : null].filter(Boolean).join(' · '),
-        btn: null, second: ['↩ Not finished yet', () => { if (confirm(`Move ${n} back to Working?`)) go({ status: 'in_progress' }, `↩ ${n}: back to working.`); }] };
+        btn: null, back: ['Not finished yet', () => { if (confirm(`Move ${n} back to Working?`)) go({ status: 'in_progress' }, `↩ ${n}: back to working.`); }] };
     }
     function finish() {
       if (!afterCount && !confirm('You haven’t added any After photos yet.\n\nTap OK to finish anyway, or Cancel to add photos first.')) {
@@ -367,7 +369,8 @@
         el('div', { style: 'flex:1;min-width:0' }, el('h3', {}, step.title), step.why ? el('p', { class: 'muted small' }, step.why) : null)),
       step.btn ? el('button', { class: (step.ghost ? 'ghost' : 'gold') + ' block big', onclick: step.btn[1] }, step.btn[0]) : null,
       step.second ? el('button', { class: 'link', onclick: step.second[1] }, step.second[0]) : null,
-      declineBox);
+      declineBox,
+      step.back ? el('button', { class: 'back-step', onclick: step.back[1] }, `← ${step.back[0]}`) : null);
 
     // One-tap buttons
     const textsBox = el('div', { class: 'texts', hidden: !onWayMsg },

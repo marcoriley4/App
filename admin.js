@@ -620,6 +620,14 @@
       else if (!invs.length && !plan.length) step = { icon: '🧾', title: 'Job finished: send the invoice', why: invoiceBase ? `It starts from approved estimate ${invoiceBase.number}.` : 'Add the work and the total.', act: ['+ Create invoice', () => openDoc(j.id, null, 'invoice', invoiceBase)] };
       else step = { icon: '🎉', title: 'All done: paid in full', why: 'Nice work.' };
     }
+    // Back one step, in case someone tapped the wrong thing.
+    const ORDER = ['new', 'qualifying', 'hot', 'scheduled', 'in_progress', 'completed'];
+    const backStep = j.stage
+      ? { label: `Undo “${stageOf(j.stage).label}”`, patch: { stage: null } }
+      : ORDER.indexOf(j.status) > 0 ? { label: `Back to ${statusOf(ORDER[ORDER.indexOf(j.status) - 1]).label}`, patch: { status: ORDER[ORDER.indexOf(j.status) - 1] } } : null;
+    const backBtn = backStep ? el('button', { type: 'button', class: 'back-step', onclick: () => {
+      if (confirm(`${backStep.label}?\n\n${jobNo(j)} goes back one step. Nothing else changes: invoices, notes and photos stay.`)) update(backStep.patch);
+    } }, `← ${backStep.label}`) : null;
     const nextCard = step ? el('section', { class: 'card next-step' },
       el('span', { class: 'eyebrow' }, 'Next step'),
       el('div', { class: 'row', style: 'align-items:flex-start' }, el('span', { class: 'next-ic' }, step.icon),
@@ -629,6 +637,7 @@
       step.extra || null,
       step.second ? el('button', { type: 'button', class: 'link', onclick: step.second[1] }, step.second[0]) : null,
       step.third ? el('button', { type: 'button', class: 'link', onclick: step.third[1] }, step.third[0]) : null,
+      backBtn,
     ) : null;
 
     // Tabs keep the job short and easy to scan.
