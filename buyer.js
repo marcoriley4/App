@@ -131,155 +131,161 @@
     ));
   }
 
-  /* ---------- request a job (3 steps + account) ---------- */
+  /* ---------- request a job: one simple question per screen ---------- */
+  const IDEA_CHIPS = {
+    remodel: ['Kitchen remodel', 'Bathroom remodel', 'New cabinets', 'New countertops', 'Open up a wall'],
+    plumbing: ['Leak', 'Clogged drain', 'New water heater', 'New faucet or sink', 'New toilet'],
+    electrical: ['New lights', 'Outlets not working', 'Panel upgrade', 'Ceiling fan'],
+    roofing: ['Roof leak', 'Missing shingles', 'New roof', 'Gutters'],
+    hvac: ['AC not cooling', 'No heat', 'New furnace', 'New AC'],
+    painting: ['Inside rooms', 'Outside of the house', 'Cabinets', 'Trim and doors'],
+    drywall: ['Hole in the wall', 'Water damage', 'Ceiling repair', 'New walls'],
+    flooring: ['Hardwood', 'Vinyl plank', 'Tile', 'Carpet out, new floor in'],
+    landscaping: ['Patio', 'Yard cleanup', 'New plants', 'Fence'],
+    other: ['Repair', 'Something new', 'Not sure yet'],
+  };
+  const BUDGET_TEXT = { '': 'Not sure yet' };
+
   async function request() {
     const me = await api.auth.me();
     if (me && me.role === 'staff') { view.append(el('div', { class: 'card', style: 'margin-top:24px' }, 'You are logged in as staff. ', el('a', { href: 'admin.html' }, 'Go to the staff area'), '.')); return; }
-    if (draft.step < 1 || draft.step > 4 || !find(TRADES, draft.trade)) draft.step = 1;
-    const totalSteps = me ? 3 : 4;
-    const step = Math.min(draft.step, totalSteps);
-    const STEP_NAMES = ['Your project', 'Measurements & photos', 'Where & when', 'Your contact info'];
+    const SCREENS = ['trade', 'photos', 'describe', 'where', 'when', 'budget', ...(me ? [] : ['contact'])];
+    const total = SCREENS.length;
+    // Never skip ahead past something we still need.
+    const missing = () => {
+      if (!find(TRADES, draft.trade)) return 1;
+      if ((draft.description || '').trim().length < 10) return 3;
+      if (!(draft.address || '').trim() || !/^\d{5}$/.test(draft.zip || '')) return 4;
+      if (!draft.timeframe) return 5;
+      return total;
+    };
+    let step = Math.max(1, Math.min(Number(draft.step) || 1, total, missing()));
+    const screen = SCREENS[step - 1];
+    const goTo = (n) => { draft.step = n; saveDraft(); route(); };
+    const next = () => goTo(step + 1);
     const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
     const showError = (msg) => { errorBox.textContent = msg; errorBox.hidden = false; errorBox.scrollIntoView({ block: 'center', behavior: 'smooth' }); };
-
-    const header = el('div', { class: 'stack', style: 'margin-top:20px' },
-      el('div', { class: 'steps' }, ...Array.from({ length: totalSteps }, (_, i) => el('span', { class: i < step ? 'on' : '' }))),
-      el('p', { class: 'muted small' }, `Step ${step} of ${totalSteps} · ${STEP_NAMES[step - 1]}`),
-    );
-    view.append(header);
-
-    if (step === 1) {
-      const form = el('form', { class: 'stack', onsubmit: (e) => {
-        e.preventDefault();
-        const t = new FormData(form).get('trade');
-        if (!t) return showError('Pick the type of work so we know who to send.');
-        draft.trade = t; draft.step = 2; saveDraft(); route();
-      } },
-        el('h1', {}, "What's your project?"),
-        el('p', { class: 'muted' }, 'Tap the one that fits best.'),
-        errorBox,
-        el('div', { class: 'tiles', role: 'radiogroup', 'aria-label': 'Type of work' }, ...TRADES.map((t) =>
-          el('label', { class: 'tile' },
-            el('input', { type: 'radio', name: 'trade', value: t.id, checked: draft.trade === t.id, onchange: () => { draft.trade = t.id; saveDraft(); } }),
-            el('span', { class: 'ic' }, t.icon), t.label))),
-        el('button', { class: 'gold block', type: 'submit' }, 'Next'),
-      );
-      view.append(form);
-      return;
-    }
-
     const trade = find(TRADES, draft.trade);
-    const tradeLine = (backTo) => el('div', { class: 'summary' }, trade.icon + ' ', el('b', {}, trade.label), ' · ',
-      el('button', { type: 'button', class: 'link', onclick: backTo }, 'change'));
 
-    if (step === 2) {
-      const photosWrap = el('div', { class: 'photos' });
-      const renderPhotos = () => {
-        photosWrap.replaceChildren(...[
-          ...draft.photos.map((src, i) => el('div', { class: 'photo' },
-            el('img', { src, alt: `Photo ${i + 1}` }),
-            el('button', { type: 'button', 'aria-label': `Remove photo ${i + 1}`, onclick: () => { draft.photos.splice(i, 1); saveDraft(); renderPhotos(); } }, '✕'))),
-          draft.photos.length < MAX_PHOTOS ? el('label', { class: 'add-photo' },
-            el('span', {}, el('b', {}, '+'), 'Add photo'),
-            el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async (e) => {
-              const files = [...e.target.files].slice(0, MAX_PHOTOS - draft.photos.length);
-              for (const f of files) { try { draft.photos.push(await shrinkImage(f)); } catch (err) { showError(err.message); } }
-              saveDraft(); renderPhotos();
-            } })) : null,
-        ].filter(Boolean));
-      };
-      renderPhotos();
-      const capture = () => {
-        const f = new FormData(form);
-        draft.description = f.get('description').trim(); draft.measurements = f.get('measurements').trim(); saveDraft();
-      };
-      const toProject = () => { capture(); draft.step = 1; saveDraft(); route(); };
-      const form = el('form', { class: 'stack', novalidate: true, oninput: () => capture(), onsubmit: (e) => {
-        e.preventDefault(); capture();
-        if (draft.description.length < 10) return showError('Please describe the job in a sentence or two.');
-        draft.step = 3; saveDraft(); route();
-      } },
-        el('h1', {}, 'Tell us about the job'),
-        tradeLine(toProject),
-        errorBox,
-        el('label', { class: 'field' }, 'What needs to be done?',
-          el('textarea', { name: 'description', placeholder: 'e.g. Water leaking under the kitchen sink. It started last week and the cabinet floor is getting soft.', value: draft.description })),
-        el('label', { class: 'field' }, el('span', {}, 'Measurements ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(if you have them)')),
-          el('span', { class: 'hint' }, 'Rough sizes are fine. They help us price it right.'),
-          el('textarea', { name: 'measurements', rows: '2', placeholder: MEASURE_HINTS[draft.trade] || MEASURE_HINTS.other, value: draft.measurements || '' })),
-        el('div', { class: 'field' }, el('b', { style: 'font-size:.92rem' }, 'Photos ', el('span', { class: 'muted small', style: 'font-weight:400' }, `(up to ${MAX_PHOTOS})`)),
-          el('p', { class: 'muted small' }, 'Snap the whole area plus any damage up close. Photos help us give you an accurate estimate.'), photosWrap),
-        el('div', { class: 'row' },
-          el('button', { type: 'button', class: 'ghost', onclick: toProject }, 'Back'),
-          el('button', { class: 'gold', type: 'submit', style: 'flex:1' }, 'Next')),
-      );
-      view.append(form);
+    // The same frame on every screen: back, progress, one big question, one big button.
+    const shell = (title, sub, body, { nextLabel, onNext, extra } = {}) => el('div', { class: 'wiz' },
+      el('div', { class: 'wiz-top' },
+        step > 1 ? el('button', { type: 'button', class: 'wiz-back', onclick: () => goTo(step - 1) }, '← Back') : el('a', { class: 'wiz-back', href: '#/' }, '← Home'),
+        el('span', { class: 'wiz-count' }, `${step} of ${total}`)),
+      el('div', { class: 'steps' }, ...SCREENS.map((_, i) => el('span', { class: i < step ? 'on' : '' }))),
+      step > 1 && trade ? el('p', { class: 'wiz-what' }, `${trade.icon} ${trade.label}`) : null,
+      el('h1', { class: 'wiz-q' }, title),
+      sub ? el('p', { class: 'wiz-sub' }, sub) : null,
+      errorBox,
+      ...body,
+      onNext ? el('div', { class: 'wiz-next' }, el('button', { type: 'button', class: 'gold block big', onclick: onNext }, nextLabel || 'Next')) : null,
+      extra || null,
+    );
+
+    if (screen === 'trade') {
+      view.append(shell('What do you want done?', 'Tap one.', [
+        el('div', { class: 'tiles big-tiles' }, ...TRADES.map((t) => el('button', { type: 'button', class: 'tile' + (draft.trade === t.id ? ' on' : ''),
+          onclick: () => { draft.trade = t.id; next(); } },
+          el('span', { class: 'ic' }, t.icon), t.label))),
+      ]));
       return;
     }
 
-    if (step === 3) {
-      const dateField = calendarPicker(draft.timeframe, (v) => { draft.timeframe = v; saveDraft(); });
-      const capture = () => {
-        const f = new FormData(form);
-        Object.assign(draft, { address: f.get('address').trim(), zip: f.get('zip').trim(), budget: f.get('budget') || '' });
-        saveDraft();
+    if (screen === 'photos') {
+      const grid = el('div', { class: 'photos' });
+      const btnWrap = el('div', { class: 'wiz-next' });
+      const draw = () => {
+        grid.replaceChildren(...draft.photos.map((src, i) => el('div', { class: 'photo' },
+          el('img', { src, alt: `Photo ${i + 1}` }),
+          el('button', { type: 'button', 'aria-label': `Remove photo ${i + 1}`, onclick: () => { draft.photos.splice(i, 1); saveDraft(); draw(); } }, '✕'))));
+        btnWrap.replaceChildren(draft.photos.length
+          ? el('button', { type: 'button', class: 'gold block big', onclick: next }, `Next (${draft.photos.length} photo${draft.photos.length === 1 ? '' : 's'})`)
+          : el('button', { type: 'button', class: 'ghost block', onclick: next }, 'Skip for now'));
+        addBtn.hidden = draft.photos.length >= MAX_PHOTOS;
       };
-      const back = () => { capture(); draft.step = 2; saveDraft(); route(); };
-      const form = el('form', { class: 'stack', novalidate: true, oninput: () => capture(), onsubmit: async (e) => {
-        e.preventDefault(); capture();
-        if (!draft.address) return showError('Please enter the address where the work is.');
-        if (!/^\d{5}$/.test(draft.zip)) return showError('Please enter a 5-digit ZIP code.');
-        if (!draft.timeframe) return showError('Please pick a date on the calendar for when you need it done.');
-        if (me) return submitJob(showError);
-        draft.step = 4; saveDraft(); route();
-      } },
-        el('h1', {}, 'Where and when?'),
-        tradeLine(() => { capture(); draft.step = 1; saveDraft(); route(); }),
-        errorBox,
-        el('label', { class: 'field' }, 'Address of the job',
-          el('input', { name: 'address', placeholder: 'Street address, city', autocomplete: 'street-address', value: draft.address })),
-        el('label', { class: 'field' }, 'ZIP code',
-          el('input', { name: 'zip', inputmode: 'numeric', maxlength: '5', autocomplete: 'postal-code', placeholder: '12345', value: draft.zip, style: 'max-width:160px' })),
-        el('div', { class: 'field' }, el('b', { class: 'small', style: 'font-size:.92rem' }, 'When do you need it done?'),
-          el('p', { class: 'muted small' }, 'Pick a date on the calendar.'), dateField),
-        el('div', { class: 'field' }, el('b', { style: 'font-size:.92rem' }, 'Have you thought about a budget? ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(optional)')),
-          el('div', { class: 'choices', style: 'margin-top:6px' }, ...BUDGETS.map((b) =>
-            el('label', { class: 'choice' }, el('input', { type: 'radio', name: 'budget', value: b.id, checked: draft.budget === b.id }), el('span', {}, b.label))))),
-        el('div', { class: 'row' },
-          el('button', { type: 'button', class: 'ghost', onclick: back }, 'Back'),
-          el('button', { class: 'gold', type: 'submit', style: 'flex:1' }, me ? 'Get my free estimate' : 'Next')),
-      );
-      view.append(form);
+      const addBtn = el('label', { class: 'btn gold block big photo-btn' }, '📷 Take or add photos',
+        el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async (e) => {
+          const files = [...e.target.files].slice(0, MAX_PHOTOS - draft.photos.length);
+          for (const f of files) { try { draft.photos.push(await shrinkImage(f)); } catch (err) { showError(err.message); } }
+          saveDraft(); draw();
+        } }));
+      view.append(shell('Show us the space', 'A few phone pictures help us price it right. Up to 5.', [addBtn, grid]));
+      view.querySelector('.wiz').append(btnWrap);
+      draw();
       return;
     }
 
-    // Step 4: create an account to send the request.
-    const form = el('form', { class: 'stack', novalidate: true, onsubmit: async (e) => {
-      e.preventDefault();
-      const f = new FormData(form);
-      const btn = form.querySelector('button[type=submit]');
-      btn.disabled = true;
+    if (screen === 'describe') {
+      const text = el('textarea', { rows: 4, value: draft.description || '', placeholder: 'e.g. Take out the island and make the kitchen L-shaped. White cabinets, quartz counters.', 'aria-label': 'What would you like done?',
+        oninput: () => { draft.description = text.value; saveDraft(); } });
+      const measure = el('input', { value: draft.measurements || '', placeholder: 'e.g. Kitchen is about 12 x 14 ft', 'aria-label': 'Measurements',
+        oninput: () => { draft.measurements = measure.value; saveDraft(); } });
+      const measureWrap = el('div', { hidden: !draft.measurements }, measure);
+      view.append(shell('What would you like done?', 'Just a sentence or two. Tap to add:', [
+        el('div', { class: 'stage-chips' }, ...(IDEA_CHIPS[draft.trade] || IDEA_CHIPS.other).map((c) => el('button', { type: 'button', class: 'chip',
+          onclick: () => { text.value = text.value.trim() ? `${text.value.trim()}. ${c}` : c; draft.description = text.value; saveDraft(); text.focus(); } }, `+ ${c}`))),
+        text,
+        draft.measurements ? null : el('button', { type: 'button', class: 'link', onclick: (e) => { measureWrap.hidden = false; e.currentTarget.remove(); measure.focus(); } }, '+ Add measurements (optional)'),
+        measureWrap,
+      ], { onNext: () => {
+        draft.description = text.value.trim(); draft.measurements = measure.value.trim(); saveDraft();
+        if (draft.description.length < 10) return showError('Tell us a little more: just a sentence is fine.');
+        next();
+      } }));
+      return;
+    }
+
+    if (screen === 'where') {
+      const addr = el('input', { value: draft.address || '', placeholder: 'Street address, city', autocomplete: 'street-address', 'aria-label': 'Street address and city' });
+      const zip = el('input', { value: draft.zip || '', placeholder: 'ZIP', inputmode: 'numeric', maxlength: '5', autocomplete: 'postal-code', 'aria-label': 'ZIP code' });
+      view.append(shell('Where is the project?', null, [addr, zip], { onNext: () => {
+        draft.address = addr.value.trim(); draft.zip = zip.value.trim(); saveDraft();
+        if (!draft.address) return showError('Enter the street address and city.');
+        if (!/^\d{5}$/.test(draft.zip)) return showError('Enter the 5-digit ZIP code.');
+        next();
+      } }));
+      return;
+    }
+
+    if (screen === 'when') {
+      // Tap a day (or "I'm flexible") and you're on to the next question.
+      const cal = calendarPicker(draft.timeframe, (v) => { draft.timeframe = v; saveDraft(); if (v) setTimeout(next, 250); });
+      view.append(shell('When do you need it done?', 'Tap a day, or “I’m flexible”.', [cal]));
+      return;
+    }
+
+    if (screen === 'budget') {
+      const last = step === total;
+      view.append(shell('Have you thought about a budget?', 'It’s OK if you’re not sure.', [
+        el('div', { class: 'big-options' }, ...BUDGETS.map((bg) => el('button', { type: 'button', class: 'big-option' + (draft.budget === bg.id && draft.budgetSet ? ' on' : ''),
+          onclick: async (e) => {
+            draft.budget = bg.id; draft.budgetSet = true; saveDraft();
+            if (!last) return next();
+            e.currentTarget.disabled = true; await submitJob(showError); e.currentTarget.disabled = false;
+          } }, BUDGET_TEXT[bg.id] || bg.label))),
+        last ? el('p', { class: 'wiz-sub' }, 'Tap one to send your request.') : null,
+      ]));
+      return;
+    }
+
+    // contact: the only typing-heavy screen, kept to four boxes and one button.
+    const f = {
+      name: el('input', { autocomplete: 'name', placeholder: 'Full name', 'aria-label': 'Full name' }),
+      phone: el('input', { type: 'tel', autocomplete: 'tel', inputmode: 'tel', placeholder: 'Mobile phone', 'aria-label': 'Mobile phone' }),
+      email: el('input', { type: 'email', autocomplete: 'email', inputmode: 'email', placeholder: 'Email', 'aria-label': 'Email' }),
+      password: el('input', { type: 'password', autocomplete: 'new-password', placeholder: 'Create a password (8+ characters)', 'aria-label': 'Create a password' }),
+    };
+    const send = async (e) => {
+      const btn = e.currentTarget; btn.disabled = true;
       try {
-        await api.auth.signUp({ name: f.get('name'), phone: f.get('phone'), email: f.get('email'), password: f.get('password') });
+        await api.auth.signUp({ name: f.name.value, phone: f.phone.value, email: f.email.value, password: f.password.value });
         await submitJob(showError);
       } catch (err) { showError(err.message); }
       finally { btn.disabled = false; }
-    } },
-      el('h1', {}, 'Last step: how do we reach you?'),
-      el('p', { class: 'muted' }, "We'll call you with your estimate. Create a free account so you can check on your project anytime."),
-      errorBox,
-      el('label', { class: 'field' }, 'Full name', el('input', { name: 'name', autocomplete: 'name', required: true })),
-      el('label', { class: 'field' }, 'Mobile phone', el('span', { class: 'hint' }, "We'll call or text you to confirm the details."),
-        el('input', { name: 'phone', type: 'tel', autocomplete: 'tel', inputmode: 'tel', placeholder: '(555) 123-4567', required: true })),
-      el('label', { class: 'field' }, 'Email', el('input', { name: 'email', type: 'email', autocomplete: 'email', inputmode: 'email', required: true })),
-      el('label', { class: 'field' }, 'Create a password', el('span', { class: 'hint' }, 'At least 8 characters.'),
-        el('input', { name: 'password', type: 'password', autocomplete: 'new-password', minlength: '8', required: true })),
-      el('div', { class: 'row' },
-        el('button', { type: 'button', class: 'ghost', onclick: () => { draft.step = 3; saveDraft(); route(); } }, 'Back'),
-        el('button', { class: 'gold', type: 'submit', style: 'flex:1' }, 'Get my free estimate')),
-      el('p', { class: 'muted small', style: 'text-align:center' }, 'Already have an account? ', el('a', { href: '#/login?next=request' }, 'Log in'), ' and your request will be waiting.'),
-    );
-    view.append(form);
+    };
+    view.append(shell('Last step: how do we reach you?', 'We’ll call you with your estimate.', [f.name, f.phone, f.email, f.password],
+      { nextLabel: 'Send my request', onNext: send,
+        extra: el('p', { class: 'muted small', style: 'text-align:center;margin-top:12px' }, 'Already have an account? ', el('a', { href: '#/login?next=request' }, 'Log in'), ' and your request will be waiting.') }));
   }
 
   async function submitJob(showError) {
@@ -423,7 +429,7 @@
   async function login() {
     const next = new URLSearchParams(location.hash.split('?')[1] || '').get('next') || 'jobs';
     view.append(TH.loginForm({ onCustomer: () => {
-      if (next === 'request') { draft.step = 3; saveDraft(); }
+      if (next === 'request') { draft.step = 6; saveDraft(); }
       go(next);
     } }));
   }

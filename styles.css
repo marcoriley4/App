@@ -652,3 +652,24 @@ button.ghost, .btn.ghost { border-width: 1.5px; }
 .four-steps .more { width: 26px; height: 26px; border-radius: 99px; border: 1.5px solid var(--border); display: grid; place-items: center; font-size: 1.1rem; font-weight: 800; line-height: 1; transform: none !important; }
 .four-steps .more::before { content: "+"; }
 .four-steps details[open] .more::before { content: "−"; }
+
+/* Request wizard: one big question per screen */
+.wiz { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; min-height: calc(100vh - 170px); }
+.wiz-top { display: flex; align-items: center; justify-content: space-between; }
+.wiz-back { background: none; border: 0; padding: 8px 0; min-height: 44px; font-weight: 700; color: var(--text); text-decoration: none; box-shadow: none; }
+.wiz-count { color: var(--muted); font-weight: 700; font-size: .9rem; }
+.wiz-what { margin: 0; color: var(--muted); font-weight: 700; }
+.wiz-q { font-size: 1.85rem; line-height: 1.15; margin: 4px 0 0; }
+.wiz-sub { margin: 0; color: var(--muted); font-size: 1.02rem; }
+.wiz input, .wiz textarea { font-size: 1.1rem; min-height: 56px; }
+.wiz textarea { min-height: 130px; }
+.wiz-next { position: sticky; bottom: 0; margin-top: auto; padding: 14px 0 calc(14px + env(safe-area-inset-bottom)); background: linear-gradient(to bottom, transparent, var(--bg) 35%); }
+.btn.big, button.big { font-size: 1.2rem; min-height: 62px; }
+.big-tiles { gap: 10px; }
+.big-tiles .tile { min-height: 72px; font-size: 1.05rem; font-weight: 700; text-align: left; color: var(--text); box-shadow: none; }
+.big-tiles .tile.on { border: 2px solid var(--ink); background: var(--gold-soft); }
+.big-tiles .tile .ic { font-size: 1.7rem; }
+.photo-btn { min-height: 120px; font-size: 1.25rem; border-style: dashed; }
+.big-options { display: grid; gap: 10px; }
+.big-option { min-height: 62px; font-size: 1.15rem; font-weight: 700; text-align: left; padding: 0 18px; background: var(--surface); color: var(--text); border: 1.5px solid var(--border); border-radius: 14px; box-shadow: none; }
+.big-option.on { border: 2px solid var(--ink); background: var(--gold-soft); }

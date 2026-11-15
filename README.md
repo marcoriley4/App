@@ -22,7 +22,7 @@ Today shows each stage: new leads to call, **🔥 hot leads that need a rep visi
 ## How it works
 
 **Customers** (`index.html`)
-1. Pick the type of work (plumbing, roofing, painting…).
+1. Answer one simple question per screen (most are a single tap that moves straight on): type of work → photos → what you want done → address → when (tap a day) → budget → name, phone, email and password.
 2. Describe the job with optional measurements and up to 5 photos, then the address, ZIP, a date on the calendar and an optional budget.
 3. Create an account with name, mobile phone, email and password. The request is sent as soon as the account is created.
 4. Check **My jobs** anytime to see the status (Received → Estimate call → Rep visit → Scheduled → Done), the rep visit time once it's booked, and the date and crew lead's name once the work is scheduled.
