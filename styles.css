@@ -720,3 +720,7 @@ button.gold.block:has(.btn-sub) { flex-direction: column; height: auto; padding-
 .crew-bill { border: 1px solid var(--border); border-radius: 12px; padding: 10px; display: grid; gap: 6px; background: var(--surface); }
 .crew-bill.new { border: 2px solid var(--gold); }
 .bill-form { border: 2px solid var(--gold); border-radius: 12px; padding: 12px; background: var(--surface); }
+
+/* iPhone date boxes stay inside their card */
+input[type="date"], input[type="datetime-local"], input[type="time"] { -webkit-appearance: none; appearance: none; display: block; min-width: 0; max-width: 100%; box-sizing: border-box; text-align: left; }
+input[type="date"]::-webkit-date-and-time-value, input[type="datetime-local"]::-webkit-date-and-time-value { text-align: left; }

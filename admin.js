@@ -457,7 +457,7 @@
       el('label', { class: 'field' }, 'Crew', el('span', { class: 'hint' }, '★ = does this kind of work'), crewSel),
       el('label', { class: 'field' }, 'Date & time', whenInput),
       el('button', { type: 'submit' }, 'Save crew & date'),
-      el('p', { class: 'muted small' }, 'Picking a crew and a date moves the job to “Scheduled”.'),
+      ['scheduled', 'in_progress'].includes(j.status) ? null : el('p', { class: 'muted small' }, 'Picking a crew and a date moves the job to “Scheduled”.'),
       assigned?.phone ? el('a', { class: 'btn ghost', href: smsHref(assigned.phone, dispatchText) }, `💬 Text job details to ${assigned.name.split(' ')[0]}`) : null,
       crewLink ? el('div', { class: 'crew-link' },
         el('span', { class: 'small' }, `📷 ${assigned ? assigned.name.split(' ')[0] + '’s' : 'Crew'} photo link`),
@@ -466,7 +466,9 @@
           catch { prompt('Copy this link:', crewLink); }
         } }, 'Copy link')) : null,
     );
-    const focusSetup = () => { leadTab = 'overview'; renderTab(); setup.scrollIntoView({ block: 'start', behavior: 'smooth' }); crewSel.focus(); };
+    // Crew & schedule only where it's used: sold hot leads, scheduled and working jobs (or when a step asks for it).
+    let setupWanted = j.status === 'scheduled' || j.status === 'in_progress' || (j.status === 'hot' && visitPassed(j));
+    const focusSetup = () => { setupWanted = true; leadTab = 'overview'; renderTab(); setup.scrollIntoView({ block: 'start', behavior: 'smooth' }); crewSel.focus(); };
 
     // Notes from the crew (customers never see these)
     const crewNotesCard = () => el('section', { class: 'card stack' },
@@ -746,7 +748,8 @@
     function renderTab() {
       tabsBar.replaceChildren(...TABS.map(([id, label]) => el('button', { role: 'tab', 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } }, label)));
       const content = {
-        overview: [nextCard, progress, crewNotes.length ? crewNotesCard() : null, setup, designCard, details, permitCard],
+        overview: [nextCard, progress, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, designCard, details, permitCard,
+          !setupWanted && ['new', 'qualifying', 'hot'].includes(j.status) ? el('button', { type: 'button', class: 'link small', style: 'align-self:flex-start', onclick: focusSetup }, '👷 Assign a crew & date now (skip the visit)') : null],
         money: [scheduleCard, crewBillsCard, docsCard, moneyCard],
         files: [filesCard],
         history: [notesCard, crewNotesCard(), log],
