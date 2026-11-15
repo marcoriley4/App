@@ -128,12 +128,6 @@
               el('span', { class: 'more', 'aria-hidden': 'true' })),
             el('p', {}, long))))),
       ),
-      el('section', { class: 'hero hero-bottom' }, el('p', { class: 'hero-pitch' },
-        el('span', { class: 'hl' }, 'Get a free estimate for your project.'),
-        'Tell us about it, add your measurements and photos, and we’ll call you with an estimate over the phone.',
-        el('span', { class: 'pitch-close' }, 'Like the price? Book your spot.',
-          el('small', {}, 'Your ', el('span', { class: 'brand-hl' }, 'Top Hat'), ' project manager comes out, goes over every detail with you, and gets you on the schedule.')))),
-      el('a', { class: 'btn gold block', href: '#/request', onclick: () => { if (draft.step > 4) clearDraft(); } }, 'Get my free estimate'),
     ));
   }
 
