@@ -673,3 +673,19 @@ button.ghost, .btn.ghost { border-width: 1.5px; }
 .big-options { display: grid; gap: 10px; }
 .big-option { min-height: 62px; font-size: 1.15rem; font-weight: 700; text-align: left; padding: 0 18px; background: var(--surface); color: var(--text); border: 1.5px solid var(--border); border-radius: 14px; box-shadow: none; }
 .big-option.on { border: 2px solid var(--ink); background: var(--gold-soft); }
+
+/* Signatures */
+.sig-box { border: 2px solid var(--gold); border-radius: 16px; padding: 14px; background: var(--surface); }
+.sig-wrap { position: relative; }
+.sig-canvas { display: block; width: 100%; height: 170px; background: #fff; border: 1.5px dashed #999; border-radius: 12px; touch-action: none; cursor: crosshair; }
+.sig-x { position: absolute; left: 12px; bottom: 30px; color: #999; font-weight: 800; pointer-events: none; }
+.sig-hint { position: absolute; left: 32px; right: 12px; bottom: 34px; border-bottom: 1px solid #bbb; color: #aaa; font-size: .75rem; pointer-events: none; padding-left: 4px; }
+.doc-sig { display: block; max-width: 260px; max-height: 90px; margin: 6px 0; }
+/* Payments */
+.pay-area h3 { margin: 0; }
+.pay-how { background: var(--surface-2); border-radius: 12px; padding: 12px; display: grid; gap: 4px; font-size: .95rem; }
+.callout.good { background: #e6f6ea; color: #14532d; }
+.callout.report { border-left: 4px solid var(--gold); display: grid; gap: 8px; }
+.btn-sub { display: block; font-size: .8rem; font-weight: 600; opacity: .8; }
+button.gold.block:has(.btn-sub) { flex-direction: column; height: auto; padding-top: 10px; padding-bottom: 10px; }
+.doc-actions .pay-area { background: var(--surface); color: var(--text); border-radius: 16px; padding: 16px; border: 2px solid var(--gold); }

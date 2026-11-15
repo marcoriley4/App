@@ -77,6 +77,8 @@
     created: ms(r.created_at), sentAt: ms(r.sent_at), respondedAt: ms(r.responded_at), respondedBy: r.responded_by || '',
     fromEstimateId: r.from_estimate || null,
     scheduleStep: r.schedule_step ?? null, scheduleBase: r.schedule_base == null ? null : Number(r.schedule_base),
+    signature: r.signature ? { name: r.signature.name, image: r.signature.image, at: Date.parse(r.signature.at) || null, inPerson: !!r.signature.in_person, witness: r.signature.witness || '' } : null,
+    reports: (r.reports || []).map((x) => ({ id: x.id, amount: Number(x.amount), method: x.method, note: x.note || '', by: x.reported_by || '', at: Date.parse(x.created_at) || null, status: x.status })),
   });
   async function getDoc(docId) {
     const r = must(await sb.from('documents').select('*').eq('id', docId).maybeSingle());
@@ -176,7 +178,7 @@
           fetchAll(() => sb.from('job_private').select('*')),
           fetchAll(() => sb.from('job_files').select('id, job_id, kind')),
           fetchAll(() => sb.from('profiles').select('id, name, email, phone')),
-          fetchAll(() => sb.from('documents').select('id, job_id, type, number, status, items, tax_rate, due_date, payments, schedule_step, schedule_base')),
+          fetchAll(() => sb.from('documents').select('id, job_id, type, number, status, items, tax_rate, due_date, payments, schedule_step, schedule_base, reports:payment_reports(id, amount, method, note, reported_by, created_at, status)')),
           fetchAll(() => sb.from('crew_notes').select('id, job_id, created_at')),
           u.role === 'staff' ? fetchAll(() => sb.from('job_costs').select('job_id, crew_pay')) : Promise.resolve([]),
         ]);
@@ -350,7 +352,7 @@
     docs: {
       async list(jobId) {
         await requireOffice();
-        return must(await sb.from('documents').select('*').eq('job_id', jobId).order('created_at')).map(mapDoc);
+        return must(await sb.from('documents').select('*, reports:payment_reports(id, amount, method, note, reported_by, created_at, status)').eq('job_id', jobId).order('created_at')).map(mapDoc);
       },
       async save(jobId, doc) {
         await requireOffice();
@@ -370,9 +372,22 @@
         if (!(r.items || []).some((i) => i.desc && i.qty && i.price)) throw new Error('Add at least one line with a description, quantity and price.');
         must(await sb.from('documents').update({ status: 'sent' }).eq('id', docId));
       },
-      async setStatus(jobId, docId, status) {
+      async setStatus(jobId, docId, status, sig) {
         const u = await requireOffice();
-        must(await sb.from('documents').update({ status, responded_at: new Date().toISOString(), responded_by: `${u.name} (office)` }).eq('id', docId));
+        const row = { status, responded_at: new Date().toISOString(), responded_by: `${u.name} (office)` };
+        if (status === 'approved' && sig) {
+          row.signature = { name: String(sig.name || '').trim(), image: sig.image, at: new Date().toISOString(), in_person: true, witness: u.name };
+          row.responded_by = `${row.signature.name} (signed in person)`;
+        }
+        must(await sb.from('documents').update(row).eq('id', docId));
+      },
+      async reportPayment(docId, p) {
+        if (!(await me())) throw new Error('Please log in.');
+        must(await sb.rpc('report_payment', { p_doc: docId, p_amount: Number(p.amount) || 0, p_method: p.method || 'Other', p_note: p.note || '' }));
+      },
+      async resolveReport(jobId, docId, reportId, received) {
+        await requireStaff();
+        must(await sb.rpc('resolve_payment_report', { p_report: reportId, p_received: !!received }));
       },
       async remove(jobId, docId) {
         await requireOffice();
@@ -396,8 +411,8 @@
         const byJob = must(await sb.rpc('my_documents')) || {};
         return Object.fromEntries(Object.entries(byJob).map(([k, list]) => [k, list.map(mapDoc)]));
       },
-      async respond(docId, approve) {
-        must(await sb.rpc('respond_estimate', { p_doc: docId, p_approve: !!approve }));
+      async respond(docId, approve, sig) {
+        must(await sb.rpc('respond_estimate', { p_doc: docId, p_approve: !!approve, p_sig_name: sig?.name || null, p_sig_image: sig?.image || null }));
       },
     },
 

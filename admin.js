@@ -104,6 +104,7 @@
   // The next payment that's due but not sent yet (a draft counts as not sent).
   const nextDue = (j) => planOf(j).find((p) => p.due && (!p.covered || p.inv?.status === 'draft')) || null;
   const needsInvoice = (j) => !!nextDue(j);
+  const reportsOf = (j) => (j.docs || []).flatMap((d) => (d.reports || []).filter((r) => r.status === 'pending').map((r) => ({ r, d })));
   const visitPassed = (j) => !!j.visitAt && new Date(j.visitAt).getTime() < Date.now();
   // Sold: the rep has been out (or the customer approved in writing). Time to pick a crew.
   const needsScheduling = (j) => (j.status === 'hot' && visitPassed(j)) || (['new', 'qualifying'].includes(j.status) && !!estWith(j, 'approved'));
@@ -145,6 +146,9 @@
         list: jobs.filter(needsInvoice), line: (j) => { const p = nextDue(j); return `${p.label} · ${docs.usd(p.amount)}${p.inv ? ' · draft' : ''}`; } },
       { id: 'permits', icon: '📋', title: 'Permits to apply for', why: 'The customer approved it. Apply on the building department’s website.',
         list: open.filter((j) => j.permit?.status === 'authorized'), line: (j) => `${TH.placeOf(j.address) || j.zip} · signed by ${j.permit.authorizedBy}` },
+      { id: 'reported', icon: '💵', title: 'Payments to confirm', why: 'The customer says they paid. Check your account, then record it.',
+        list: isStaff ? jobs.filter((j) => reportsOf(j).length) : [],
+        line: (j) => reportsOf(j).map(({ r, d }) => `${docs.usd(r.amount)} by ${r.method} · ${d.number}`).join(' · ') },
       { id: 'unpaid', icon: '💵', title: 'Waiting for payment', why: 'Invoices with money still owed.',
         list: jobs.filter((j) => owedOn(j) > 0).sort((a, b) => owedOn(b) - owedOn(a)),
         line: (j) => `${docs.usd(owedOn(j))} due${liveInvoices(j).some((d) => docs.state(d) === 'overdue') ? ' · OVERDUE' : ''}` },
@@ -247,6 +251,7 @@
       j.stage ? [`${stageOf(j.stage).icon} ${stageOf(j.stage).label}`, ''] : null,
       needsVisit(j) ? ['🔥 Book the rep visit', 'hot'] : null,
       j.permit?.status === 'authorized' ? ['📋 Apply for permit', 'hot'] : null,
+      reportsOf(j).length ? ['💵 Payment reported', 'hot'] : null,
       (j.designs || []).some((v) => v.chosen) ? ['🎨 Design picked', ''] : null,
       j.status === 'hot' && j.visitAt && !visitPassed(j) ? [`🤝 Visit ${fmtWhen(j.visitAt)}`, ''] : null,
       needsScheduling(j) ? ['✅ Sold? Schedule the crew', 'hot'] : null,
@@ -945,8 +950,17 @@
           j.buyer.email ? el('a', { class: 'btn ghost small', style: 'flex:1', href: `mailto:${j.buyer.email}?subject=${encodeURIComponent(`${isInv ? 'Invoice' : 'Estimate'} ${doc.number} from ${settings.name || 'Top Hat Contracting'}`)}&body=${encodeURIComponent(shareMsg)}` }, '✉️ Email') : null)));
     }
     if (!isInv && doc.status === 'sent') {
+      const signArea = el('div', { class: 'stack' });
+      const signBtn = el('button', { type: 'button', class: 'gold', onclick: () => {
+        signArea.replaceChildren(docs.signaturePad({ total: docs.totals(doc).total, name: j.buyer.name || '', submitLabel: `Approve for ${first === 'there' ? 'the customer' : first}`,
+          onCancel: () => signArea.replaceChildren(signBtn),
+          onSign: async (sig) => { await api.docs.setStatus(jobId, doc.id, 'approved', sig); await reopen(doc.id); } }));
+        signArea.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      } }, `✍️ Customer signs here (in person)`);
+      signArea.append(signBtn);
+      actions.append(signArea);
       actions.append(el('div', { class: 'row' },
-        el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: (e) => busy(e.currentTarget, async () => { if (!confirm('Mark approved? Use this if the customer said yes by phone or in person.')) return; await api.docs.setStatus(jobId, doc.id, 'approved'); await reopen(doc.id); }) }, '✓ Mark approved'),
+        el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: (e) => busy(e.currentTarget, async () => { if (!confirm('Mark approved without a signature? Use this if the customer said yes by phone.')) return; await api.docs.setStatus(jobId, doc.id, 'approved'); await reopen(doc.id); }) }, '✓ Approved by phone'),
         el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: (e) => busy(e.currentTarget, async () => { if (!confirm('Mark this estimate declined?')) return; await api.docs.setStatus(jobId, doc.id, 'declined'); await reopen(doc.id); }) }, 'Mark declined')));
     }
     if (!isInv && doc.status === 'approved') {
@@ -966,6 +980,12 @@
       const note = el('input', { type: 'text', placeholder: 'Note, e.g. check #1042 (optional)' });
       paymentsCard = el('section', { class: 'card stack' },
         el('div', { class: 'row' }, el('h3', {}, 'Payments'), el('span', { class: 'spacer' }), el('span', { class: `pill ${docs.pillClass(doc)}` }, docs.label(doc))),
+        ...(doc.reports || []).filter((r) => r.status === 'pending').map((r) => el('div', { class: 'callout report' },
+          el('div', {}, el('b', {}, `💵 ${r.by} says they paid ${docs.usd(r.amount)} by ${r.method}`), el('span', { class: 'muted small' }, ` · ${ago(r.at)}`)),
+          r.note ? el('div', { class: 'small' }, `“${r.note}”`) : null,
+          el('div', { class: 'row' },
+            el('button', { type: 'button', class: 'gold small', style: 'flex:1', onclick: (e) => busy(e.currentTarget, async () => { await api.docs.resolveReport(jobId, doc.id, r.id, true); await reopen(doc.id); }) }, '✓ Got it: record payment'),
+            el('button', { type: 'button', class: 'ghost small', style: 'flex:1', onclick: (e) => busy(e.currentTarget, async () => { if (!confirm('Mark as not received yet?')) return; await api.docs.resolveReport(jobId, doc.id, r.id, false); await reopen(doc.id); }) }, 'Not received')))),
         doc.payments.length ? el('ul', { class: 'log' }, ...doc.payments.map((p) => el('li', {},
           el('span', {}, docs.fmtDate(p.date)),
           el('span', { style: 'flex:1' }, `${docs.usd(p.amount)} · ${p.method}${p.note ? ' · ' + p.note : ''}`),
@@ -1036,6 +1056,7 @@
       if (pctSum() !== 100) { errorBox.textContent = 'The payment schedule has to add up to 100%.'; errorBox.hidden = false; planWrap.scrollIntoView({ block: 'center' }); return; }
       errorBox.hidden = true;
       patch.paymentSchedule = plan.map((s) => ({ label: String(s.label).trim(), pct: Number(s.pct) || 0, when: s.when }));
+      if (patch.cardPayLink && !/^https:\/\//i.test(patch.cardPayLink)) { errorBox.textContent = 'The card payment link must start with https://'; errorBox.hidden = false; return; }
       patch.taxRate = Number(patch.taxRate) || 0;
       patch.dueDays = Math.max(0, Math.round(Number(patch.dueDays) || 0));
       patch.showCrewPay = fd.get('showCrewPay') === 'on';
@@ -1057,6 +1078,7 @@
       el('h3', { style: 'margin-top:8px' }, 'Payment schedule'),
       el('p', { class: 'muted small' }, 'How the job total is split into payments. Each estimate shows it, and each job gets an invoice for every payment as it comes due: the first when the job is sold, then as work moves along.'),
       planWrap, planTotal,
+      f('cardPayLink', 'Card payment link (optional)', { type: 'url', inputmode: 'url', placeholder: 'https://… your Square, Stripe or PayPal payment link' }, 'Shows a “Pay by card” button on every invoice. Make the link in your Square, Stripe or PayPal account. You can still paste a different link on one invoice.'),
       f('estimatePaymentInstructions', 'Payment terms & how to pay: on estimates', { rows: 5 }, 'Printed on every estimate. Keep it to your payment schedule and Zelle. No bank numbers here.'),
       f('paymentInstructions', 'Payment terms & how to pay: on invoices', { rows: 8 }, 'Printed on every invoice. Your payment schedule, Zelle, and ACH details (routing and account number).'),
       f('estimateTerms', 'Terms on estimates', { rows: 2 }),

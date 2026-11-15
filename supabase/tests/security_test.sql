@@ -587,6 +587,38 @@ reset role;
 select set_config('request.jwt.claim.sub', :'A', false);
 set role authenticated;
 select t.ok(public.my_documents()::text ~ '"schedule_step": 0', 'customer sees which payment the invoice is for');
+-- "I've sent my payment"
+select public.report_payment(current_setting('t.dep')::uuid, 100, 'Zelle', 'conf 123');
+select t.ok(public.my_documents()::text ~ '"status": "pending"', 'customer sees their reported payment as pending');
+select t.ok((select count(*) from public.payment_reports) = 0, 'customer cannot read the reports table directly');
+do $$ begin
+  begin perform public.report_payment(current_setting('t.dep')::uuid, 0, 'Zelle', ''); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'reported payment must be more than zero'); end;
+  begin perform public.resolve_payment_report((select id from public.payment_reports limit 1), true); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'customer cannot confirm their own payment'); end;
+end $$;
+do $$ begin
+  begin insert into public.payment_reports (doc_id, job_id, amount) values (current_setting('t.dep')::uuid, current_setting('t.job')::uuid, 5); perform t.ok(false, 'x');
+  exception when insufficient_privilege then perform t.ok(true, 'customer cannot write reports directly'); end;
+end $$;
+reset role;
+select set_config('request.jwt.claim.sub', :'B', false);
+set role authenticated;
+do $$ begin
+  begin perform public.report_payment(current_setting('t.dep')::uuid, 50, 'Zelle', ''); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'other customer cannot report a payment on A''s invoice'); end;
+end $$;
+reset role;
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+select t.ok((select count(*) from public.payment_reports where status = 'pending') = 1, 'office sees the reported payment');
+select public.resolve_payment_report((select id from public.payment_reports limit 1), true);
+select t.ok((select (payments->0->>'amount')::numeric from public.documents where id = current_setting('t.dep')::uuid) = 100, 'confirming records the payment on the invoice');
+select t.ok((select status from public.payment_reports limit 1) = 'confirmed', 'report marked confirmed');
+do $$ begin
+  begin perform public.resolve_payment_report((select id from public.payment_reports limit 1), true); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'a report cannot be confirmed twice'); end;
+end $$;
 reset role;
 
 -- ========== Building permit + design studio ==========
@@ -658,19 +690,31 @@ select set_config('t.hotest', (select id::text from public.documents where job_i
 reset role;
 select set_config('request.jwt.claim.sub', :'A', false);
 set role authenticated;
-select public.respond_estimate(current_setting('t.hotest')::uuid, true);
+select public.respond_estimate(current_setting('t.hotest')::uuid, true, 'Ann Buyer', 'data:image/png;base64,iVBORw0KGgo=');
+select t.ok((select x->>'name' from jsonb_each(public.my_documents()) j, jsonb_array_elements(j.value) e, lateral (select e->'signature' as x) s where e->>'id' = current_setting('t.hotest')) = 'Ann Buyer', 'customer''s signature saved on the estimate');
 select t.ok((select x->>'status' from jsonb_array_elements(public.my_jobs()) x where x->>'id' = current_setting('t.hot')) = 'hot', 'approving the estimate makes it a hot lead');
 select t.ok((select x->>'visit_at' from jsonb_array_elements(public.my_jobs()) x where x->>'id' = current_setting('t.hot')) is null, 'no visit time before one is booked');
 reset role;
 select set_config('request.jwt.claim.sub', :'S', false);
 set role authenticated;
 update public.jobs set visit_at = '2030-05-01 16:00' where id = current_setting('t.hot')::uuid;
+do $$ begin
+  begin update public.documents set signature = '{"name":"Someone Else","image":"data:image/png;base64,AAAA"}' where id = current_setting('t.hotest')::uuid; perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'a signature cannot be changed after approval'); end;
+end $$;
+insert into public.documents (job_id, type, items) values (current_setting('t.hot')::uuid, 'estimate', '[{"desc":"Extra closet","qty":1,"price":500}]');
+update public.documents set status = 'sent' where job_id = current_setting('t.hot')::uuid and status = 'draft';
+select set_config('t.est2', (select id::text from public.documents where job_id = current_setting('t.hot')::uuid and status = 'sent' and type = 'estimate'), false);
 select t.ok(exists (select 1 from public.job_events where job_id = current_setting('t.hot')::uuid and text like '🤝 Rep visit booked for May 1, 2030%'), 'rep visit logged');
 select t.ok(exists (select 1 from public.job_events where job_id = current_setting('t.hot')::uuid and text = 'Status → Hot lead'), 'hot lead logged');
 reset role;
 select set_config('request.jwt.claim.sub', :'A', false);
 set role authenticated;
 select t.ok((select x->>'visit_at' from jsonb_array_elements(public.my_jobs()) x where x->>'id' = current_setting('t.hot')) like '2030-05-01%', 'customer sees the rep visit time');
+do $$ begin
+  begin perform public.respond_estimate(current_setting('t.est2')::uuid, true, 'Ann Buyer', 'javascript:alert(1)'); perform t.ok(false, 'x');
+  exception when check_violation then perform t.ok(true, 'a signature must be a PNG picture'); end;
+end $$;
 select t.ok((select x::text from jsonb_array_elements(public.my_jobs()) x where x->>'id' = current_setting('t.hot')) !~ '3200|price', 'customer job data still has no price');
 reset role;
 

@@ -533,6 +533,16 @@
     return { ...ctx, j };
   }
 
+  // Signatures on estimates: { name, image (PNG data URL), at, inPerson, witness }.
+  function checkSignature(sig) {
+    if (!sig) return null;
+    const name = String(sig.name || '').trim().slice(0, 120);
+    if (name.length < 3) throw new Error('Type your full name.');
+    if (!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(sig.image || '') || sig.image.length > 300000) throw new Error('Please sign again.');
+    return { name, image: sig.image, at: Date.now() };
+  }
+  const PAY_METHODS = ['Zelle', 'Bank transfer (ACH)', 'Check', 'Cash', 'Card', 'Venmo', 'Cash App', 'Other'];
+
   /* ---------- AI design studio ---------- */
   // The image model can change as Google releases new ones: set it in Business → AI design studio.
   const DEFAULT_IMAGE_MODEL = 'gemini-2.5-flash-image';
@@ -913,8 +923,9 @@
         writeDb(d);
       },
       // Staff: mark an estimate approved/declined (e.g. customer said yes by phone), or void an invoice.
-      async setStatus(jobId, docId, status) {
+      async setStatus(jobId, docId, status, sig) {
         const { u, isStaff } = await officeJob(jobId);
+        const signature = status === 'approved' ? checkSignature(sig) : null;
         if (!isStaff && status === 'void') throw new Error('Only the office can void invoices.');
         const d = await db();
         const j = d.jobs.find((x) => x.id === jobId);
@@ -923,7 +934,8 @@
         const ok = rec.type === 'estimate' ? ['approved', 'declined'].includes(status) && rec.status === 'sent'
           : status === 'void' && rec.status !== 'void';
         if (!ok) throw new Error('That change isn’t allowed.');
-        rec.status = status; rec.respondedAt = Date.now(); rec.respondedBy = `${u.name} (${isStaff ? 'office' : 'sales'})`;
+        rec.status = status; rec.respondedAt = Date.now(); rec.respondedBy = signature ? `${signature.name} (signed in person)` : `${u.name} (${isStaff ? 'office' : 'sales'})`;
+        if (signature) rec.signature = { ...signature, inPerson: true, witness: u.name };
         if (status === 'approved') { j.price = docTotal(rec); j.log.push({ at: Date.now(), text: `Customer price → ${usd(j.price)} (from ${rec.number})` }); }
         j.log.push({ at: Date.now(), text: `${rec.number} marked ${status} by ${u.name}` });
         if (status === 'approved' && ['new', 'qualifying'].includes(j.status)) applyProgress(j, { status: 'hot' }, u.name, false);
@@ -973,21 +985,51 @@
         const out = {};
         d.jobs.filter((j) => j.buyerId === u.id).forEach((j) => {
           out[j.id] = j.docs.filter((x) => x.status !== 'draft').map((x) => {
-            const { id, type, number, status, items, taxRate, notes, dueDate, payLink, payments, created, sentAt, respondedAt } = x;
-            return JSON.parse(JSON.stringify({ id, type, number, status, items, taxRate, notes, dueDate, payLink, payments, created, sentAt, respondedAt }));
+            const { id, type, number, status, items, taxRate, notes, dueDate, payLink, payments, created, sentAt, respondedAt, signature, scheduleStep, scheduleBase } = x;
+            const reports = (x.reports || []).map(({ id: rid, amount, method, at, status: rs }) => ({ id: rid, amount, method, at, status: rs }));
+            return JSON.parse(JSON.stringify({ id, type, number, status, items, taxRate, notes, dueDate, payLink, payments, created, sentAt, respondedAt, signature, scheduleStep, scheduleBase, reports }));
           });
         });
         return out;
       },
-      async respond(docId, approve) {
+      // Customer: "I've sent my payment." The office confirms it when the money arrives.
+      async reportPayment(docId, p) {
+        const u = await me();
+        const d = await db();
+        const j = u && d.jobs.find((x) => x.buyerId === u.id && x.docs.some((y) => y.id === docId));
+        const rec = j && j.docs.find((x) => x.id === docId);
+        if (!rec || rec.type !== 'invoice' || ['draft', 'void'].includes(rec.status)) throw new Error('This invoice can’t take payments.');
+        const amount = Math.round(Number(p.amount) * 100) / 100;
+        if (!(amount > 0)) throw new Error('Enter how much you paid.');
+        if (amount > docTotal(rec) * 2) throw new Error('That’s more than this invoice. Check the amount.');
+        const method = PAY_METHODS.includes(p.method) ? p.method : 'Other';
+        (rec.reports ||= []).push({ id: uid(), amount, method, note: String(p.note || '').trim().slice(0, 300), at: Date.now(), by: u.name, status: 'pending' });
+        j.log.push({ at: Date.now(), text: `💵 ${u.name} says they paid ${usd(amount)} by ${method} on ${rec.number}. Confirm it when it arrives.` });
+        writeDb(d);
+      },
+      async resolveReport(jobId, docId, reportId, received) {
+        const u = await requireStaff();
+        const d = await db();
+        const j = d.jobs.find((x) => x.id === jobId);
+        const rec = j && j.docs.find((x) => x.id === docId);
+        const r = rec && (rec.reports || []).find((x) => x.id === reportId && x.status === 'pending');
+        if (!r) throw new Error('Already handled.');
+        r.status = received ? 'confirmed' : 'not_received'; r.resolvedAt = Date.now(); r.resolvedBy = u.name;
+        if (!received) j.log.push({ at: Date.now(), text: `💵 ${usd(r.amount)} by ${r.method} on ${rec.number}: not received yet` });
+        writeDb(d);
+        if (received) await api.docs.addPayment(jobId, docId, { amount: r.amount, method: r.method, date: isoDay(Date.now()), note: `Reported by ${r.by}${r.note ? ': ' + r.note : ''}` });
+      },
+      async respond(docId, approve, sig) {
         const u = await me();
         const d = await db();
         const j = u && d.jobs.find((x) => x.buyerId === u.id && x.docs.some((y) => y.id === docId));
         const rec = j && j.docs.find((x) => x.id === docId);
         if (!rec || rec.type !== 'estimate' || rec.status !== 'sent') throw new Error('This estimate can no longer be changed. Call us if you have questions.');
+        const signature = approve ? checkSignature(sig) : null;
         rec.status = approve ? 'approved' : 'declined'; rec.respondedAt = Date.now(); rec.respondedBy = u.name;
+        if (signature) rec.signature = { ...signature, inPerson: false };
         if (approve) { j.price = docTotal(rec); j.log.push({ at: Date.now(), text: `Customer price → ${usd(j.price)} (from ${rec.number})` }); }
-        j.log.push({ at: Date.now(), text: `Customer ${approve ? 'approved' : 'declined'} ${rec.number}` });
+        j.log.push({ at: Date.now(), text: `Customer ${approve ? 'approved' : 'declined'} ${rec.number}${signature ? ` (signed “${signature.name}”)` : ''}` });
         if (approve && ['new', 'qualifying'].includes(j.status)) applyProgress(j, { status: 'hot' }, u.name, false);
         writeDb(d);
       },
@@ -1431,5 +1473,5 @@
           el('span', { class: 'muted' }, '→')))));
   }
 
-  window.TH = { PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+  window.TH = { PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();

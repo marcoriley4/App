@@ -319,24 +319,63 @@
     const docs = Object.fromEntries(await Promise.all(jobs.map(async (j) => [j.id, j.sharedFiles ? await api.files.forCustomer(j.id) : []])));
     const [paper, company] = await Promise.all([api.docs.mine(), api.settings.get()]);
     const D = TH.docs;
-    const openPaper = (j, dc) => {
+    // Pay an invoice: by card (if Top Hat has a card link), or Zelle/bank, then "I've sent my payment".
+    const payArea = (j, dc, open) => {
+      const owed = D.owed(dc);
+      const area = el('div', { class: 'pay-area stack' });
+      const cardLink = dc.payLink || company.cardPayLink;
+      const pending = (dc.reports || []).filter((r) => r.status === 'pending');
+      const showOptions = () => {
+        const amount = el('input', { type: 'number', inputmode: 'decimal', min: '0.01', step: '0.01', value: owed, 'aria-label': 'Amount you paid' });
+        const method = el('select', { 'aria-label': 'How you paid' }, ...(TH.PAY_METHODS || ['Zelle', 'Check', 'Cash', 'Card', 'Other']).map((m) => el('option', {}, m)));
+        const note = el('input', { placeholder: 'Note (optional), e.g. Zelle confirmation #', 'aria-label': 'Note' });
+        const err = el('div', { class: 'error', hidden: true, role: 'alert' });
+        const sent = el('div', { class: 'stack', hidden: true },
+          el('b', {}, 'Tell us what you sent'), el('div', { class: 'two' }, el('label', { class: 'field' }, 'Amount ($)', amount), el('label', { class: 'field' }, 'How you paid', method)), note, err,
+          el('button', { type: 'button', class: 'gold block', onclick: async (e) => {
+            e.currentTarget.disabled = true;
+            try {
+              await api.docs.reportPayment(dc.id, { amount: amount.value, method: method.value, note: note.value });
+              area.replaceChildren(el('div', { class: 'callout good' }, el('b', {}, '✓ Thanks! '), `We’ll confirm your ${D.usd(Number(amount.value))} payment as soon as it arrives.`));
+            } catch (ex) { err.textContent = ex.message; err.hidden = false; e.currentTarget.disabled = false; }
+          } }, 'Send'));
+        area.replaceChildren(...[
+          el('h3', {}, `Pay ${D.usd(owed)}`),
+          cardLink ? el('a', { class: 'btn gold block big', href: cardLink, target: '_blank', rel: 'noopener' }, '💳 Pay by card') : null,
+          company.paymentInstructions ? el('div', { class: 'pay-how' }, el('b', {}, cardLink ? 'Or pay by Zelle or bank transfer' : 'How to pay'),
+            ...String(company.paymentInstructions).split('\n').filter((x) => x.trim()).map((x) => el('div', {}, x))) : null,
+          el('button', { type: 'button', class: (cardLink ? 'ghost' : 'gold') + ' block', onclick: (e) => { sent.hidden = false; e.currentTarget.remove(); amount.focus(); } }, '✓ I’ve sent my payment'),
+          sent,
+        ].filter(Boolean));
+      };
+      area.replaceChildren(...[
+        pending.length ? el('div', { class: 'callout' }, `⏳ You told us you paid ${pending.map((r) => `${D.usd(r.amount)} by ${r.method}`).join(', ')}. We’ll confirm it when it arrives.`) : null,
+        el('button', { type: 'button', class: 'gold block big', onclick: showOptions }, `💳 Make a payment · ${D.usd(owed)}`),
+      ].filter(Boolean));
+      if (open) showOptions();
+      return area;
+    };
+    const openPaper = (j, dc, opts = {}) => {
       const acts = [];
       if (dc.type === 'estimate' && dc.status === 'sent') {
-        acts.push((close) => el('button', { class: 'gold block', onclick: async (e) => {
-          if (!confirm(`Approve estimate ${dc.number} for ${D.usd(D.totals(dc).total)}?`)) return;
-          e.currentTarget.disabled = true;
-          try { await api.docs.respond(dc.id, true); close(); route(); } catch (err) { alert(err.message); e.currentTarget.disabled = false; }
-        } }, `✓ Approve estimate (${D.usd(D.totals(dc).total)})`));
+        acts.push((close) => {
+          const area = el('div', { class: 'stack' });
+          const pad = () => area.replaceChildren(D.signaturePad({ total: D.totals(dc).total, name: me?.name || '', onCancel: () => area.replaceChildren(btn),
+            onSign: async (sig) => { await api.docs.respond(dc.id, true, sig); close(); route(); } })) || setTimeout(() => area.scrollIntoView({ block: 'center' }), 30);
+          const btn = el('button', { class: 'gold block big', onclick: pad }, `✍️ Sign & approve (${D.usd(D.totals(dc).total)})`);
+          area.append(btn);
+          if (opts.sign) setTimeout(pad, 0);
+          return area;
+        });
         acts.push((close) => el('button', { class: 'ghost block', onclick: async (e) => {
           if (!confirm('Decline this estimate? You can still call us with questions.')) return;
           e.currentTarget.disabled = true;
           try { await api.docs.respond(dc.id, false); close(); route(); } catch (err) { alert(err.message); e.currentTarget.disabled = false; }
         } }, 'Decline'));
       }
-      if (dc.type === 'invoice' && D.owed(dc) > 0 && dc.payLink) {
-        acts.push(el('a', { class: 'btn gold block', href: dc.payLink, target: '_blank', rel: 'noopener' }, `💳 Pay ${D.usd(D.owed(dc))} by card`));
-      }
+      if (dc.type === 'invoice' && D.owed(dc) > 0) acts.push(payArea(j, dc, opts.pay));
       D.view(dc, { job: j, customer: me, company }, acts);
+      if (opts.pay || opts.sign) setTimeout(() => document.querySelector('.doc-actions')?.scrollIntoView({ block: 'start' }), 60);
     };
     view.append(el('div', { class: 'stack', style: 'margin-top:24px' },
       el('div', { class: 'row' }, el('h1', {}, 'My jobs'), el('span', { class: 'spacer' }), el('a', { class: 'btn gold small', href: '#/request' }, '+ New request')),
@@ -362,6 +401,11 @@
           j.stage && (TH.STAGES || []).find((x) => x.id === j.stage)
             ? el('div', { class: 'callout stage' }, `${TH.STAGES.find((x) => x.id === j.stage).icon} ${TH.STAGES.find((x) => x.id === j.stage).buyer}`)
             : null,
+          ...(paper[j.id] || []).filter((dc) => dc.type === 'estimate' && dc.status === 'sent').map((dc) =>
+            el('button', { type: 'button', class: 'gold block', onclick: () => openPaper(j, dc, { sign: true }) }, `✍️ Review & sign estimate · ${D.usd(D.totals(dc).total)}`)),
+          ...(paper[j.id] || []).filter((dc) => D.owed(dc) > 0).map((dc) =>
+            el('button', { type: 'button', class: 'gold block', onclick: () => openPaper(j, dc, { pay: true }) }, `💳 Make a payment · ${D.usd(D.owed(dc))}`,
+              el('span', { class: 'btn-sub' }, `${dc.number}${dc.dueDate ? ' · due ' + D.fmtDate(dc.dueDate) : ''}${(dc.reports || []).some((r) => r.status === 'pending') ? ' · payment reported' : ''}`))),
           j.status !== 'lost' ? el('a', { class: 'btn studio-btn', href: `#/design?job=${j.id}` },
             el('span', {}, '🎨 Design studio'),
             el('span', { class: 'small' }, j.designCount ? `${j.designCount} picture${j.designCount === 1 ? '' : 's'} · keep changing it` : 'See your remodel before we build it')) : null,

@@ -6,7 +6,7 @@
 (function () {
   const { el } = TH;
 
-  const METHODS = ['Cash', 'Check', 'Zelle', 'Card', 'Venmo', 'Cash App', 'Other'];
+  const METHODS = ['Cash', 'Check', 'Zelle', 'Bank transfer (ACH)', 'Card', 'Venmo', 'Cash App', 'Other'];
   const LABELS = {
     draft: 'Draft', sent: 'Sent', approved: 'Approved', declined: 'Declined',
     paid: 'Paid', partial: 'Partly paid', overdue: 'Overdue', void: 'Void',
@@ -123,6 +123,13 @@
         ? el('section', { class: 'doc-notes' }, el('h4', {}, 'Payment terms & how to pay'), ...lines(isInv ? company.paymentInstructions : company.estimatePaymentInstructions),
           isInv && doc.payLink ? el('div', {}, 'Pay by card: ', el('a', { href: doc.payLink, target: '_blank', rel: 'noopener' }, 'secure payment link')) : null)
         : null,
+      !isInv && doc.signature?.image ? el('section', { class: 'doc-notes doc-signed' }, el('h4', {}, 'Approved and signed'),
+        el('img', { class: 'doc-sig', src: doc.signature.image, alt: `Signature of ${doc.signature.name}` }),
+        el('div', {}, el('b', {}, doc.signature.name), ` · ${new Date(doc.signature.at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`),
+        el('div', { class: 'muted' }, doc.signature.inPerson ? `Signed in person with ${doc.signature.witness || 'Top Hat'}` : 'Signed in the Top Hat app'))
+        : !isInv && st === 'sent' ? el('section', { class: 'doc-notes' }, el('h4', {}, 'Approval'),
+          el('div', {}, `I approve this estimate (${usd(t.total)}) and the payment schedule above.`),
+          el('div', { class: 'sign-lines' }, el('div', {}, 'Signature'), el('div', {}, 'Printed name'), el('div', {}, 'Date'))) : null,
       isInv && (doc.payments || []).length ? el('section', { class: 'doc-notes' }, el('h4', {}, 'Payments received'),
         ...doc.payments.map((p) => el('div', {}, `${fmtDate(p.date)} · ${p.method} · ${usd(p.amount)}`))) : null,
       el('footer', { class: 'doc-foot' }, `${company.name || 'Top Hat Contracting'} · Thank you for your business`),
@@ -147,6 +154,48 @@
     return close;
   }
 
+  // Sign with a finger (or mouse). onSign gets { name, image } where image is a PNG data URL.
+  function signaturePad({ total, name = '', submitLabel = 'Sign & approve', onSign, onCancel }) {
+    const canvas = el('canvas', { class: 'sig-canvas', 'aria-label': 'Sign here with your finger' });
+    const nameIn = el('input', { value: name, autocomplete: 'name', placeholder: 'Type your full name', 'aria-label': 'Your full name' });
+    const err = el('div', { class: 'error', hidden: true, role: 'alert' });
+    let drawn = false, drawing = false, last = null, ctx = null;
+    const setup = () => {
+      const r = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.round(r.width * dpr)); canvas.height = Math.max(1, Math.round(r.height * dpr));
+      ctx = canvas.getContext('2d'); ctx.scale(dpr, dpr);
+      ctx.lineWidth = 2.6; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#111';
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, r.width, r.height);
+    };
+    const pos = (e) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+    canvas.addEventListener('pointerdown', (e) => { if (!ctx || canvas.width !== Math.round(canvas.getBoundingClientRect().width * (window.devicePixelRatio || 1))) setup(); drawing = true; last = pos(e); canvas.setPointerCapture(e.pointerId); e.preventDefault(); });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!drawing) return; const p = pos(e);
+      ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke(); last = p; drawn = true; e.preventDefault();
+    });
+    const stop = () => { drawing = false; };
+    canvas.addEventListener('pointerup', stop); canvas.addEventListener('pointercancel', stop);
+    const box = el('div', { class: 'sig-box stack' },
+      el('b', {}, 'Sign to approve'),
+      total != null ? el('p', { class: 'small' }, `By signing, you approve this estimate for ${usd(total)} and its payment schedule.`) : null,
+      el('div', { class: 'sig-wrap' }, canvas, el('span', { class: 'sig-x', 'aria-hidden': 'true' }, '✕'), el('span', { class: 'sig-hint', 'aria-hidden': 'true' }, 'Sign here')),
+      el('button', { type: 'button', class: 'link small', onclick: () => { if (ctx) setup(); drawn = false; } }, 'Clear signature'),
+      nameIn, err,
+      el('button', { type: 'button', class: 'gold block big', onclick: async (e) => {
+        if (!drawn) { err.textContent = 'Sign in the box with your finger.'; err.hidden = false; return; }
+        if (nameIn.value.trim().length < 3) { err.textContent = 'Type your full name.'; err.hidden = false; return; }
+        // Keep it small: a 600px-wide PNG is plenty for a signature.
+        const out = document.createElement('canvas'); const w = 600; out.width = w; out.height = Math.round(w * canvas.height / canvas.width);
+        const oc = out.getContext('2d'); oc.fillStyle = '#fff'; oc.fillRect(0, 0, out.width, out.height); oc.drawImage(canvas, 0, 0, out.width, out.height);
+        e.currentTarget.disabled = true;
+        try { await onSign({ name: nameIn.value.trim(), image: out.toDataURL('image/png') }); }
+        catch (ex) { err.textContent = ex.message; err.hidden = false; e.currentTarget.disabled = false; }
+      } }, `✍️ ${submitLabel}`),
+      onCancel ? el('button', { type: 'button', class: 'ghost block', onclick: onCancel }, 'Cancel') : null);
+    return box;
+  }
+
   // Any printable sheet (e.g. the permit packet) in the same viewer.
   function viewSheet(sheet, label) {
     const close = () => { overlay.remove(); document.body.classList.remove('doc-open'); document.removeEventListener('keydown', onKey); };
@@ -159,5 +208,5 @@
     return close;
   }
 
-  TH.docs = { viewSheet, METHODS, LABELS, WHEN, DEFAULT_SCHEDULE, scheduleOf, schedule, totals, state, label, pillClass, editable, owed, usd, fmtDate, todayKey, render, view, round2 };
+  TH.docs = { signaturePad, viewSheet, METHODS, LABELS, WHEN, DEFAULT_SCHEDULE, scheduleOf, schedule, totals, state, label, pillClass, editable, owed, usd, fmtDate, todayKey, render, view, round2 };
 })();

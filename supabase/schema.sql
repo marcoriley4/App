@@ -28,7 +28,7 @@ end $$;
 
 -- ---------- clean slate for re-runs ----------
 drop trigger if exists on_auth_user_created on auth.users;
-drop table if exists public.design_versions, public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
+drop table if exists public.payment_reports, public.design_versions, public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
 drop function if exists public.handle_new_user, public.is_staff, public.new_crew_token, public.owns_job,
   public.customer_can_read, public.crew_token_active, public.create_job, public.add_customer_file, public.my_jobs,
   public.crew_job, public.crew_add_file, public.jobs_after_insert, public.jobs_before_update, public.jobs_after_update,
@@ -40,7 +40,7 @@ drop function if exists public.handle_new_user, public.is_staff, public.new_crew
   public.my_sales, public.can_access_job, public.office_can_see_profile, public.office_can_access_path, public.sales_guard,
   public.private_guard, public.costs_after_update, public.log_call, public.staff_invite_sales, public.staff_revoke_sales,
   public.sales_invite_info, public.claim_sales_invite, public.office_crew_list,
-  public.authorize_permit, public.can_design, public.permit_label cascade;
+  public.authorize_permit, public.can_design, public.permit_label, public.report_payment, public.resolve_payment_report cascade;
 
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
@@ -591,6 +591,8 @@ create table public.documents (
   -- An invoice for one payment on the payment schedule: which payment, and the job total it was worked out from.
   schedule_step smallint check (schedule_step between 0 and 19),
   schedule_base numeric(12, 2) check (schedule_base >= 0),
+  -- Estimate signature: { name, image (PNG data URL), at, in_person, witness }. Set once, when approved.
+  signature jsonb check (signature is null or (jsonb_typeof(signature) = 'object' and length(signature->>'name') between 3 and 120 and (signature->>'image') ~ '^data:image/png;base64,[A-Za-z0-9+/=]+$' and length(signature->>'image') <= 300000)),
   check (type = 'invoice' or schedule_step is null),
   created_at timestamptz not null default now(),
   sent_at timestamptz,
@@ -598,6 +600,26 @@ create table public.documents (
   responded_by text not null default ''
 );
 create index on public.documents (job_id);
+
+-- Payments the customer says they sent, until the office confirms them.
+create table public.payment_reports (
+  id uuid primary key default gen_random_uuid(),
+  doc_id uuid not null references public.documents(id) on delete cascade,
+  job_id uuid not null references public.jobs(id) on delete cascade,
+  amount numeric(12, 2) not null check (amount > 0),
+  method text not null default 'Other',
+  note text not null default '' check (length(note) <= 300),
+  reported_by text not null default '',
+  status text not null default 'pending' check (status in ('pending', 'confirmed', 'not_received')),
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz,
+  resolved_by text not null default ''
+);
+create index on public.payment_reports (doc_id);
+alter table public.payment_reports enable row level security;
+create policy "office reads reports" on public.payment_reports for select to authenticated using (public.can_access_job(job_id));
+revoke all on public.payment_reports from anon;
+revoke insert, update, delete on public.payment_reports from authenticated;
 
 create function public.doc_total(items jsonb, tax numeric) returns numeric
 language sql immutable set search_path = '' as $$
@@ -631,6 +653,9 @@ begin
   end if;
   new.job_id := old.job_id; new.type := old.type; new.number := old.number; new.created_at := old.created_at;
   new.schedule_step := old.schedule_step; new.schedule_base := old.schedule_base;
+  if new.signature is distinct from old.signature and not (old.type = 'estimate' and old.status = 'sent' and new.status = 'approved' and old.signature is null) then
+    raise exception 'A signature is added only when the estimate is approved.';
+  end if;
   if (new.items, new.tax_rate) is distinct from (old.items, old.tax_rate)
      and not (old.status = 'draft' or (old.status = 'sent' and jsonb_array_length(old.payments) = 0)) then
     raise exception 'This document is locked and can''t be edited.';
@@ -709,26 +734,68 @@ language sql stable security definer set search_path = '' as $$
       'id', d.id, 'type', d.type, 'number', d.number, 'status', d.status, 'items', d.items, 'tax_rate', d.tax_rate,
       'notes', d.notes, 'due_date', d.due_date, 'pay_link', d.pay_link, 'payments', d.payments,
       'created_at', d.created_at, 'sent_at', d.sent_at, 'responded_at', d.responded_at,
-      'schedule_step', d.schedule_step, 'schedule_base', d.schedule_base) order by d.created_at) as docs
+      'schedule_step', d.schedule_step, 'schedule_base', d.schedule_base, 'signature', d.signature,
+      'reports', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'amount', r.amount, 'method', r.method, 'created_at', r.created_at, 'status', r.status) order by r.created_at), '[]'::jsonb)
+                    from public.payment_reports r where r.doc_id = d.id)) order by d.created_at) as docs
     from public.documents d join public.jobs j on j.id = d.job_id
     where j.buyer_id = auth.uid() and d.status <> 'draft'
     group by d.job_id) x;
 $$;
 
 -- Customer: approve or decline an estimate that was sent to them.
-create function public.respond_estimate(p_doc uuid, p_approve boolean) returns void
+create function public.respond_estimate(p_doc uuid, p_approve boolean, p_sig_name text default null, p_sig_image text default null) returns void
 language plpgsql security definer set search_path = '' as $$
-declare who text;
+declare who text; sig jsonb;
 begin
   if not exists (select 1 from public.documents d join public.jobs j on j.id = d.job_id
                  where d.id = p_doc and j.buyer_id = auth.uid() and d.type = 'estimate' and d.status = 'sent') then
     raise exception 'This estimate can no longer be changed. Call us if you have questions.';
   end if;
   select name into who from public.profiles where id = auth.uid();
+  if p_approve and p_sig_image is not null then
+    sig := jsonb_build_object('name', left(trim(coalesce(p_sig_name, '')), 120), 'image', p_sig_image, 'at', now(), 'in_person', false);
+  end if;
   update public.documents
      set status = case when p_approve then 'approved' else 'declined' end,
-         responded_at = now(), responded_by = coalesce(who, 'customer') || ' (customer)'
+         responded_at = now(), responded_by = coalesce(who, 'customer') || ' (customer)', signature = sig
    where id = p_doc;
+end $$;
+
+-- Customer: "I've sent my payment." Waits for the office to confirm it arrived.
+create function public.report_payment(p_doc uuid, p_amount numeric, p_method text, p_note text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare d record; who text; amt numeric := round(coalesce(p_amount, 0), 2);
+begin
+  select x.id, x.job_id, x.number, x.status, x.type, public.doc_total(x.items, x.tax_rate) as total into d
+    from public.documents x join public.jobs j on j.id = x.job_id where x.id = p_doc and j.buyer_id = auth.uid();
+  if d.id is null or d.type <> 'invoice' or d.status in ('draft', 'void') then raise exception 'This invoice can’t take payments.'; end if;
+  if amt <= 0 then raise exception 'Enter how much you paid.'; end if;
+  if amt > d.total * 2 then raise exception 'That’s more than this invoice. Check the amount.'; end if;
+  select name into who from public.profiles where id = auth.uid();
+  insert into public.payment_reports (doc_id, job_id, amount, method, note, reported_by)
+  values (d.id, d.job_id, amt, case when p_method in ('Zelle', 'Bank transfer (ACH)', 'Check', 'Cash', 'Card', 'Venmo', 'Cash App') then p_method else 'Other' end,
+          left(trim(coalesce(p_note, '')), 300), coalesce(who, 'Customer'));
+  perform public.log_event(d.job_id, '💵 ' || coalesce(who, 'Customer') || ' says they paid ' || public.usd(amt) || ' on ' || d.number || '. Confirm it when it arrives.');
+end $$;
+
+-- Office: the money arrived (record it as a payment) or it didn't.
+create function public.resolve_payment_report(p_report uuid, p_received boolean) returns void
+language plpgsql security definer set search_path = '' as $$
+declare r record; who text;
+begin
+  if not public.is_staff() then raise exception 'Only the office can confirm payments.'; end if;
+  select * into r from public.payment_reports where id = p_report and status = 'pending' for update;
+  if r.id is null then raise exception 'Already handled.'; end if;
+  select name into who from public.profiles where id = auth.uid();
+  update public.payment_reports set status = case when p_received then 'confirmed' else 'not_received' end, resolved_at = now(), resolved_by = coalesce(who, 'Office')
+   where id = r.id;
+  if p_received then
+    update public.documents set payments = payments || jsonb_build_array(jsonb_build_object('id', replace(gen_random_uuid()::text, '-', ''), 'amount', r.amount, 'method', r.method,
+      'date', current_date, 'note', 'Reported by ' || r.reported_by || case when r.note <> '' then ': ' || r.note else '' end))
+     where id = r.doc_id;
+  else
+    perform public.log_event(r.job_id, '💵 ' || public.usd(r.amount) || ' by ' || r.method || ': not received yet');
+  end if;
 end $$;
 
 -- ---------- crew logins ----------
@@ -994,12 +1061,13 @@ revoke insert, update, delete on public.design_versions from authenticated;
 revoke execute on all functions in schema public from public, anon, authenticated;
 grant execute on function public.is_staff(), public.owns_job(text), public.customer_can_read(text),
   public.create_job(text, text, text, text, text, text), public.add_customer_file(uuid, text, text, text, bigint),
-  public.my_jobs(), public.my_documents(), public.respond_estimate(uuid, boolean),
+  public.my_jobs(), public.my_documents(), public.respond_estimate(uuid, boolean, text, text),
   public.staff_invite_crew(uuid), public.staff_revoke_crew(uuid), public.claim_crew_invite(text),
   public.crew_my_jobs(), public.crew_set_progress(uuid, text, text), public.crew_respond(uuid, text, text),
   public.crew_can_read_customer(text), public.my_sales(), public.can_access_job(uuid), public.office_can_see_profile(uuid),
   public.office_can_access_path(text), public.log_call(uuid, text, text), public.staff_invite_sales(uuid), public.staff_revoke_sales(uuid),
-  public.claim_sales_invite(text), public.office_crew_list(), public.authorize_permit(uuid, text), public.can_design(uuid) to authenticated;
+  public.claim_sales_invite(text), public.office_crew_list(), public.authorize_permit(uuid, text), public.can_design(uuid),
+  public.report_payment(uuid, numeric, text, text), public.resolve_payment_report(uuid, boolean) to authenticated;
 grant execute on function public.sales_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_add_note(text, uuid, text) to anon, authenticated;
