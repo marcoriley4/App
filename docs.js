@@ -40,16 +40,20 @@
     paid: 's-completed', partial: 's-scheduled', overdue: 's-new', void: 's-lost',
   })[state(doc)] || '';
   // Payment schedule: when each payment is due during the job. Set in Business; amounts come from the job total.
+  // "stage" = a part of the work (framing, sheetrock…): the office bills it when that part is done.
   const WHEN = [
+    { id: 'insurance', label: 'Due upon receipt of payment from the insurance company', short: 'Insurance pays' },
     { id: 'sold', label: 'When the job is sold', short: 'Job sold' },
     { id: 'start', label: 'When work starts', short: 'Work starts' },
+    { id: 'stage', label: 'Due upon completion', short: 'That part is done' },
     { id: 'mid', label: 'Halfway through the job', short: 'Halfway' },
-    { id: 'done', label: 'When the job is finished', short: 'Job finished' },
+    { id: 'done', label: 'Due upon final completion', short: 'Job finished' },
   ];
   const DEFAULT_SCHEDULE = [
-    { label: 'Deposit', pct: 50, when: 'sold' },
-    { label: 'Progress payment', pct: 25, when: 'start' },
-    { label: 'Final payment', pct: 25, when: 'done' },
+    { label: 'Insurance payment', pct: 50, when: 'insurance' },
+    { label: 'Framing', pct: 25, when: 'stage' },
+    { label: 'Roofing, insulation & sheetrock', pct: 15, when: 'stage' },
+    { label: 'Final: painting, finish work & cleanup', pct: 10, when: 'done' },
   ];
   // Crew pay schedule: how a contractor's pay on a job is split; they bill Top Hat as they reach each step.
   const CREW_WHEN = [
@@ -83,7 +87,7 @@
     return steps.map((s, i) => {
       const amount = i === steps.length - 1 ? left : round2(total * (Number(s.pct) || 0) / 100);
       left = round2(left - amount);
-      return { ...s, index: i, amount, whenLabel: (WHEN.find((w) => w.id === s.when) || WHEN[3]).label };
+      return { ...s, index: i, amount, whenLabel: (WHEN.find((w) => w.id === s.when) || WHEN.find((w) => w.id === 'done')).label };
     });
   }
   const editable = (doc) => doc.status === 'draft' || (doc.status === 'sent' && totals(doc).paid === 0);

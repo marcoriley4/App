@@ -98,7 +98,8 @@
   // Payment schedule on a job: the total it's based on, and each payment with its invoice once made.
   const approvedEstOf = (j) => (j.docs || []).filter((d) => d.type === 'estimate' && d.status === 'approved').at(-1);
   const jobTotal = (j) => { const e = approvedEstOf(j); return e ? docs.totals(e).total : Number(j.price) || 0; };
-  const DUE_FROM = { sold: ['scheduled', 'in_progress', 'completed'], start: ['in_progress', 'completed'], mid: ['in_progress', 'completed'], done: ['completed'] };
+  // When each kind of payment shows as due. A "stage" payment is billed when that part of the work is done (tap it on the job); it nags once the job is finished.
+  const DUE_FROM = { insurance: ['scheduled', 'in_progress', 'completed'], sold: ['scheduled', 'in_progress', 'completed'], start: ['in_progress', 'completed'], stage: ['completed'], mid: ['in_progress', 'completed'], done: ['completed'] };
   function planOf(j) {
     const total = jobTotal(j);
     if (!total || j.status === 'lost') return [];
@@ -683,7 +684,7 @@
         el('span', { class: 'body' }, el('b', {}, p.label), el('span', { class: 'amt' }, docs.usd(p.amount)), el('span', { class: 'muted small' }, `${Number(p.pct)}% · ${p.whenLabel}`)),
         p.inv ? el('button', { type: 'button', class: `pill ${docs.pillClass(p.inv)}`, onclick: () => openDoc(j.id, p.inv.id) }, `${p.inv.number} · ${docs.label(p.inv)}`)
           : p.covered ? el('span', { class: 'muted small' }, 'Billed in full')
-          : el('button', { type: 'button', class: (p.due ? 'gold' : 'ghost') + ' small', onclick: () => openDoc(j.id, null, 'invoice', null, { index: p.index }) }, p.due ? 'Create invoice' : 'Bill early'))))
+          : el('button', { type: 'button', class: (p.due ? 'gold' : 'ghost') + ' small', onclick: () => openDoc(j.id, null, 'invoice', null, { index: p.index }) }, p.due ? 'Create invoice' : p.when === 'stage' ? '✓ Done: invoice it' : 'Bill early'))))
         : el('p', { class: 'muted small' }, 'Once the job has a price (or an approved estimate), each payment shows up here with a button to invoice it.'),
       el('p', { class: 'muted small' }, isStaff ? 'Change the payments and percentages in Business → Payment schedule.' : 'The office sets the payments and percentages.'),
     );
@@ -764,6 +765,10 @@
       step = { icon: '🔁', title: 'Needs another visit', why: 'Set the date for the return visit, then let the customer know.', act: ['Pick the return date', focusSetup], second: ['Back to work (no visit needed)', () => update({ stage: null })] };
     } else if (j.status === 'in_progress' && due) {
       step = { ...invoiceStep(due), second: ['✓ Mark job finished', () => update({ status: 'completed' })] };
+    } else if (j.status === 'in_progress' && plan.find((p) => p.when === 'stage' && !p.covered)) {
+      const p = plan.find((x) => x.when === 'stage' && !x.covered);
+      step = { icon: '🧱', title: `When ${p.label.toLowerCase()} is done, bill it`, why: `Payment ${p.index + 1} of ${plan.length}: ${docs.usd(p.amount)} (${Number(p.pct)}%), due upon completion of ${p.label.toLowerCase()}.`,
+        act: [`✓ ${p.label} done: create invoice`, () => openDoc(j.id, null, 'invoice', null, { index: p.index })], second: ['✓ Mark job finished', () => update({ status: 'completed' })] };
     } else if (j.status === 'in_progress') {
       step = { icon: '🔨', title: 'Work in progress', why: `${crewFirst || 'The crew'} can update progress from their crew login, or you can here.`, act: ['✓ Mark job finished', () => update({ status: 'completed' })] };
     } else if (j.status === 'completed') {
@@ -1331,7 +1336,7 @@
     const draw = () => {
       wrap.replaceChildren(...list.map((x, i) => el('div', { class: 'sched-edit' },
         el('span', { class: 'n' }, String(i + 1)),
-        el('input', { class: 'name', value: x.label, maxlength: '40', 'aria-label': `${noun} ${i + 1} name`, oninput: (e) => { x.label = e.target.value; } }),
+        el('input', { class: 'name', value: x.label, maxlength: '60', 'aria-label': `${noun} ${i + 1} name`, oninput: (e) => { x.label = e.target.value; } }),
         el('label', { class: 'pct' }, el('input', { type: 'number', inputmode: 'decimal', min: '0', max: '100', step: '1', value: x.pct, 'aria-label': `${noun} ${i + 1} percent`, oninput: (e) => { x.pct = Number(e.target.value) || 0; drawTotal(); } }), '%'),
         el('select', { class: 'when', 'aria-label': `${noun} ${i + 1} is due`, onchange: (e) => { x.when = e.target.value; } }, ...whens.map((w) => el('option', { value: w.id, selected: w.id === x.when }, w.short))),
         list.length > 1 ? el('button', { type: 'button', class: 'icon x', 'aria-label': `Remove ${noun} ${i + 1}`, onclick: () => { list.splice(i, 1); draw(); } }, '✕') : el('span', { class: 'x' })),

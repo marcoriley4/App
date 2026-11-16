@@ -198,9 +198,10 @@
     ],
     // When each payment is due. Invoices are made from it during the job.
     paymentSchedule: [
-      { label: 'Deposit', pct: 50, when: 'sold' },
-      { label: 'Progress payment', pct: 25, when: 'start' },
-      { label: 'Final payment', pct: 25, when: 'done' },
+      { label: 'Insurance payment', pct: 50, when: 'insurance' },
+      { label: 'Framing', pct: 25, when: 'stage' },
+      { label: 'Roofing, insulation & sheetrock', pct: 15, when: 'stage' },
+      { label: 'Final: painting, finish work & cleanup', pct: 10, when: 'done' },
     ],
     paymentInstructions: 'We accept cash, check, Zelle, card, Venmo and Cash App.\nMake checks payable to Top Hat Contracting.',
     estimateTerms: 'This estimate is valid for 30 days. Work begins once the estimate is approved.',
@@ -323,11 +324,12 @@
       notes: DEFAULT_SETTINGS.estimateTerms, created: createdMs, sentAt: createdMs + H,
       respondedAt: status === 'approved' ? createdMs + 5 * H : null, respondedBy: status === 'approved' ? 'Customer (by phone)' : null,
     });
-    const STEP = [['Deposit', 50], ['Progress payment', 25], ['Final payment', 25]];
+    const STEP = [['Insurance payment', 50], ['Framing', 25], ['Roofing, insulation & sheetrock', 15], ['Final: painting, finish work & cleanup', 10]];
     const r2 = (n) => Math.round(n * 100) / 100;
     // One payment on the schedule. pays: [[amount or 'all', method, ms]]
-    const pay = (base, est, step, sentMs, dueDays, pays = []) => {
-      const amts = [r2(base * 0.5), r2(base * 0.25)]; amts.push(r2(base - amts[0] - amts[1]));
+    const pay = (base, est, step, sentMs, dueDays, pays = []) => step === 2 ? [inv(base, est, 2, sentMs, dueDays, pays), inv(base, est, 3, sentMs + 60e3, dueDays, pays)] : inv(base, est, step, sentMs, dueDays, pays);
+    const inv = (base, est, step, sentMs, dueDays, pays = []) => {
+      const amts = [r2(base * 0.5), r2(base * 0.25), r2(base * 0.15)]; amts.push(r2(base - amts[0] - amts[1] - amts[2]));
       return {
         id: uid(), type: 'invoice', number: '', status: 'sent', taxRate: 0, fromEstimateId: est ? est.id : null, scheduleStep: step, scheduleBase: base,
         items: [{ desc: `${STEP[step][0]}: ${STEP[step][1]}% of $${base.toLocaleString()}${est ? ' (estimate)' : ''}`, qty: 1, price: amts[step] }],
@@ -361,7 +363,7 @@
       return {
         id: uid(), number: 0, buyerId: o.buyerId || null, salesId: o.salesId || null,
         contact: o.buyerId ? null : { name, phone, email: email || '' },
-        status: o.status, created, files: [], docs: o.docs || [],
+        status: o.status, created, files: [], docs: (o.docs || []).flat(),
         trade: o.trade, description: o.desc, address: o.address, zip: o.zip || '62704', state: o.state || stateFromZip(o.zip || '62704'),
         timeframe: o.timeframe || '', budget: o.budget || '', photos: [],
         contractorId: o.contractorId || null, crewToken: o.contractorId ? newToken() : null,
@@ -475,6 +477,9 @@
   function migrate(d) {
     d.jobs.forEach((j) => { if (j.state == null) j.state = stateFromZip(j.zip); });
     d.contractors.forEach((c) => { if (c.state == null) c.state = ''; });
+    // The old 3-payment default (50/25/25) moves to the 4-payment insurance schedule.
+    const ps = d.settings && d.settings.paymentSchedule;
+    if (Array.isArray(ps) && ps.map((x) => `${x.label}|${x.pct}|${x.when}`).join() === 'Deposit|50|sold,Progress payment|25|start,Final payment|25|done') delete d.settings.paymentSchedule;
     d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
     if (!d.settings.phone && !d.settings.email) Object.assign(d.settings, { phone: '(555) 867-5309', email: 'office@tophat.demo' }); // sample contact so the buttons show
     d.team = d.team || [];
