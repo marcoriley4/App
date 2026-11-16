@@ -99,6 +99,27 @@
     (window.crypto || {}).getRandomValues ? crypto.getRandomValues(a) : a.forEach((_, i) => { a[i] = Math.random() * 256; });
     return [...a].map((b) => b.toString(16).padStart(2, '0')).join('');
   }
+  // US states (and DC). Jobs and contractors are organized by state.
+  const US_STATES = [['AL', 'Alabama'], ['AK', 'Alaska'], ['AZ', 'Arizona'], ['AR', 'Arkansas'], ['CA', 'California'], ['CO', 'Colorado'], ['CT', 'Connecticut'],
+    ['DE', 'Delaware'], ['DC', 'District of Columbia'], ['FL', 'Florida'], ['GA', 'Georgia'], ['HI', 'Hawaii'], ['ID', 'Idaho'], ['IL', 'Illinois'], ['IN', 'Indiana'],
+    ['IA', 'Iowa'], ['KS', 'Kansas'], ['KY', 'Kentucky'], ['LA', 'Louisiana'], ['ME', 'Maine'], ['MD', 'Maryland'], ['MA', 'Massachusetts'], ['MI', 'Michigan'],
+    ['MN', 'Minnesota'], ['MS', 'Mississippi'], ['MO', 'Missouri'], ['MT', 'Montana'], ['NE', 'Nebraska'], ['NV', 'Nevada'], ['NH', 'New Hampshire'], ['NJ', 'New Jersey'],
+    ['NM', 'New Mexico'], ['NY', 'New York'], ['NC', 'North Carolina'], ['ND', 'North Dakota'], ['OH', 'Ohio'], ['OK', 'Oklahoma'], ['OR', 'Oregon'], ['PA', 'Pennsylvania'],
+    ['RI', 'Rhode Island'], ['SC', 'South Carolina'], ['SD', 'South Dakota'], ['TN', 'Tennessee'], ['TX', 'Texas'], ['UT', 'Utah'], ['VT', 'Vermont'], ['VA', 'Virginia'],
+    ['WA', 'Washington'], ['WV', 'West Virginia'], ['WI', 'Wisconsin'], ['WY', 'Wyoming']];
+  const stateName = (code) => (US_STATES.find(([c]) => c === code) || [])[1] || '';
+  const cleanState = (s) => { const c = String(s || '').trim().toUpperCase(); return US_STATES.some(([x]) => x === c) ? c : ''; };
+  // Best guess of the state from the first 3 digits of a ZIP code (the customer can change it).
+  const ZIP3 = [[5, 5, 'NY'], [10, 27, 'MA'], [28, 29, 'RI'], [30, 38, 'NH'], [39, 49, 'ME'], [50, 59, 'VT'], [60, 69, 'CT'], [70, 89, 'NJ'], [100, 149, 'NY'],
+    [150, 196, 'PA'], [197, 199, 'DE'], [200, 200, 'DC'], [201, 201, 'VA'], [202, 205, 'DC'], [206, 219, 'MD'], [220, 246, 'VA'], [247, 268, 'WV'], [270, 289, 'NC'],
+    [290, 299, 'SC'], [300, 319, 'GA'], [320, 349, 'FL'], [350, 369, 'AL'], [370, 385, 'TN'], [386, 397, 'MS'], [398, 399, 'GA'], [400, 427, 'KY'], [430, 459, 'OH'],
+    [460, 479, 'IN'], [480, 499, 'MI'], [500, 528, 'IA'], [530, 549, 'WI'], [550, 567, 'MN'], [569, 569, 'DC'], [570, 577, 'SD'], [580, 588, 'ND'], [590, 599, 'MT'],
+    [600, 629, 'IL'], [630, 658, 'MO'], [660, 679, 'KS'], [680, 693, 'NE'], [700, 714, 'LA'], [716, 729, 'AR'], [730, 732, 'OK'], [733, 733, 'TX'], [734, 749, 'OK'],
+    [750, 799, 'TX'], [800, 816, 'CO'], [820, 831, 'WY'], [832, 838, 'ID'], [840, 847, 'UT'], [850, 865, 'AZ'], [870, 884, 'NM'], [885, 885, 'TX'], [889, 898, 'NV'],
+    [900, 961, 'CA'], [967, 968, 'HI'], [970, 979, 'OR'], [980, 994, 'WA'], [995, 999, 'AK']];
+  const stateFromZip = (zip) => { const z = String(zip || '').trim(); if (!/^\d{5}/.test(z)) return ''; const n = Number(z.slice(0, 3)); return (ZIP3.find(([a, b]) => n >= a && n <= b) || [])[2] || ''; };
+  // "42 Maple Ave, Springfield, IL 62704"
+  const addrLine = (j) => [j.address, [j.state, j.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const PHOTO_STAGES = [
     { id: 'before', label: 'Before' },
     { id: 'during', label: 'During' },
@@ -259,6 +280,7 @@
       settings: { ...DEFAULT_SETTINGS, phone: '(555) 867-5309', email: 'office@tophat.demo' },
     };
     if (busyDemo()) addBusyDemo(data, { c1, c2, c3, s1 });
+    if (sampleDemo()) data.demoStates = true; else data.contractors.forEach((c) => { c.state = 'IL'; });
     return data;
   }
 
@@ -340,7 +362,7 @@
         id: uid(), number: 0, buyerId: o.buyerId || null, salesId: o.salesId || null,
         contact: o.buyerId ? null : { name, phone, email: email || '' },
         status: o.status, created, files: [], docs: o.docs || [],
-        trade: o.trade, description: o.desc, address: o.address, zip: o.zip || '62704',
+        trade: o.trade, description: o.desc, address: o.address, zip: o.zip || '62704', state: o.state || stateFromZip(o.zip || '62704'),
         timeframe: o.timeframe || '', budget: o.budget || '', photos: [],
         contractorId: o.contractorId || null, crewToken: o.contractorId ? newToken() : null,
         scheduledFor: o.when ? local(o.when) : null, visitAt: o.visitAt ? local(o.visitAt) : null,
@@ -451,6 +473,8 @@
 
   // Bring older preview data up to date.
   function migrate(d) {
+    d.jobs.forEach((j) => { if (j.state == null) j.state = stateFromZip(j.zip); });
+    d.contractors.forEach((c) => { if (c.state == null) c.state = ''; });
     d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
     if (!d.settings.phone && !d.settings.email) Object.assign(d.settings, { phone: '(555) 867-5309', email: 'office@tophat.demo' }); // sample contact so the buttons show
     d.team = d.team || [];
@@ -494,7 +518,13 @@
       let d = readDb();
       if (d && (d.demoVersion || 1) < DEMO_VERSION && !quietDemo()) { d = null; setSession(null); } // old preview sample → start clean
       if (!d) { d = await seed(); }
-      migrate(d); await addMissingSamples(d); writeDb(d); return d;
+      migrate(d);
+      if (d.demoStates) { // sample week: a few jobs and contractors across the river in Missouri
+        delete d.demoStates;
+        const MO = { 'Derek Coleman': 'MO', 'Andre Mitchell': 'MO', 'Lou Bianchi': 'MO' };
+        d.contractors.forEach((c) => { c.state = MO[c.name] || 'IL'; });
+        d.jobs.filter((j) => [1004, 1011, 1018].includes(j.number)).forEach((j) => { j.zip = '65804'; j.state = 'MO'; });
+      } await addMissingSamples(d); writeDb(d); return d;
     })();
     return dbPromise;
   }
@@ -681,7 +711,7 @@
         const now = Date.now();
         const rec = {
           id: uid(), number: d.nextNumber++, buyerId: u.id, status: 'new', created: now, files: [], docs: [],
-          trade: job.trade, description: job.description.trim(), address: job.address.trim(), zip: (job.zip || '').trim(),
+          trade: job.trade, description: job.description.trim(), address: job.address.trim(), zip: (job.zip || '').trim(), state: cleanState(job.state) || stateFromZip(job.zip),
           timeframe: job.timeframe, budget: job.budget || '', photos: job.photos || [],
           contractorId: null, scheduledFor: null, price: null, crewPay: null, notes: '',
           log: [{ at: now, text: 'Lead received' }],
@@ -707,6 +737,7 @@
           contact: existing ? null : { name, phone: String(input.phone || '').trim(), email: normEmail(input.email) },
           status: crewOk && input.scheduledFor ? 'scheduled' : input.agreed ? 'hot' : 'qualifying', created: now, files: [], docs: [],
           trade: input.trade || 'other', description: input.description.trim(), address: input.address.trim(), zip: String(input.zip || '').trim(),
+          state: cleanState(input.state) || stateFromZip(input.zip),
           timeframe: input.timeframe || '', budget: '', photos: [],
           contractorId: crewOk ? input.contractorId : null, crewToken: crewOk ? newToken() : null, scheduledFor: input.scheduledFor || null,
           price: input.price != null && input.price !== '' ? Number(input.price) : null, crewPay: null, notes: '', visitAt: null,
@@ -761,7 +792,7 @@
         return d.jobs.filter((j) => j.buyerId === u.id).sort((a, b) => b.created - a.created).map((j) => {
           const c = d.contractors.find((x) => x.id === j.contractorId);
           return {
-            id: j.id, number: j.number, trade: j.trade, status: j.status, created: j.created, description: j.description, address: j.address, zip: j.zip,
+            id: j.id, number: j.number, trade: j.trade, status: j.status, created: j.created, description: j.description, address: j.address, zip: j.zip, state: j.state || '',
             timeframe: j.timeframe, budget: j.budget, photos: j.photos, scheduledFor: j.scheduledFor,
             visitAt: j.status === 'hot' ? j.visitAt || null : null,
             permit: j.permit ? { status: j.permit.status, number: j.permit.number || '', authorizedBy: j.permit.authorizedBy || '', authorizedAt: j.permit.authorizedAt || null } : { status: 'none' },
@@ -813,6 +844,10 @@
           if (cp && !/^\d{4}-\d{2}-\d{2}$/.test(cp.date || '')) throw new Error('Pick the date you paid the crew.');
           j.crewPaid = cp ? { date: cp.date, method: String(cp.method || 'Other').slice(0, 40), note: String(cp.note || '').trim().slice(0, 200) } : null;
           j.log.push({ at: Date.now(), text: cp ? `💸 Crew paid ${j.crewPay != null ? '$' + Number(j.crewPay).toLocaleString() + ' ' : ''}(${j.crewPaid.method}) on ${cp.date}` : '💸 Crew payment cleared' });
+        }
+        if ('state' in patch && cleanState(patch.state) !== (j.state || '')) {
+          j.state = cleanState(patch.state);
+          j.log.push({ at: Date.now(), text: `State → ${stateName(j.state) || 'not set'}` });
         }
         if ('salesId' in patch && patch.salesId !== (j.salesId || null)) {
           const sp = (d.team || []).find((x) => x.id === patch.salesId);
@@ -1086,7 +1121,7 @@
         const b = customerOf(d, j);
         const mine = j.files.filter((f) => f.source === 'crew' && f.contractorId === j.contractorId);
         return {
-          number: j.number, trade: j.trade, status: j.status, address: j.address, zip: j.zip,
+          number: j.number, trade: j.trade, status: j.status, address: j.address, zip: j.zip, state: j.state || '',
           description: j.description, scheduledFor: j.scheduledFor,
           customerName: b ? b.name : '', customerPhone: b ? b.phone : '',
           crewName: c ? c.name : '',
@@ -1124,7 +1159,7 @@
       async list() {
         const ctx = await requireOffice();
         // Salespeople pick crews too, but only see names, phones and trades (no logins or invite links).
-        if (!ctx.isStaff) return ctx.d.contractors.map(({ id, name, phone, trades, active }) => ({ id, name, phone, trades, active }));
+        if (!ctx.isStaff) return ctx.d.contractors.map(({ id, name, phone, trades, active, state }) => ({ id, name, phone, trades, active, state: state || '' }));
         const d = await db();
         return d.contractors.map((c) => {
           const u = c.userId && d.users.find((x) => x.id === c.userId);
@@ -1135,7 +1170,7 @@
         await requireStaff();
         if (!c.name?.trim()) throw new Error('Contractor needs a name.');
         const d = await db();
-        const fields = { name: c.name.trim(), phone: (c.phone || '').trim(), trades: c.trades || [], active: c.active !== false };
+        const fields = { name: c.name.trim(), phone: (c.phone || '').trim(), trades: c.trades || [], active: c.active !== false, state: cleanState(c.state) };
         const existing = d.contractors.find((x) => x.id === c.id);
         if (existing) Object.assign(existing, fields);
         else d.contractors.push({ id: uid(), userId: null, inviteCode: null, ...fields });
@@ -1339,7 +1374,7 @@
             startedAt: j.startedAt || null, finishedAt: j.finishedAt || null,
             customerPhotos: [...(j.photos || []), ...custFiles.map((f) => f.url).filter(Boolean)],
             id: j.id, number: j.number, trade: j.trade, status: j.status, scheduledFor: j.scheduledFor,
-            address: j.address, zip: j.zip, description: j.description,
+            address: j.address, zip: j.zip, state: j.state || '', description: j.description,
             customerName: b.name || '', customerPhone: b.phone || '',
             stage: j.stage || null, progressAt: j.progressAt || null, progressBy: j.progressBy || '',
             crewToken: j.crewToken, crewPay: showPay ? j.crewPay : null,
@@ -1593,5 +1628,5 @@
     document.head.append(sc);
   }));
 
-  window.TH = { csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+  window.TH = { US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();

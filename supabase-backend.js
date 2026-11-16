@@ -146,7 +146,7 @@
         if (!(await me())) throw new Error('Please create an account first.');
         const rows = must(await sb.rpc('create_job', {
           p_trade: job.trade, p_description: job.description, p_address: job.address,
-          p_zip: job.zip || '', p_timeframe: job.timeframe || '', p_budget: job.budget || '',
+          p_zip: job.zip || '', p_state: job.state || TH.stateFromZip(job.zip) || '', p_timeframe: job.timeframe || '', p_budget: job.budget || '',
         }));
         const created = rows[0];
         // Request photos go into the job's folder. A failed photo never blocks the request.
@@ -166,7 +166,7 @@
         mine = new Map(list.map((j) => [j.id, j]));
         return list.map((j) => ({
           id: j.id, number: j.number, trade: j.trade, status: j.status, created: ms(j.created_at),
-          description: j.description, address: j.address, zip: j.zip || '', timeframe: j.timeframe, budget: j.budget, photos: [],
+          description: j.description, address: j.address, zip: j.zip || '', state: j.state || '', timeframe: j.timeframe, budget: j.budget, photos: [],
           scheduledFor: local16(j.scheduled_for), contractorName: j.contractor_name || null, stage: j.stage || null,
           visitAt: local16(j.visit_at), repName: j.rep_name || null,
           pm: j.pm_name ? { name: j.pm_name, phone: j.pm_phone || '' } : null,
@@ -206,7 +206,7 @@
           const p = privBy[j.id] || {};
           return {
             id: j.id, number: j.number, buyerId: j.buyer_id, trade: j.trade, status: j.status, created: ms(j.created_at),
-            description: j.description, address: j.address, zip: j.zip, timeframe: j.timeframe, budget: j.budget, photos: [],
+            description: j.description, address: j.address, zip: j.zip, state: j.state || '', timeframe: j.timeframe, budget: j.budget, photos: [],
             contractorId: j.contractor_id, scheduledFor: local16(j.scheduled_for), visitAt: local16(j.visit_at),
             permit: { status: j.permit_status || 'none', number: j.permit_number || '', authorizedBy: j.permit_authorized_by || '', authorizedAt: ms(j.permit_authorized_at) || null,
               portalUrl: p.permit_portal || '', fee: p.permit_fee == null ? null : Number(p.permit_fee) },
@@ -246,6 +246,7 @@
           contact_name: input.customerId ? '' : name, contact_phone: input.customerId ? '' : phone, contact_email: input.customerId ? '' : email,
           entered_by: staff.name || 'Office',
           trade: input.trade || 'other', description: input.description.trim(), address: input.address.trim(), zip: String(input.zip || '').trim(),
+          state: String(input.state || TH.stateFromZip(input.zip) || '').toUpperCase(),
           timeframe: input.timeframe || '', status: scheduled ? 'scheduled' : input.agreed ? 'hot' : 'qualifying',
           contractor_id: isSales ? null : input.contractorId || null, scheduled_for: isSales ? null : input.scheduledFor || null,
           sales_id: isSales ? staff.salesId : input.salesId || null,
@@ -279,6 +280,7 @@
         await requireOffice();
         const jobPatch = {}, privPatch = {};
         if ('salesId' in patch) jobPatch.sales_id = patch.salesId || null;
+        if ('state' in patch) jobPatch.state = String(patch.state || '').toUpperCase();
         if ('status' in patch) jobPatch.status = patch.status;
         if ('stage' in patch) jobPatch.stage = patch.stage;
         if ('status' in patch || 'stage' in patch) {
@@ -442,7 +444,7 @@
         if (!j) return null;
         const urls = await signedUrls((j.uploads || []).map((f) => f.path));
         return {
-          number: j.number, trade: j.trade, status: j.status, address: j.address, zip: j.zip, description: j.description,
+          number: j.number, trade: j.trade, status: j.status, address: j.address, zip: j.zip, state: j.state || '', description: j.description,
           scheduledFor: local16(j.scheduled_for), customerName: j.customer_name || '', customerPhone: j.customer_phone || '',
           crewName: j.crew_name || '',
           uploads: (j.uploads || []).map((f) => ({ id: f.id, name: f.name, mime: f.mime, stage: f.stage, note: f.note, uploaded: ms(f.uploaded_at), url: urls[f.path] || null })),
@@ -465,19 +467,20 @@
       async list() {
         const u = await requireOffice();
         // Salespeople pick crews from a safe list: names, phones and trades (no logins or invite links).
-        if (u.role !== 'staff') return (must(await sb.rpc('office_crew_list')) || []).map((c) => ({ id: c.id, name: c.name, phone: c.phone, trades: c.trades || [], active: c.active }));
+        if (u.role !== 'staff') return (must(await sb.rpc('office_crew_list')) || []).map((c) => ({ id: c.id, name: c.name, phone: c.phone, trades: c.trades || [], active: c.active, state: c.state || '' }));
         const rows = await fetchAll(() => sb.from('contractors').select('*').order('name'));
         const ids = rows.map((c) => c.user_id).filter(Boolean);
         const emails = ids.length ? Object.fromEntries(must(await sb.from('profiles').select('id, email').in('id', ids)).map((p) => [p.id, p.email])) : {};
         return rows.map((c) => ({
-          id: c.id, name: c.name, phone: c.phone, trades: c.trades || [], active: c.active,
+          id: c.id, name: c.name, phone: c.phone, trades: c.trades || [], active: c.active, state: c.state || '',
           login: c.user_id ? 'active' : c.invite_code ? 'invited' : 'none', inviteCode: c.invite_code || null, loginEmail: emails[c.user_id] || '',
         }));
       },
       async save(c) {
         await requireStaff();
         if (!c.name || !c.name.trim()) throw new Error('Contractor needs a name.');
-        const row = { name: c.name.trim(), phone: (c.phone || '').trim(), trades: c.trades || [], active: c.active !== false };
+        const st = String(c.state || '').toUpperCase();
+        const row = { name: c.name.trim(), phone: (c.phone || '').trim(), trades: c.trades || [], active: c.active !== false, state: TH.US_STATES.some(([x]) => x === st) ? st : '' };
         if (c.id) must(await sb.from('contractors').update(row).eq('id', c.id));
         else must(await sb.from('contractors').insert(row));
       },
@@ -542,7 +545,7 @@
           startedAt: ms(j.started_at), finishedAt: ms(j.finished_at),
           customerPhotos: (j.customer_photos || []).map((pth) => photoUrls[pth]).filter(Boolean),
           id: j.id, number: j.number, trade: j.trade, status: j.status, scheduledFor: local16(j.scheduled_for),
-          address: j.address, zip: j.zip, description: j.description,
+          address: j.address, zip: j.zip, state: j.state || '', description: j.description,
           customerName: j.customer_name || '', customerPhone: j.customer_phone || '',
           stage: j.stage || null, progressAt: ms(j.progress_at), progressBy: j.progress_by || '',
           crewToken: j.crew_token || null, crewPay: num(j.crew_pay), photos: Number(j.photos) || 0,

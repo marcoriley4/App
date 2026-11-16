@@ -96,6 +96,7 @@ create table public.contractors (
   phone text not null default '',
   trades text[] not null default '{}',
   active boolean not null default true,
+  state text not null default '' check (state = '' or state ~ '^[A-Z]{2}$'),   -- state they work in
   user_id uuid unique references public.profiles(id) on delete set null,   -- their crew login, if any
   invite_code text unique,                                                 -- one-time crew login invite
   created_at timestamptz not null default now()
@@ -134,6 +135,7 @@ create table public.jobs (
   description text not null,
   address text not null,
   zip text not null default '',
+  state text not null default '' check (state = '' or state ~ '^[A-Z]{2}$'),   -- 2-letter state, to organize leads by state
   timeframe text not null default '',
   budget text not null default '',
   -- 'hot' = the customer agreed to the phone estimate (or approved it in writing): worth a rep visit.
@@ -472,17 +474,19 @@ language sql stable security definer set search_path = '' as $$
   select exists (select 1 from public.jobs where id::text = j and buyer_id = auth.uid());
 $$;
 
-create function public.create_job(p_trade text, p_description text, p_address text, p_zip text, p_timeframe text, p_budget text)
+create function public.create_job(p_trade text, p_description text, p_address text, p_zip text, p_state text, p_timeframe text, p_budget text)
 returns table (id uuid, number bigint)
 language plpgsql security definer set search_path = '' as $$
 begin
   if auth.uid() is null then raise exception 'Please create an account first.'; end if;
   if length(trim(coalesce(p_description, ''))) < 10 then raise exception 'Please describe the job in a sentence or two.'; end if;
   if length(trim(coalesce(p_address, ''))) = 0 then raise exception 'Please enter the address where the work is.'; end if;
+  if upper(trim(coalesce(p_state, ''))) !~ '^[A-Z]{2}$' then raise exception 'Pick the state the project is in.'; end if;
   return query
-    insert into public.jobs as j (buyer_id, trade, description, address, zip, timeframe, budget)
+    insert into public.jobs as j (buyer_id, trade, description, address, zip, state, timeframe, budget)
     values (auth.uid(), left(p_trade, 40), left(trim(p_description), 4000), left(trim(p_address), 300),
-            left(trim(coalesce(p_zip, '')), 10), left(coalesce(p_timeframe, ''), 40), left(coalesce(p_budget, ''), 40))
+            left(trim(coalesce(p_zip, '')), 10), case when upper(trim(coalesce(p_state, ''))) ~ '^[A-Z]{2}$' then upper(trim(p_state)) else '' end,
+            left(coalesce(p_timeframe, ''), 40), left(coalesce(p_budget, ''), 40))
     returning j.id, j.number;
 end $$;
 
@@ -501,7 +505,7 @@ create function public.my_jobs() returns jsonb
 language sql stable security definer set search_path = '' as $$
   select coalesce(jsonb_agg(jsonb_build_object(
     'id', j.id, 'number', j.number, 'trade', j.trade, 'status', j.status, 'created_at', j.created_at,
-    'description', j.description, 'address', j.address, 'zip', j.zip, 'timeframe', j.timeframe, 'budget', j.budget,
+    'description', j.description, 'address', j.address, 'zip', j.zip, 'state', j.state, 'timeframe', j.timeframe, 'budget', j.budget,
     'scheduled_for', j.scheduled_for, 'stage', j.stage,
     'visit_at', case when j.status = 'hot' then j.visit_at end,
     'permit_status', j.permit_status, 'permit_number', j.permit_number,
@@ -537,7 +541,7 @@ $$;
 create function public.crew_job(p_token text) returns jsonb
 language sql stable security definer set search_path = '' as $$
   select jsonb_build_object(
-    'number', j.number, 'trade', j.trade, 'status', j.status, 'address', j.address, 'zip', j.zip,
+    'number', j.number, 'trade', j.trade, 'status', j.status, 'address', j.address, 'zip', j.zip, 'state', j.state,
     'description', j.description, 'scheduled_for', j.scheduled_for,
     'customer_name', coalesce(b.name, j.contact_name), 'customer_phone', coalesce(b.phone, j.contact_phone), 'crew_name', c.name,
     'uploads', (select coalesce(jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'mime', f.mime, 'stage', f.stage,
@@ -1011,7 +1015,7 @@ begin
       'started_at', j.started_at, 'finished_at', j.finished_at, 'halfway_at', j.halfway_at,
       'customer_photos', (select coalesce(jsonb_agg(f.path order by f.uploaded_at), '[]'::jsonb) from public.job_files f
                            where f.job_id = j.id and f.source = 'customer' and f.mime like 'image/%'),
-      'address', j.address, 'zip', j.zip, 'description', j.description,
+      'address', j.address, 'zip', j.zip, 'state', j.state, 'description', j.description,
       'customer_name', coalesce(b.name, j.contact_name), 'customer_phone', coalesce(b.phone, j.contact_phone), 'crew_token', p.crew_token,
       'crew_pay', case when coalesce(show_pay, true) then (select k.crew_pay from public.job_costs k where k.job_id = j.id) end,
       'photos', (select count(*) from public.job_files f where f.job_id = j.id and f.source = 'crew' and f.contractor_id = cid),
@@ -1189,7 +1193,7 @@ end $$;
 create function public.office_crew_list() returns jsonb
 language sql stable security definer set search_path = '' as $$
   select case when public.is_staff() or public.my_sales() is not null then
-    (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'name', name, 'phone', phone, 'trades', trades, 'active', active) order by name), '[]'::jsonb)
+    (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'name', name, 'phone', phone, 'trades', trades, 'active', active, 'state', state) order by name), '[]'::jsonb)
        from public.contractors)
   else '[]'::jsonb end;
 $$;
@@ -1211,7 +1215,7 @@ revoke insert, update, delete on public.design_versions from authenticated;
 -- ---------- function permissions ----------
 revoke execute on all functions in schema public from public, anon, authenticated;
 grant execute on function public.is_staff(), public.owns_job(text), public.customer_can_read(text),
-  public.create_job(text, text, text, text, text, text), public.add_customer_file(uuid, text, text, text, bigint),
+  public.create_job(text, text, text, text, text, text, text), public.add_customer_file(uuid, text, text, text, bigint),
   public.my_jobs(), public.my_documents(), public.respond_estimate(uuid, boolean, text, text),
   public.staff_invite_crew(uuid), public.staff_revoke_crew(uuid), public.claim_crew_invite(text),
   public.crew_my_jobs(), public.crew_set_progress(uuid, text, text), public.crew_respond(uuid, text, text),

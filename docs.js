@@ -115,7 +115,7 @@
       el('section', { class: 'doc-parties' },
         el('div', {}, el('h4', {}, isInv ? 'Bill to' : 'Prepared for'),
           el('div', {}, customer.name || ''), ...lines([customer.phone, customer.email].filter(Boolean).join('\n'))),
-        el('div', {}, el('h4', {}, 'Job site'), ...lines(`${job.address || ''}${job.zip ? ' ' + job.zip : ''}`))),
+        el('div', {}, el('h4', {}, 'Job site'), ...lines(TH.addrLine ? TH.addrLine(job) : `${job.address || ''} ${job.zip || ''}`))),
       el('table', { class: 'doc-items' },
         el('thead', {}, el('tr', {}, el('th', {}, 'Description'), el('th', { class: 'num' }, 'Qty'), el('th', { class: 'num' }, 'Price'), el('th', { class: 'num' }, 'Amount'))),
         el('tbody', {}, ...(doc.items || []).filter((i) => i.desc || Number(i.price)).map((i) => el('tr', {},

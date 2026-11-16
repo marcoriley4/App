@@ -15,7 +15,12 @@ select t.ok((select role from public.profiles where id = :'A') = 'buyer', 'sign-
 -- ========== Customer A ==========
 select set_config('request.jwt.claim.sub', :'A', false);
 set role authenticated;
-create temp table ids as select * from public.create_job('plumbing', 'Leaky faucet in the kitchen', '1 Main St', '62701', 'asap', 'u1k');
+do $$ begin
+  begin perform public.create_job('plumbing', 'Leaky faucet in the kitchen', '1 Main St', '62701', '', 'asap', 'u1k'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'a request needs a state'); end;
+end $$;
+create temp table ids as select * from public.create_job('plumbing', 'Leaky faucet in the kitchen', '1 Main St', '62701', 'il', 'asap', 'u1k');
+select t.ok((public.my_jobs()->0->>'state') = 'IL', 'customer job keeps its state');
 select t.ok((select number from ids) = 1001, 'first job number is 1001');
 select t.ok((select count(*) from public.jobs) = 0, 'customer cannot read jobs table directly');
 select t.ok((select count(*) from public.job_private) = 0, 'customer cannot read prices/notes');
@@ -106,7 +111,7 @@ do $$ begin
   exception when raise_exception then perform t.ok(true, 'crew cannot file into office folder'); end;
   begin insert into storage.objects (bucket_id, name) values ('job-files', current_setting('t.job') || '/staff/evil.pdf'); perform t.ok(false, 'x');
   exception when insufficient_privilege then perform t.ok(true, 'crew cannot upload into office folder'); end;
-  begin perform public.create_job('x', 'xxxxxxxxxxxxx', 'y', '', '', ''); perform t.ok(false, 'x');
+  begin perform public.create_job('x', 'xxxxxxxxxxxxx', 'y', '', 'IL', '', ''); perform t.ok(false, 'x');
   exception when insufficient_privilege then perform t.ok(true, 'not-logged-in cannot create jobs'); end;
 end $$;
 reset role;

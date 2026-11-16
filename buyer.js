@@ -60,7 +60,7 @@
     return wrap;
   }
 
-  const emptyDraft = () => ({ step: 1, trade: '', description: '', measurements: '', address: '', zip: '', timeframe: '', budget: '', photos: [] });
+  const emptyDraft = () => ({ step: 1, trade: '', description: '', measurements: '', address: '', zip: '', state: '', timeframe: '', budget: '', photos: [] });
   let draft = emptyDraft();
   try { draft = { ...draft, ...JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}') }; } catch (e) { /* ignore */ }
   function saveDraft() { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch (e) { /* photos may not fit; fine */ } }
@@ -155,7 +155,7 @@
     const missing = () => {
       if (!find(TRADES, draft.trade)) return 1;
       if ((draft.description || '').trim().length < 10) return 3;
-      if (!(draft.address || '').trim() || !/^\d{5}$/.test(draft.zip || '')) return 4;
+      if (!(draft.address || '').trim() || !/^\d{5}$/.test(draft.zip || '') || !draft.state) return 4;
       if (!draft.timeframe) return 5;
       return total;
     };
@@ -237,11 +237,16 @@
 
     if (screen === 'where') {
       const addr = el('input', { value: draft.address || '', placeholder: 'Street address, city', autocomplete: 'street-address', 'aria-label': 'Street address and city' });
-      const zip = el('input', { value: draft.zip || '', placeholder: 'ZIP', inputmode: 'numeric', maxlength: '5', autocomplete: 'postal-code', 'aria-label': 'ZIP code' });
-      view.append(shell('Where is the project?', null, [addr, zip], { onNext: () => {
-        draft.address = addr.value.trim(); draft.zip = zip.value.trim(); saveDraft();
+      // State: picked for them from the ZIP code (they can change it).
+      const stateSel = el('select', { 'aria-label': 'State', autocomplete: 'address-level1', onchange: () => { stateSel.dataset.picked = '1'; } },
+        el('option', { value: '' }, 'State'), ...TH.US_STATES.map(([c, n]) => el('option', { value: c, selected: c === draft.state }, n)));
+      const zip = el('input', { value: draft.zip || '', placeholder: 'ZIP', inputmode: 'numeric', maxlength: '5', autocomplete: 'postal-code', 'aria-label': 'ZIP code',
+        oninput: () => { const g = TH.stateFromZip(zip.value); if (g && !stateSel.dataset.picked) stateSel.value = g; } });
+      view.append(shell('Where is the project?', null, [addr, el('div', { class: 'two zip-state' }, zip, stateSel)], { onNext: () => {
+        draft.address = addr.value.trim(); draft.zip = zip.value.trim(); draft.state = stateSel.value; saveDraft();
         if (!draft.address) return showError('Enter the street address and city.');
         if (!/^\d{5}$/.test(draft.zip)) return showError('Enter the 5-digit ZIP code.');
+        if (!draft.state) return showError('Pick the state the project is in.');
         next();
       } }));
       return;
@@ -390,7 +395,7 @@
         return el('article', { class: 'card job-card' },
           el('div', { class: 'head' },
             el('span', { style: 'font-size:1.6rem' }, trade.icon),
-            el('div', { class: 't' }, el('h3', {}, trade.label), el('p', { class: 'muted small' }, `Job TH-${j.number} · ${j.address} · requested ${ago(j.created)}`)),
+            el('div', { class: 't' }, el('h3', {}, trade.label), el('p', { class: 'muted small' }, `Job TH-${j.number} · ${j.address}${j.state ? ", " + j.state : ""} · requested ${ago(j.created)}`)),
             el('span', { class: `pill s-${j.status}` }, st.buyer)),
           el('p', { class: 'small' }, j.description),
           j.status === 'lost' ? el('p', { class: 'muted small' }, 'This request was closed. Questions? Just request a new job and mention it.')

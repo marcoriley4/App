@@ -35,6 +35,12 @@
   const statusOf = (id) => find(STATUSES, id);
   const money = (n) => (n < 0 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString();
   const jobNo = (j) => `TH-${j.number}`;
+  const addrOf = (j) => TH.addrLine(j);
+  const stateOptions = (sel, empty = '— State —') => [el('option', { value: '' }, empty), ...TH.US_STATES.map(([c, n]) => el('option', { value: c, selected: c === sel }, n))];
+  // States that appear in a list, sorted by name, with how many of each ('' = no state).
+  const statesIn = (list, of) => { const m = new Map(); list.forEach((x) => { const k = of(x) || ''; m.set(k, (m.get(k) || 0) + 1); });
+    return [...m.entries()].sort((a, b) => (!a[0]) - (!b[0]) || TH.stateName(a[0]).localeCompare(TH.stateName(b[0]))); };
+  const usableState = (groups) => (groups.some(([g]) => (g || 'none') === stateFilter) ? stateFilter : '');
   const kindOf = (id) => find(FILE_KINDS, id) || FILE_KINDS.at(-1);
   const fileSize = (n) => n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
   const num = (v) => (v === '' || v == null ? null : Number(v));
@@ -76,6 +82,7 @@
   const SALES_TABS = [['today', 'Today'], ['jobs', 'My clients']];
   if (MAIN_TABS.some(([id]) => id === location.hash.slice(1))) tab = location.hash.slice(1);
   const salesName = (id) => team.find((x) => x.id === id)?.name;
+  let stateFilter = ''; // jobs, customers and crew: show one state ('' = all, 'none' = no state set)
   let picking = false; const picked = new Set(); let jobsMsg = ''; // office: pick several leads and assign them to a salesperson at once
   let salesFilter = ''; // owner: show one salesperson's jobs ('' = everyone, 'none' = unassigned)
 
@@ -234,12 +241,17 @@
     if (!FILTERS.some(([id]) => id === filter)) filter = 'open';
     const filterBar = el('div', { class: 'tabs-bar' }, ...FILTERS.map(([id, label, fn]) =>
       el('button', { 'aria-current': String(filter === id), onclick: () => { filter = id; render(); } }, label, el('span', { class: 'count' }, String(jobs.filter(fn).length)))));
-    const matches = (j, q) => !q || [jobNo(j), String(j.number), j.buyer.name, j.buyer.phone, j.buyer.email, j.address, j.zip, j.description, tradeOf(j.trade).label].join(' ').toLowerCase().includes(q);
+    const matches = (j, q) => !q || [jobNo(j), String(j.number), j.buyer.name, j.buyer.phone, j.buyer.email, j.address, j.zip, j.state, TH.stateName(j.state), j.description, tradeOf(j.trade).label].join(' ').toLowerCase().includes(q);
     const byStatus = FILTERS.find(([id]) => id === filter)[2];
-    const inFilter = (j) => byStatus(j) && (!salesFilter || (salesFilter === 'none' ? !j.salesId : j.salesId === salesFilter));
+    const sf = usableState(statesIn(jobs, (j) => j.state));
+    const inState = (st) => !sf || (sf === 'none' ? !st : st === sf);
+    const inFilter = (j) => byStatus(j) && inState(j.state) && (!salesFilter || (salesFilter === 'none' ? !j.salesId : j.salesId === salesFilter));
     const salesSel = isStaff && team.length ? el('select', { 'aria-label': 'Salesperson', onchange: (e) => { salesFilter = e.target.value; render(); } },
       el('option', { value: '' }, 'All salespeople'), el('option', { value: 'none', selected: salesFilter === 'none' }, 'No salesperson'),
       ...team.map((x) => el('option', { value: x.id, selected: salesFilter === x.id }, `💼 ${x.name}`))) : null;
+    const stateSel = jobs.length ? el('select', { 'aria-label': 'State', onchange: (e) => { stateFilter = e.target.value; render(); } },
+      el('option', { value: '' }, `🗺 All states (${jobs.length})`),
+      ...statesIn(jobs, (j) => j.state).map(([c, n]) => el('option', { value: c || 'none', selected: sf === (c || 'none') }, `${c ? TH.stateName(c) : 'No state set'} (${n})`))) : null;
     const canPick = isStaff && team.some((x) => x.active !== false);
     const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
     const flash = (msg) => { jobsMsg = msg; render(); };
@@ -281,7 +293,7 @@
     return [el('div', { class: 'row' }, el('h2', { style: 'flex:1' }, isStaff ? 'Jobs' : 'My clients'),
       el('button', { class: 'ghost', onclick: customersList }, '📁 Customers'), el('button', { class: 'gold', onclick: () => newJobForm() }, '+ New job')),
       canPick && !picking ? el('button', { type: 'button', class: 'ghost block assign-btn', onclick: () => { picking = true; picked.clear(); if (filter === 'open' && !salesFilter) salesFilter = 'none'; render(); } }, '💼 Assign leads to a salesperson') : null,
-      msgBox, filterBar, salesSel, searchBox, listWrap, errorBox, pickBar];
+      msgBox, filterBar, salesSel || stateSel ? el('div', { class: 'two filters' }, stateSel, salesSel) : null, searchBox, listWrap, errorBox, pickBar];
   }
 
   function leadCard(j, pick) {
@@ -308,7 +320,7 @@
       pick ? el('span', { class: 'pick-box', 'aria-hidden': 'true' }, pick.on ? '✓' : '') : el('span', { class: 'ic' }, t.icon),
       el('span', { class: 'body' },
         el('span', { class: 'line1' }, el('b', {}, j.buyer.name), el('span', { class: 'spacer' }), el('span', { class: `pill s-${j.status}` }, statusOf(j.status).label)),
-        el('span', { class: 'muted small' }, `${t.label} · ${jobNo(j)} · ${j.zip || j.address}${j.status === 'new' ? ' · ' + ago(j.created) : ''}`),
+        el('span', { class: 'muted small' }, `${t.label} · ${jobNo(j)} · ${[j.state, j.zip].filter(Boolean).join(' ') || j.address}${j.status === 'new' ? ' · ' + ago(j.created) : ''}`),
         j.scheduledFor || c || (isStaff && j.salesId) ? el('span', { class: 'small' }, [j.scheduledFor ? '📅 ' + fmtWhen(j.scheduledFor) : null, c ? '👷 ' + c.name : null, isStaff && salesName(j.salesId) ? '💼 ' + salesName(j.salesId) : null].filter(Boolean).join('   ')) : null,
         flags.length ? el('span', { class: 'flags' }, ...flags.map(([txt, cls]) => el('span', { class: 'flag ' + cls }, txt))) : null),
     );
@@ -378,7 +390,8 @@
             el('option', { value: '' }, 'No salesperson'), ...team.map((x) => el('option', { value: x.id, selected: x.id === j.salesId }, x.name)))
           : el('span', { class: 'muted' }, 'No sales team yet')) : null,
         lastCall ? el('li', {}, el('span', { class: 'fi' }, '📞'), el('span', { class: 'muted' }, `${lastCall.text.replace(/^📞 Call /, 'Last call ')} · ${ago(lastCall.at)}`)) : null,
-        el('li', {}, el('span', { class: 'fi' }, '📍'), el('a', { href: 'https://maps.google.com/?q=' + encodeURIComponent(`${j.address} ${j.zip}`), target: '_blank', rel: 'noopener' }, `${j.address} ${j.zip}`)),
+        el('li', {}, el('span', { class: 'fi' }, '📍'), el('a', { href: 'https://maps.google.com/?q=' + encodeURIComponent(addrOf(j)), target: '_blank', rel: 'noopener' }, addrOf(j))),
+        el('li', {}, el('span', { class: 'fi' }, '🗺'), el('select', { class: 'inline-select' + (j.state ? '' : ' warn'), 'aria-label': 'State', onchange: (e) => update({ state: e.target.value }) }, ...stateOptions(j.state, 'No state set'))),
         j.visitAt ? el('li', {}, el('span', { class: 'fi' }, '🤝'), el('span', {}, `Rep visit ${fmtWhen(j.visitAt)}${salesName(j.salesId) ? ' · ' + salesName(j.salesId) : ''}`)) : null,
         el('li', {}, el('span', { class: 'fi' }, '📅'), j.scheduledFor ? el('span', {}, fmtWhen(j.scheduledFor)) : el('span', { class: 'muted' }, 'Crew not scheduled yet')),
         el('li', {}, el('span', { class: 'fi' }, '👷'), assigned ? el('span', {}, assigned.name,
@@ -421,7 +434,7 @@
       pm.authorizedAt ? el('p', { class: 'small' }, `✅ ${pm.authorizedBy} approved applying on ${new Date(pm.authorizedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}.`)
         : el('p', { class: 'muted small' }, j.hasAccount ? `Waiting for ${first}’s OK. They approve it on their My jobs page (“Apply for me”), or sign the packet below.` : `${first} doesn’t use the app: have them sign the permit packet below.`),
       el('div', { class: 'row', style: 'flex-wrap:wrap' },
-        el('a', { class: 'btn ghost small', target: '_blank', rel: 'noopener', href: 'https://www.google.com/search?q=' + encodeURIComponent(`${place || ''} ${j.zip || ''} building department permit apply online`.trim()) }, '🔎 Find the building department'),
+        el('a', { class: 'btn ghost small', target: '_blank', rel: 'noopener', href: 'https://www.google.com/search?q=' + encodeURIComponent(`${place || ''} ${j.state || ''} ${j.zip || ''} building department permit apply online`.trim()) }, '🔎 Find the building department'),
         portalNow ? el('a', { class: 'btn ghost small', target: '_blank', rel: 'noopener', href: portalNow }, '🏛 Open their permit website') : null,
         el('button', { type: 'button', class: 'ghost small', onclick: () => permitPacket(j, chosen) }, '📄 Permit packet (PDF)')),
       el('label', { class: 'field' }, `Building department website${place ? ` for ${place}` : ''}`, portalIn),
@@ -464,11 +477,12 @@
     );
 
     // Crew & schedule
+    const sameSt = (c) => !!j.state && c.state === j.state;
     const sortedCrew = crew.filter((c) => c.active || c.id === j.contractorId)
-      .sort((a, c) => (c.trades.includes(j.trade) - a.trades.includes(j.trade)) || a.name.localeCompare(c.name));
+      .sort((a, c) => (sameSt(c) - sameSt(a)) || (c.trades.includes(j.trade) - a.trades.includes(j.trade)) || a.name.localeCompare(c.name));
     const crewSel = el('select', { name: 'contractorId' },
       el('option', { value: '' }, '— Not assigned —'),
-      ...sortedCrew.map((c) => el('option', { value: c.id, selected: c.id === j.contractorId }, `${c.trades.includes(j.trade) ? '★ ' : ''}${c.name}`)));
+      ...sortedCrew.map((c) => el('option', { value: c.id, selected: c.id === j.contractorId }, `${c.trades.includes(j.trade) ? '★ ' : ''}${c.name}${c.state ? ` · ${c.state}` : ''}${j.state && c.state && c.state !== j.state ? ' (other state)' : ''}`)));
     const whenInput = el('input', { type: 'datetime-local', name: 'scheduledFor', value: j.scheduledFor || '' });
     const crewLink = j.crewToken ? new URL(`crew.html?t=${j.crewToken}`, location.href).href : null;
     // Sent to the crew lead. Never include prices, budget or notes here.
@@ -476,7 +490,7 @@
       `Top Hat job ${jobNo(j)}: ${t.label}`,
       j.scheduledFor ? `When: ${fmtWhen(j.scheduledFor)}` : null,
       `Customer: ${b.name} ${b.phone}`,
-      `Address: ${j.address} ${j.zip}`,
+      `Address: ${addrOf(j)}`,
       `Details: ${j.description}`,
       crewLink ? `Upload job photos here: ${crewLink}` : null,
     ].filter(Boolean).join('\n');
@@ -487,7 +501,7 @@
       update(patch);
     } },
       el('h3', {}, '👷 Crew & schedule'),
-      el('label', { class: 'field' }, 'Crew', el('span', { class: 'hint' }, '★ = does this kind of work'), crewSel),
+      el('label', { class: 'field' }, 'Crew', el('span', { class: 'hint' }, `★ = does this kind of work${j.state ? ` · crews in ${TH.stateName(j.state)} first` : ''}`), crewSel),
       el('label', { class: 'field' }, 'Date & time', whenInput),
       el('button', { type: 'submit' }, 'Save crew & date'),
       ['scheduled', 'in_progress'].includes(j.status) ? null : el('p', { class: 'muted small' }, 'Picking a crew and a date moves the job to “Scheduled”.'),
@@ -820,9 +834,9 @@
   const billedOn = (j) => liveInvoices(j).filter((d) => d.status !== 'draft').reduce((t, d) => t + docs.totals(d).total, 0);
   const dateOf = (ms) => (ms ? new Date(ms).toISOString().slice(0, 10) : '');
   const jobRows = (list, { pay = isStaff } = {}) => [
-    ['Job #', 'Created', 'Customer', 'Phone', 'Email', 'Address', 'ZIP', 'Type of work', 'Status', 'Salesperson', 'Contractor', 'Scheduled', 'Finished',
+    ['Job #', 'Created', 'Customer', 'Phone', 'Email', 'Address', 'State', 'ZIP', 'Type of work', 'Status', 'Salesperson', 'Contractor', 'Scheduled', 'Finished',
       'Job total', 'Invoiced', 'Paid', 'Owed', ...(pay ? ['Crew pay', 'Crew paid on', 'Crew paid by'] : [])],
-    ...list.map((j) => [jobNo(j), dateOf(j.created), j.buyer.name, j.buyer.phone, j.buyer.email, j.address, j.zip, tradeOf(j.trade).label, statusOf(j.status).label,
+    ...list.map((j) => [jobNo(j), dateOf(j.created), j.buyer.name, j.buyer.phone, j.buyer.email, j.address, j.state || '', j.zip, tradeOf(j.trade).label, statusOf(j.status).label,
       salesName(j.salesId) || '', crewName(j) || '', (j.scheduledFor || '').replace('T', ' '), dateOf(j.finishedAt),
       jobTotal(j) || '', billedOn(j) || '', paidOn(j) || '', owedOn(j) || '', ...(pay ? [j.crewPay ?? '', j.crewPaid?.date || '', j.crewPaid?.method || ''] : [])]),
   ];
@@ -887,9 +901,16 @@
     const all = [...map.values()].sort((a, b) => b.last - a.last);
     const listWrap = el('div', { class: 'leads' });
     const search = el('input', { type: 'search', placeholder: 'Search name, phone, email…', 'aria-label': 'Search customers', oninput: () => draw() });
+    // A customer's state: the state of their most recent job.
+    all.forEach((c) => { c.state = (c.jobs.slice().sort((a, b) => b.created - a.created).find((j) => j.state) || {}).state || ''; });
+    const stSel = el('select', { 'aria-label': 'State', onchange: () => { stateFilter = stSel.value; draw(); } },
+      el('option', { value: '' }, `🗺 All states (${all.length})`),
+      ...statesIn(all, (c) => c.state).map(([c, n]) => el('option', { value: c || 'none', selected: stateFilter === (c || 'none') }, `${c ? TH.stateName(c) : 'No state set'} (${n})`)));
     const draw = () => {
       const q = search.value.trim().toLowerCase();
-      const shown = all.filter((c) => !q || [c.b.name, c.b.phone, c.b.email].join(' ').toLowerCase().includes(q));
+      const sf = usableState(statesIn(all, (c) => c.state));
+      const shown = all.filter((c) => (!sf || (sf === 'none' ? !c.state : c.state === sf))
+        && (!q || [c.b.name, c.b.phone, c.b.email, c.state, TH.stateName(c.state)].join(' ').toLowerCase().includes(q)));
       listWrap.replaceChildren(...(shown.length ? shown.map((c) => {
         const owed = c.jobs.reduce((t, j) => t + owedOn(j), 0);
         const open = c.jobs.filter((j) => !['completed', 'lost'].includes(j.status)).length;
@@ -897,14 +918,14 @@
           el('span', { class: 'ic' }, '📁'),
           el('span', { class: 'body' },
             el('span', { class: 'line1' }, el('b', {}, c.b.name || 'Unknown'), el('span', { class: 'spacer' }), el('span', { class: 'pill' }, `${c.jobs.length} job${c.jobs.length === 1 ? '' : 's'}`)),
-            el('span', { class: 'muted small' }, [c.b.phone, open ? `${open} active` : 'nothing active', `last ${ago(c.last)}`].filter(Boolean).join(' · ')),
+            el('span', { class: 'muted small' }, [c.state ? TH.stateName(c.state) : null, c.b.phone, open ? `${open} active` : 'nothing active', `last ${ago(c.last)}`].filter(Boolean).join(' · ')),
             owed > 0 ? el('span', { class: 'flags' }, el('span', { class: 'flag hot' }, `💵 ${docs.usd(owed)} owed`)) : null));
       }) : [el('div', { class: 'card muted' }, 'No customers match.')]));
     };
     draw();
     drawer(`📁 Customers (${all.length})`, [
       el('p', { class: 'muted small' }, 'Every customer has a folder with all their jobs: active, done and closed, with what they’ve paid.'),
-      search, listWrap]);
+      stSel, search, listWrap]);
   }
 
   /* ---------- design studio for a job (office, or a rep with the customer) ---------- */
@@ -931,7 +952,7 @@
         el('div', { class: 'doc-co' }, el('img', { class: 'doc-logo-img', src: 'img/logo.jpg', alt: '' }), el('div', { class: 'doc-logo' }, el('b', {}, settings.name || 'Top Hat Contracting'))),
         el('div', { class: 'doc-title' }, el('h1', {}, 'Building permit'), el('dl', {}, ...row('Packet date', docs.fmtDate(Date.now())), ...row('Job', jobNo(j))))),
       el('section', { class: 'doc-notes' }, el('h4', {}, 'Property'), el('dl', { class: 'dl' },
-        ...row('Address', `${j.address}${j.zip ? ' ' + j.zip : ''}`), ...row('Building department', TH.placeOf(j.address)),
+        ...row('Address', addrOf(j)), ...row('Building department', TH.placeOf(j.address)),
         ...row('Department website', pm.portalUrl || (settings.permitPortals || {})[TH.placeOf(j.address).toLowerCase()]))),
       el('section', { class: 'doc-notes' }, el('h4', {}, 'Owner'), el('dl', { class: 'dl' }, ...row('Name', b.name), ...row('Phone', b.phone), ...row('Email', b.email))),
       el('section', { class: 'doc-notes' }, el('h4', {}, 'Contractor'), el('dl', { class: 'dl' },
@@ -994,7 +1015,7 @@
           customerId: match && f.get('useAccount') === 'on' ? match.id : null,
           name: f.get('name'), phone: f.get('phone'), email: f.get('email'),
           salesId: f.get('salesId') || null,
-          trade: f.get('trade'), description: f.get('description'), address: f.get('address'), zip: f.get('zip'),
+          trade: f.get('trade'), description: f.get('description'), address: f.get('address'), zip: f.get('zip'), state: f.get('state'),
           timeframe: f.get('timeframe'), contractorId: f.get('contractorId') || null, scheduledFor: f.get('scheduledFor') || null,
           price: num(f.get('price')), agreed: f.get('agreed') === 'on',
         });
@@ -1014,7 +1035,9 @@
         el('label', { class: 'field' }, 'What needs to be done', el('textarea', { name: 'description', rows: 3, placeholder: 'e.g. Replace water heater in garage. 40 gal gas.' })),
         el('div', { class: 'two' },
           el('label', { class: 'field', style: 'grid-column:1/-1' }, 'Address', el('input', { name: 'address', autocomplete: 'off', placeholder: 'Street, city' })),
-          el('label', { class: 'field' }, 'ZIP', el('input', { name: 'zip', inputmode: 'numeric', maxlength: '5', autocomplete: 'off' })),
+          el('label', { class: 'field' }, 'ZIP', el('input', { name: 'zip', inputmode: 'numeric', maxlength: '5', autocomplete: 'off',
+            oninput: (e) => { const st = form.querySelector('select[name=state]'); const g = TH.stateFromZip(e.target.value); if (g && !st.dataset.picked) st.value = g; } })),
+          el('label', { class: 'field' }, 'State', el('select', { name: 'state', onchange: (e) => { e.target.dataset.picked = '1'; } }, ...stateOptions(''))),
           el('label', { class: 'field' }, 'Needed', el('select', { name: 'timeframe' }, ...TIMEFRAMES.map((t) => el('option', { value: t.id }, t.label)))))),
       el('section', { class: 'card stack' },
         el('h3', {}, '3. Phone estimate ', el('span', { class: 'muted small', style: 'font-weight:400' }, '(if you gave one)')),
@@ -1446,9 +1469,11 @@
   /* ---------- crew ---------- */
   function crewView() {
     const activeJobs = (cid) => jobs.filter((j) => j.contractorId === cid && OPEN.includes(j.status)).length;
-    const list = el('div', { class: 'card crew' },
-      crew.length ? null : el('p', { class: 'muted' }, 'No crew added yet.'),
-      ...crew.slice().sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name)).map((c) =>
+    const groups = statesIn(crew, (c) => c.state);
+    const crewStSel = groups.length > 1 ? el('select', { 'aria-label': 'State', onchange: (e) => { stateFilter = e.target.value; render(); } },
+      el('option', { value: '' }, `🗺 All states (${crew.length})`),
+      ...groups.map(([c, n]) => el('option', { value: c || 'none', selected: stateFilter === (c || 'none') }, `${c ? TH.stateName(c) : 'No state set'} (${n})`))) : null;
+    const crewItem = (c) =>
         el('div', { class: 'crew-item' + (c.active ? '' : ' inactive') },
           el('span', { class: 'avatar' }, initials(c.name)),
           el('div', { class: 'body' },
@@ -1456,15 +1481,20 @@
             el('p', { class: 'muted small' }, c.trades.map((id) => tradeOf(id).label).join(', ') || 'No trades set'),
             el('p', { class: 'small' }, c.phone ? el('a', { href: telHref(c.phone) }, c.phone) : null, ` · ${activeJobs(c.id)} open job${activeJobs(c.id) === 1 ? '' : 's'}`,
               c.login === 'active' ? el('span', { class: 'pill s-completed', style: 'margin-left:6px' }, '🔑 Login') : c.login === 'invited' ? el('span', { class: 'pill s-qualifying', style: 'margin-left:6px' }, 'Invited') : null)),
-          el('button', { class: 'ghost small', onclick: () => crewForm(c) }, 'Edit'))),
-    );
-    return [el('div', { class: 'row' }, el('h2', {}, 'Your crew'), el('span', { class: 'spacer' }), el('button', { class: 'gold small', onclick: () => crewForm() }, '+ Add')), list,
+          el('button', { class: 'ghost small', onclick: () => crewForm(c) }, 'Edit'));
+    const sf = groups.length > 1 ? usableState(groups) : '';
+    const shownGroups = groups.filter(([st]) => !sf || (sf === 'none' ? !st : st === sf));
+    const list = crew.length ? el('div', { class: 'stack' }, ...shownGroups.map(([st, n]) => el('section', { class: 'stack', style: 'gap:6px' },
+      el('div', { class: 'month-head' }, el('b', {}, st ? `🗺 ${TH.stateName(st)}` : 'No state set'), el('span', {}, `${n} contractor${n === 1 ? '' : 's'}`)),
+      el('div', { class: 'card crew' }, ...crew.filter((c) => (c.state || '') === st).sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name)).map(crewItem)))))
+      : el('div', { class: 'card crew' }, el('p', { class: 'muted' }, 'No crew added yet.'));
+    return [el('div', { class: 'row' }, el('h2', {}, 'Your crew'), el('span', { class: 'spacer' }), el('button', { class: 'gold small', onclick: () => crewForm() }, '+ Add')), crewStSel, list,
       el('p', { class: 'muted small' }, 'Crew sign in at ', el('a', { href: 'crew.html', target: '_blank' }, new URL('crew.html', location.href).href), '. Open a crew member to invite them.')];
   }
 
   function crewForm(c) {
     const editing = !!c;
-    c = c || { name: '', phone: '', trades: [], active: true };
+    c = c || { name: '', phone: '', trades: [], active: true, state: '' };
     const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
     const close = closeDrawer;
 
@@ -1538,13 +1568,14 @@
       e.preventDefault();
       const f = new FormData(form);
       try {
-        await api.contractors.save({ ...(editing ? { id: c.id } : {}), name: f.get('name').trim(), phone: f.get('phone').trim(), trades: f.getAll('trades'), active: f.get('active') === 'on' });
+        await api.contractors.save({ ...(editing ? { id: c.id } : {}), name: f.get('name').trim(), phone: f.get('phone').trim(), state: f.get('state') || '', trades: f.getAll('trades'), active: f.get('active') === 'on' });
         await load(); close();
       } catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
     } },
       errorBox,
       el('label', { class: 'field' }, 'Name', el('input', { name: 'name', value: c.name, required: true, autocomplete: 'off' })),
       el('label', { class: 'field' }, 'Phone', el('input', { name: 'phone', type: 'tel', value: c.phone, autocomplete: 'off' })),
+      el('label', { class: 'field' }, 'State they work in', el('select', { name: 'state' }, ...stateOptions(c.state || ''))),
       el('div', { class: 'field' }, el('b', { style: 'font-size:.92rem' }, 'Trades'),
         el('div', { class: 'choices', style: 'margin-top:6px' }, ...TRADES.filter((t) => t.id !== 'other').map((t) =>
           el('label', { class: 'choice' }, el('input', { type: 'checkbox', name: 'trades', value: t.id, checked: c.trades.includes(t.id) }), el('span', {}, `${t.icon} ${t.label}`))))),
