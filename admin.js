@@ -76,6 +76,7 @@
   const SALES_TABS = [['today', 'Today'], ['jobs', 'My clients']];
   if (MAIN_TABS.some(([id]) => id === location.hash.slice(1))) tab = location.hash.slice(1);
   const salesName = (id) => team.find((x) => x.id === id)?.name;
+  let picking = false; const picked = new Set(); let jobsMsg = ''; // office: pick several leads and assign them to a salesperson at once
   let salesFilter = ''; // owner: show one salesperson's jobs ('' = everyone, 'none' = unassigned)
 
   // What needs attention, grouped in plain language. Shared by Today and the job cards.
@@ -239,20 +240,51 @@
     const salesSel = isStaff && team.length ? el('select', { 'aria-label': 'Salesperson', onchange: (e) => { salesFilter = e.target.value; render(); } },
       el('option', { value: '' }, 'All salespeople'), el('option', { value: 'none', selected: salesFilter === 'none' }, 'No salesperson'),
       ...team.map((x) => el('option', { value: x.id, selected: salesFilter === x.id }, `💼 ${x.name}`))) : null;
-    const renderList = () => {
-      const q = search.trim().toLowerCase();
-      const list = jobs.filter((j) => inFilter(j) && matches(j, q));
-      return el('div', { class: 'leads' },
-        list.length ? list.map(leadCard) : [el('div', { class: 'card muted' }, q ? 'No jobs match your search.' : 'No jobs here right now.')]);
+    const canPick = isStaff && team.some((x) => x.active !== false);
+    const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const flash = (msg) => { jobsMsg = msg; render(); };
+    const msgBox = jobsMsg ? el('div', { class: 'callout', role: 'status' }, jobsMsg) : null; jobsMsg = '';
+    const shown = () => { const q = search.trim().toLowerCase(); return jobs.filter((j) => inFilter(j) && matches(j, q)); };
+    // Bar for assigning the picked leads.
+    const pickBar = el('div', { class: 'pick-bar', hidden: !picking });
+    const drawPickBar = () => {
+      pickBar.hidden = !picking;
+      if (!picking) return;
+      const repSel = el('select', { 'aria-label': 'Assign to' }, el('option', { value: '' }, '— Pick a salesperson —'),
+        ...team.filter((x) => x.active !== false).map((x) => el('option', { value: x.id }, `💼 ${x.name}`)), el('option', { value: 'none' }, 'No salesperson (unassign)'));
+      const list = shown(); const allOn = list.length && list.every((j) => picked.has(j.id));
+      pickBar.replaceChildren(
+        el('div', { class: 'row' }, el('b', { style: 'flex:1' }, picked.size ? `${picked.size} selected` : 'Tap jobs to select them'),
+          el('button', { type: 'button', class: 'link small', onclick: () => { list.forEach((j) => (allOn ? picked.delete(j.id) : picked.add(j.id))); refresh(); } }, allOn ? 'Clear these' : `Select all ${list.length}`)),
+        el('div', { class: 'row' }, repSel,
+          el('button', { type: 'button', class: 'gold', disabled: !picked.size, onclick: async (e) => {
+            if (!repSel.value) { repSel.focus(); errorBox.textContent = 'Pick who to assign them to.'; errorBox.hidden = false; return; }
+            const btn = e.currentTarget; btn.disabled = true; errorBox.hidden = true;
+            const ids = [...picked]; const to = repSel.value === 'none' ? null : repSel.value; let done = 0;
+            for (const id of ids) { try { if ((find(jobs, id)?.salesId || null) !== to) await api.jobs.update(id, { salesId: to }); done++; } catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; } }
+            picking = false; picked.clear(); await load();
+            flash(`💼 ${done} ${done === 1 ? 'job' : 'jobs'} ${to ? 'assigned to ' + salesName(to) : 'unassigned'}.`);
+          } }, 'Assign')),
+        el('button', { type: 'button', class: 'link small', onclick: () => { picking = false; picked.clear(); render(); } }, 'Cancel'));
     };
+    const renderList = () => {
+      const list = shown();
+      return el('div', { class: 'leads' + (picking ? ' picking' : '') },
+        list.length ? list.map((j) => leadCard(j, picking ? { on: picked.has(j.id), toggle: () => { picked.has(j.id) ? picked.delete(j.id) : picked.add(j.id); refresh(); } } : null))
+          : [el('div', { class: 'card muted' }, search.trim() ? 'No jobs match your search.' : 'No jobs here right now.')]);
+    };
+    const refresh = () => { const l = renderList(); listWrap.replaceWith(l); listWrap = l; drawPickBar(); };
     let listWrap = renderList();
     const searchBox = el('input', { type: 'search', placeholder: 'Search name, phone, address, job #…', value: search, 'aria-label': 'Search jobs',
-      oninput: (e) => { search = e.target.value; const list = renderList(); listWrap.replaceWith(list); listWrap = list; } });
+      oninput: (e) => { search = e.target.value; refresh(); } });
+    drawPickBar();
     return [el('div', { class: 'row' }, el('h2', { style: 'flex:1' }, isStaff ? 'Jobs' : 'My clients'),
-      el('button', { class: 'ghost', onclick: customersList }, '📁 Customers'), el('button', { class: 'gold', onclick: () => newJobForm() }, '+ New job')), filterBar, salesSel, searchBox, listWrap];
+      el('button', { class: 'ghost', onclick: customersList }, '📁 Customers'), el('button', { class: 'gold', onclick: () => newJobForm() }, '+ New job')),
+      canPick && !picking ? el('button', { type: 'button', class: 'ghost block assign-btn', onclick: () => { picking = true; picked.clear(); if (filter === 'open' && !salesFilter) salesFilter = 'none'; render(); } }, '💼 Assign leads to a salesperson') : null,
+      msgBox, filterBar, salesSel, searchBox, listWrap, errorBox, pickBar];
   }
 
-  function leadCard(j) {
+  function leadCard(j, pick) {
     const t = tradeOf(j.trade);
     const c = find(crew, j.contractorId);
     const flags = [
@@ -271,8 +303,9 @@
       owedOn(j) > 0 ? [`💵 ${docs.usd(owedOn(j))} due`, 'hot'] : null,
       estWith(j, 'sent') ? ['⏳ Estimate sent', ''] : null,
     ].filter(Boolean);
-    return el('button', { class: 'lead' + (j.status === 'new' ? ' new-dot' : ''), onclick: () => openLead(j.id) },
-      el('span', { class: 'ic' }, t.icon),
+    return el('button', { class: 'lead' + (j.status === 'new' && !pick ? ' new-dot' : '') + (pick ? ' pickable' + (pick.on ? ' picked' : '') : ''),
+      ...(pick ? { 'aria-pressed': String(pick.on) } : {}), onclick: pick ? pick.toggle : () => openLead(j.id) },
+      pick ? el('span', { class: 'pick-box', 'aria-hidden': 'true' }, pick.on ? '✓' : '') : el('span', { class: 'ic' }, t.icon),
       el('span', { class: 'body' },
         el('span', { class: 'line1' }, el('b', {}, j.buyer.name), el('span', { class: 'spacer' }), el('span', { class: `pill s-${j.status}` }, statusOf(j.status).label)),
         el('span', { class: 'muted small' }, `${t.label} · ${jobNo(j)} · ${j.zip || j.address}${j.status === 'new' ? ' · ' + ago(j.created) : ''}`),
