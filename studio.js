@@ -43,7 +43,31 @@
     const uploadBtn = (label, cls) => el('label', { class: 'btn ' + cls }, label,
       el('input', { type: 'file', accept: 'image/*', hidden: true, onchange: (e) => { const f = e.target.files[0]; if (f) addPhoto(f); } }));
 
-    function draw() {
+    // Owner/office only (preview): connect Gemini so the studio can make pictures.
+    function connectBox() {
+      if (!opts.canConnect || api.mode !== 'preview') return null;
+      const cfg = TH.ai.config();
+      if (cfg.key) return el('p', { class: 'small ai-on' }, `✓ AI pictures connected (Gemini · ${cfg.model}) `,
+        el('button', { type: 'button', class: 'link small', onclick: () => { if (confirm('Disconnect Gemini from this browser?')) { TH.ai.disconnect(); draw(); } } }, 'Disconnect'));
+      const key = el('input', { type: 'password', placeholder: 'Paste your Gemini API key (AIza…)', autocomplete: 'off', 'aria-label': 'Gemini API key' });
+      const err = el('div', { class: 'error', hidden: true, role: 'alert' });
+      const btn = el('button', { type: 'button', class: 'gold block', onclick: async () => {
+        btn.disabled = true; btn.textContent = 'Checking with Google…'; err.hidden = true;
+        try { await TH.ai.connect(key.value); draw(); }
+        catch (e) { err.textContent = e.message; err.hidden = false; btn.disabled = false; btn.textContent = '🔌 Connect'; }
+      } }, '🔌 Connect');
+      return el('section', { class: 'ai-connect stack' },
+        el('h3', {}, '🔌 Connect Gemini to make pictures'),
+        el('ol', { class: 'small' },
+          el('li', {}, 'Open ', el('a', { href: 'https://aistudio.google.com/apikey', target: '_blank', rel: 'noopener' }, 'aistudio.google.com/apikey'), ' and sign in with your Google account.'),
+          el('li', {}, 'Tap ', el('b', {}, 'Create API key'), ' and copy it.'),
+          el('li', {}, 'Paste it here and tap Connect.')),
+        key, err, btn,
+        el('p', { class: 'muted small' }, 'Saved only in this browser on this device, never in the app’s code. Pictures cost a few cents each on your Google account.'));
+    }
+
+    function draw() { drawBody(); const cb = connectBox(); if (cb) root.prepend(cb); }
+    function drawBody() {
       const cur = byId(currentId);
       if (!cur) {
         root.replaceChildren(...[

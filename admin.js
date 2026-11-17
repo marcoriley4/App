@@ -1062,7 +1062,7 @@
       el('div', { class: 'panel-head' },
         el('button', { class: 'ghost small', onclick: async () => { await load(); openLead(j.id); } }, `← ${jobNo(j)}`),
         el('b', { style: 'flex:1' }, '🎨 Design studio')),
-      el('div', { class: 'panel-body' }, TH.studio({ jobId: j.id, trade: j.trade, photos: j.photos || [] })));
+      el('div', { class: 'panel-body' }, TH.studio({ jobId: j.id, trade: j.trade, photos: j.photos || [], canConnect: isStaff })));
     drawerRoot.replaceChildren(el('div', { class: 'drawer' }, panel));
     document.body.style.overflow = 'hidden';
   }

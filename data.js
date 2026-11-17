@@ -656,6 +656,24 @@
   const AI_KEY = 'tophat.ai.v1';
   // Preview only: the API key is kept in this browser. When live, the key is a server secret instead.
   function aiConfig() { try { return { model: DEFAULT_IMAGE_MODEL, ...(JSON.parse(localStorage.getItem(AI_KEY)) || {}) }; } catch (e) { return { model: DEFAULT_IMAGE_MODEL }; } }
+  // Connect the AI design studio with the owner's own Gemini key (preview: saved in this browser only).
+  // Checks the key with Google first, trying the stable picture model and then the newer one.
+  const IMAGE_MODELS = [DEFAULT_IMAGE_MODEL, 'gemini-3.1-flash-image'];
+  async function connectAi(key) {
+    key = String(key || '').trim();
+    if (key.length < 20) throw new Error('Paste the whole key. It starts with “AIza” and is about 39 characters long.');
+    let last = '';
+    for (const model of IMAGE_MODELS) {
+      let res;
+      try { res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}`, { headers: { 'x-goog-api-key': key } }); }
+      catch (e) { throw new Error('Couldn’t reach Google. Check your internet connection and try again.'); }
+      if (res.ok) { setAiConfig({ key, model }); return model; }
+      const out = await res.json().catch(() => ({}));
+      last = out.error?.message || `error ${res.status}`;
+      if ([400, 401, 403].includes(res.status)) throw new Error('Google didn’t accept that key: ' + last);
+    }
+    throw new Error('Your key works, but Google’s picture model isn’t available on it: ' + last);
+  }
   function setAiConfig(cfg) { try { localStorage.setItem(AI_KEY, JSON.stringify({ key: String(cfg.key || '').trim(), model: String(cfg.model || '').trim() || DEFAULT_IMAGE_MODEL })); } catch (e) { /* ignore */ } }
   const blobToDataUrl = (blob) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
   // What we ask the image model. Kept the same in supabase/functions/design so preview and live behave alike.
@@ -1453,7 +1471,7 @@
         const src = from && await blobs.get('design:' + from.id).catch(() => null);
         if (!src) throw new Error('Pick a photo to start from.');
         const ai = aiConfig();
-        if (!ai.key && !window.TH_AI_MOCK) throw new Error('The AI design studio isn’t turned on yet. It turns on when the app goes live.');
+        if (!ai.key && !window.TH_AI_MOCK) throw new Error('The AI pictures aren’t connected yet. The office connects Gemini at the top of the Design studio.');
         const steps = [];
         for (let v = from; v && v.source === 'ai'; v = j.designs.find((x) => x.id === v.parentId)) steps.unshift(v.prompt);
         const instruction = designPrompt({ trade: (TRADES.find((t) => t.id === j.trade) || {}).label, description: j.description, earlier: steps, request: prompt });
@@ -1825,5 +1843,5 @@
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupTheme); else setupTheme();
 
-  window.TH = { materialsCard, SKILLS, doesTrade, STYLE_ROOMS, STYLE_TRADES, roomFromText, styleOf, MATERIAL_STATUS, US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+  window.TH = { materialsCard, SKILLS, doesTrade, STYLE_ROOMS, STYLE_TRADES, roomFromText, styleOf, MATERIAL_STATUS, US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, connect: connectAi, disconnect: () => { try { localStorage.removeItem(AI_KEY); } catch (e) {} }, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();
