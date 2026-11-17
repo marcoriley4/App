@@ -78,7 +78,7 @@
   }
 
   /* ---------- main ---------- */
-  const MAIN_TABS = [['today', 'Today', '📅'], ['jobs', 'Jobs', '🗂️'], ['sales', 'Sales', '💼'], ['crew', 'Contractors', '👷'], ['business', 'Settings', '⚙️']];
+  const MAIN_TABS = [['today', 'Today', '📅'], ['jobs', 'Jobs', '🗂️'], ['sales', 'Sales', '💼'], ['crew', 'Contractors', '👷'], ['business', 'Payments', '💳']];
   const SALES_TABS = [['today', 'Today', '📅'], ['jobs', 'My clients', '🗂️']];
   if (MAIN_TABS.some(([id]) => id === location.hash.slice(1))) tab = location.hash.slice(1);
   const salesName = (id) => team.find((x) => x.id === id)?.name;
@@ -766,7 +766,7 @@
               el('button', { type: 'button', class: 'ghost small', style: 'flex:1', onclick: async (e) => { const reason = prompt('Why are you declining this bill? (The contractor sees this.)', ''); if (reason === null) return; await act(b, 'decline', () => ({ reason }))(e); } }, 'Decline')) : null,
             ['submitted', 'approved'].includes(b.status) ? el('div', { class: 'stack', style: 'gap:6px' }, el('div', { class: 'two' }, date, how),
               el('button', { type: 'button', class: 'ghost', onclick: act(b, 'paid', () => ({ date: date.value, method: how.value })) }, `💸 Mark paid · ${docs.usd(b.amount)}`)) : null);
-        })) : el('p', { class: 'muted small' }, 'No bills yet. The contractor bills you from their job page as they finish each part (Business → Crew pay schedule).'));
+        })) : el('p', { class: 'muted small' }, 'No bills yet. The contractor bills you from their job page as they finish each part (Payments tab → Crew pay schedule).'));
     })() : null;
 
     // Payment schedule: each payment, its invoice, and a button to make the next one.
@@ -775,7 +775,7 @@
     const invoiceStep = (p) => p.inv
       ? { icon: '🧾', title: `Finish and send the ${p.label.toLowerCase()} invoice`, why: `${p.inv.number} is saved as a draft. ${docs.usd(p.amount)}, payment ${p.index + 1} of ${plan.length}.`, act: ['Open the invoice', () => openDoc(j.id, p.inv.id)] }
       : { icon: '🧾', title: `Send the ${p.label.toLowerCase()} invoice: ${docs.usd(p.amount)}`, why: `Payment ${p.index + 1} of ${plan.length} on the schedule (${Number(p.pct)}%, ${p.whenLabel.toLowerCase()}).`,
-        act: [`+ Create ${p.label.toLowerCase()} invoice`, () => openDoc(j.id, null, 'invoice', null, { index: p.index })] };
+        act: ['🧾 Create invoice', () => openDoc(j.id, null, 'invoice', null, { index: p.index })] };
     const scheduleCard = el('section', { class: 'card stack' },
       el('div', { class: 'row' }, el('h3', {}, '💵 Payment schedule'), el('span', { class: 'spacer' }),
         plan.length ? el('span', { class: 'muted small' }, `Job total ${docs.usd(jobTotal(j))}`) : null),
@@ -786,7 +786,7 @@
           : p.covered ? el('span', { class: 'muted small' }, 'Billed in full')
           : el('button', { type: 'button', class: (p.due ? 'gold' : 'ghost') + ' small', onclick: () => openDoc(j.id, null, 'invoice', null, { index: p.index }) }, p.due ? 'Create invoice' : p.when === 'stage' ? '✓ Done: invoice it' : 'Bill early'))))
         : el('p', { class: 'muted small' }, 'Once the job has a price (or an approved estimate), each payment shows up here with a button to invoice it.'),
-      el('p', { class: 'muted small' }, isStaff ? 'Change the payments and percentages in Business → Payment schedule.' : 'The office sets the payments and percentages.'),
+      el('p', { class: 'muted small' }, isStaff ? 'Change the payments and percentages in the Payments tab → Payment schedule.' : 'The office sets the payments and percentages.'),
     );
 
     // Next step: one clear action based on where the job is.
@@ -868,7 +868,7 @@
     } else if (j.status === 'in_progress' && plan.find((p) => p.when === 'stage' && !p.covered)) {
       const p = plan.find((x) => x.when === 'stage' && !x.covered);
       step = { icon: '🧱', title: `When ${p.label.toLowerCase()} is done, bill it`, why: `Payment ${p.index + 1} of ${plan.length}: ${docs.usd(p.amount)} (${Number(p.pct)}%), due upon completion of ${p.label.toLowerCase()}.`,
-        act: [`✓ ${p.label} done: create invoice`, () => openDoc(j.id, null, 'invoice', null, { index: p.index })], second: ['✓ Mark job finished', () => update({ status: 'completed' })] };
+        act: ['🧾 Create invoice', () => openDoc(j.id, null, 'invoice', null, { index: p.index })], second: ['✓ Mark job finished', () => update({ status: 'completed' })] };
     } else if (j.status === 'in_progress') {
       step = { icon: '🔨', title: 'Work in progress', why: `${crewFirst || 'The crew'} can update progress from their crew login, or you can here.`, act: ['✓ Mark job finished', () => update({ status: 'completed' })] };
     } else if (j.status === 'completed') {
@@ -1444,7 +1444,7 @@
           .sort((a, b) => String(a[0]).localeCompare(String(b[0])))])) }, '⬇ Crew payouts'),
       el('button', { type: 'button', class: 'ghost block', onclick: customersList }, '📁 Customer folders'),
     );
-    return [form, records, aiCard];
+    return [form, records];
   }
 
   // Editable list of steps: name, percent, and when it's due. Used for customer payments and crew pay.

@@ -887,3 +887,4 @@ label.field .hint { font-weight: 500; }
 .stars-show { color: #b77800; }
 :root[data-theme="dark"] .stars-show { color: #ffc400; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .stars-show { color: #ffc400; } }
+.next-step .block { white-space: normal; text-align: center; }

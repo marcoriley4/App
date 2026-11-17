@@ -651,7 +651,7 @@
   const PAY_METHODS = ['Zelle', 'Bank transfer (ACH)', 'Check', 'Cash', 'Card', 'Venmo', 'Cash App', 'Other'];
 
   /* ---------- AI design studio ---------- */
-  // The image model can change as Google releases new ones: set it in Business → AI design studio.
+  // The image model can change as Google releases new ones: set it with TH.ai.set (preview) or the server setting (live).
   const DEFAULT_IMAGE_MODEL = 'gemini-2.5-flash-image';
   const AI_KEY = 'tophat.ai.v1';
   // Preview only: the API key is kept in this browser. When live, the key is a server secret instead.
@@ -1453,7 +1453,7 @@
         const src = from && await blobs.get('design:' + from.id).catch(() => null);
         if (!src) throw new Error('Pick a photo to start from.');
         const ai = aiConfig();
-        if (!ai.key && !window.TH_AI_MOCK) throw new Error('The AI design studio isn’t turned on yet. The office can turn it on in Business → AI design studio.');
+        if (!ai.key && !window.TH_AI_MOCK) throw new Error('The AI design studio isn’t turned on yet. It turns on when the app goes live.');
         const steps = [];
         for (let v = from; v && v.source === 'ai'; v = j.designs.find((x) => x.id === v.parentId)) steps.unshift(v.prompt);
         const instruction = designPrompt({ trade: (TRADES.find((t) => t.id === j.trade) || {}).label, description: j.description, earlier: steps, request: prompt });
