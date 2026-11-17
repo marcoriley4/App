@@ -19,6 +19,7 @@
   const { guessKind, normEmail, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS } = TH._util;
 
   /* ---------- helpers ---------- */
+  const mapMaterial = (m) => ({ id: m.id, name: m.name, qty: m.qty || '', note: m.note || '', status: m.status, eta: m.eta || null, by: m.added_by || '', updatedBy: m.updated_by || '' });
   const mapBill = (b) => ({ id: b.id, step: b.step ?? null, label: b.label, amount: Number(b.amount), note: b.note || '', status: b.status, reason: b.reason || '',
     paidDate: b.paid_date || null, paidMethod: b.paid_method || '', by: b.by_name || '', at: Date.parse(b.created_at) || null, photos: Number(b.photos) || 0 });
   const mapDesign = (v) => v && ({ id: v.id, parentId: v.parent_id || null, source: v.source, prompt: v.prompt || '', by: v.by_name || '', at: Date.parse(v.created_at) || Date.now(), chosen: !!v.chosen, url: v.url || null });
@@ -146,7 +147,7 @@
         if (!(await me())) throw new Error('Please create an account first.');
         const rows = must(await sb.rpc('create_job', {
           p_trade: job.trade, p_description: job.description, p_address: job.address,
-          p_zip: job.zip || '', p_state: job.state || TH.stateFromZip(job.zip) || '', p_timeframe: job.timeframe || '', p_budget: job.budget || '',
+          p_zip: job.zip || '', p_state: job.state || TH.stateFromZip(job.zip) || '', p_timeframe: job.timeframe || '', p_budget: job.budget || '', p_style: job.style || '',
         }));
         const created = rows[0];
         // Request photos go into the job's folder. A failed photo never blocks the request.
@@ -171,7 +172,8 @@
           visitAt: local16(j.visit_at), repName: j.rep_name || null,
           pm: j.pm_name ? { name: j.pm_name, phone: j.pm_phone || '' } : null,
           permit: { status: j.permit_status || 'none', number: j.permit_number || '', authorizedBy: j.permit_authorized_by || '', authorizedAt: ms(j.permit_authorized_at) || null },
-          designCount: Number(j.design_count) || 0,
+          designCount: Number(j.design_count) || 0, style: j.style || '', materials: (j.materials || []).map(mapMaterial),
+          review: j.review_requested_at || j.review_rating ? { requestedAt: ms(j.review_requested_at), rating: j.review_rating || null, comment: j.review_comment || '', at: ms(j.review_at) } : null,
           sharedFiles: (j.shared_files || []).length,
         }));
       },
@@ -187,6 +189,9 @@
           u.role === 'staff' ? fetchAll(() => sb.from('job_costs').select('job_id, crew_pay, crew_paid_date, crew_paid_method, crew_paid_note')) : Promise.resolve([]),
         ]);
         const designRows = await fetchAll(() => sb.from('design_versions').select('id, job_id, chosen, source'));
+        const matRows = await fetchAll(() => sb.from('job_materials').select('*').order('created_at'));
+        const matsBy = {};
+        matRows.forEach((m) => { (matsBy[m.job_id] ||= []).push(mapMaterial(m)); });
         const billRows = u.role === 'staff' ? await fetchAll(() => sb.from('crew_bills').select('*').order('created_at')) : [];
         const billsBy = {};
         billRows.forEach((b) => { (billsBy[b.job_id] ||= []).push(mapBill(b)); });
@@ -210,7 +215,8 @@
             contractorId: j.contractor_id, scheduledFor: local16(j.scheduled_for), visitAt: local16(j.visit_at),
             permit: { status: j.permit_status || 'none', number: j.permit_number || '', authorizedBy: j.permit_authorized_by || '', authorizedAt: ms(j.permit_authorized_at) || null,
               portalUrl: p.permit_portal || '', fee: p.permit_fee == null ? null : Number(p.permit_fee) },
-            designs: designsBy[j.id] || [], crewBills: billsBy[j.id] || [],
+            designs: designsBy[j.id] || [], crewBills: billsBy[j.id] || [], materials: matsBy[j.id] || [], style: j.style || '',
+            review: j.review_requested_at || j.review_rating ? { requestedAt: ms(j.review_requested_at), requestedBy: j.review_requested_by || '', rating: j.review_rating || null, comment: j.review_comment || '', at: ms(j.review_at) } : null,
             salesId: j.sales_id || null,
             price: num(p.price), crewPay: num(costBy[j.id]), crewPaid: paidBy[j.id] || null, notes: p.notes || '', crewToken: p.crew_token || null,
             files: filesBy[j.id] || [], docs: docsBy[j.id] || [],
@@ -463,6 +469,37 @@
       },
     },
 
+    materials: {
+      async add(jobId, { name, qty = '', note = '' } = {}) {
+        const u = await me(); if (!u) throw new Error('Please log in.');
+        if (String(name || '').trim().length < 2) throw new Error('What material is it?');
+        if (u.role === 'crew') return { id: must(await sb.rpc('crew_material_add', { p_job: jobId, p_name: name, p_qty: qty, p_note: note })) };
+        const row = must(await sb.from('job_materials').insert({ job_id: jobId, name: String(name).trim().slice(0, 120), qty: String(qty || '').trim().slice(0, 40), note: String(note || '').trim().slice(0, 300), added_by: u.name || '', updated_by: u.name || '' }).select().single());
+        return mapMaterial(row);
+      },
+      async update(jobId, id, patch = {}) {
+        const u = await me(); if (!u) throw new Error('Please log in.');
+        if (u.role === 'crew') {
+          if (patch.status !== 'delivered' || Object.keys(patch).length !== 1) throw new Error('The office orders materials. You can mark them delivered.');
+          must(await sb.rpc('crew_material_delivered', { p_item: id })); return;
+        }
+        const row = { updated_by: u.name || '', updated_at: new Date().toISOString() };
+        if ('status' in patch) row.status = patch.status;
+        if ('eta' in patch) row.eta = /^\d{4}-\d{2}-\d{2}$/.test(patch.eta || '') ? patch.eta : null;
+        if ('note' in patch) row.note = String(patch.note || '').trim().slice(0, 300);
+        if ('qty' in patch) row.qty = String(patch.qty || '').trim().slice(0, 40);
+        must(await sb.from('job_materials').update(row).eq('id', id).eq('job_id', jobId));
+      },
+      async remove(jobId, id) {
+        const u = await me(); if (!u || u.role === 'crew') throw new Error('Ask the office to remove it.');
+        must(await sb.from('job_materials').delete().eq('id', id).eq('job_id', jobId));
+      },
+    },
+    reviews: {
+      async ask(jobId) { must(await sb.rpc('office_ask_review', { p_job: jobId })); },
+      async leave(jobId, rating, comment = '') { must(await sb.rpc('customer_review', { p_job: jobId, p_rating: Math.round(Number(rating)) || null, p_comment: comment || '' })); },
+    },
+
     contractors: {
       async list() {
         const u = await requireOffice();
@@ -551,7 +588,7 @@
           crewToken: j.crew_token || null, crewPay: num(j.crew_pay), photos: Number(j.photos) || 0,
           uploads: (j.uploads || []).map((f) => ({ name: f.name, stage: f.stage || '', mime: f.mime || '', uploaded: ms(f.uploaded_at), url: photoUrls[f.path] || null })),
           crewPaid: j.crew_paid_date ? { date: j.crew_paid_date, method: j.crew_paid_method || 'Other' } : null,
-          crewBills: (j.bills || []).map(mapBill), halfwayAt: ms(j.halfway_at),
+          crewBills: (j.bills || []).map(mapBill), halfwayAt: ms(j.halfway_at), style: j.style || '', materials: (j.materials || []).map(mapMaterial),
           notes: (j.notes || []).map((n) => ({ id: n.id, at: ms(n.created_at), text: n.text })),
         }));
       },

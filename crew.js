@@ -504,6 +504,7 @@
       el('dl', { class: 'dl' },
         el('dt', {}, 'When'), el('dd', { style: 'font-weight:600' }, j.scheduledFor ? fmtWhen(j.scheduledFor) : 'To be set'),
         el('dt', {}, 'Address'), el('dd', {}, el('a', { href: maps(TH.addrLine(j)), target: '_blank', rel: 'noopener' }, TH.addrLine(j))),
+        TH.styleOf(j.style) ? el('dt', {}, 'Style') : null, TH.styleOf(j.style) ? el('dd', {}, el('div', { class: 'style-chosen' }, el('img', { src: TH.styleOf(j.style).img, alt: '' }), el('b', {}, TH.styleOf(j.style).label))) : null,
         el('dt', {}, 'Customer'), el('dd', {}, j.customerName, j.customerPhone ? ' · ' : '', j.customerPhone ? el('a', { href: tel(j.customerPhone) }, j.customerPhone) : ''),
         el('dt', {}, 'What to do'), el('dd', { style: 'white-space:pre-wrap' }, j.description),
         j.crewPay != null ? el('dt', {}, 'Your pay') : null, j.crewPay != null ? el('dd', { style: 'font-weight:700' }, usd(j.crewPay)) : null),
@@ -586,7 +587,7 @@
       el('div', { class: 'row' }, el('a', { class: 'btn ghost small', href: j.status === 'completed' ? '#/done' : '#/' }, j.status === 'completed' ? '← Completed' : '← My jobs'), el('span', { class: 'spacer' }), el('span', { class: `pill s-${j.status}` }, find(STATUSES, j.status).label)),
       el('div', {}, el('h1', { style: 'font-size:1.45rem' }, `${t.icon} ${t.label}`), el('p', { class: 'muted' }, `${n} · ${j.customerName}`)),
       message && !onWayMsg ? el('div', { class: 'callout' }, message) : null,
-      errorBox, nextCard, onWayMsg ? textsBox : null, quick, billCard, progress, details, notesCard,
+      errorBox, nextCard, onWayMsg ? textsBox : null, quick, j.status !== 'completed' || (j.materials || []).length ? TH.materialsCard(j, { mode: 'crew', onChange: () => renderJob(j.id, '📦 Materials updated. The office can see it.') }) : null, billCard, progress, details, notesCard,
     ));
     window.scrollTo(0, 0);
   }

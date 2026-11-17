@@ -173,6 +173,15 @@
         line: (j) => `${docs.usd(owedOn(j))} due${liveInvoices(j).some((d) => docs.state(d) === 'overdue') ? ' · OVERDUE' : ''}` },
       { id: 'waiting', icon: '⏳', title: 'Waiting on the customer', why: 'Estimates sent, not approved yet.', info: true,
         list: open.filter((j) => estWith(j, 'sent')), line: (j) => `${estWith(j, 'sent').number} · ${docs.usd(docs.totals(estWith(j, 'sent')).total)}` },
+      { id: 'materials', icon: '🛒', title: 'Materials to order', why: 'Things a job needs that haven’t been ordered yet.',
+        list: open.filter((j) => j.status !== 'completed' && (j.materials || []).some((m) => m.status === 'needed')),
+        line: (j) => (j.materials || []).filter((m) => m.status === 'needed').map((m) => m.name + (m.qty ? ` (${m.qty})` : '')).join(', ') },
+      { id: 'reviews', icon: '⭐', title: 'Ask for a review', why: 'Finished jobs where the customer hasn’t been asked yet.',
+        list: jobs.filter((j) => j.status === 'completed' && !j.review?.requestedAt && !j.review?.rating && (j.finishedAt || j.created) > Date.now() - 90 * 86400e3),
+        line: (j) => `${tradeOf(j.trade).label} · finished ${ago(j.finishedAt || j.created)}` },
+      { id: 'newreviews', icon: '🌟', title: 'New reviews', why: 'What customers said this week.', info: true,
+        list: jobs.filter((j) => j.review?.rating && j.review.at > Date.now() - 7 * 86400e3),
+        line: (j) => `${'★'.repeat(j.review.rating)}${j.review.comment ? ` “${j.review.comment.slice(0, 60)}${j.review.comment.length > 60 ? '…' : ''}”` : ''}` },
       { id: 'soon', icon: '📅', title: 'On the schedule today & tomorrow', why: 'Make sure the crew is set.', info: true,
         list: open.filter((j) => ['scheduled', 'in_progress'].includes(j.status) && j.scheduledFor && [today, tomorrow].includes(j.scheduledFor.slice(0, 10)))
           .sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor)),
@@ -180,8 +189,33 @@
     ];
   }
   // Salespeople only see what's theirs to act on: calls to make and estimates waiting.
-  const SALES_BUCKETS = ['new', 'hotbook', 'visits', 'followup', 'declined', 'schedule', 'waiting', 'soon'];
-  const myBuckets = () => buckets().filter((b) => isStaff || SALES_BUCKETS.includes(b.id));
+  const SALES_BUCKETS = ['new', 'hotbook', 'visits', 'followup', 'declined', 'schedule', 'invoice', 'permits', 'materials', 'notes', 'waiting', 'soon', 'reviews', 'newreviews'];
+  // Salespeople run their own projects; the owner oversees. These are the rep's job when the project has a salesperson.
+  const REP_BUCKETS = ['hotbook', 'visits', 'followup', 'declined', 'schedule', 'invoice', 'permits', 'materials', 'notes', 'waiting', 'soon', 'reviews'];
+  const myBuckets = () => buckets().filter((b) => isStaff || SALES_BUCKETS.includes(b.id))
+    .map((b) => (isStaff && REP_BUCKETS.includes(b.id) ? { ...b, list: b.list.filter((j) => !j.salesId) } : b));
+  const REP_LABELS = { hotbook: ['visit to book', 'visits to book'], declined: ['crew can’t make it', 'crews can’t make it'], schedule: ['sold job to schedule', 'sold jobs to schedule'],
+    invoice: ['invoice to send', 'invoices to send'], permits: ['permit to apply for', 'permits to apply for'], materials: ['job needs materials ordered', 'jobs need materials ordered'],
+    notes: ['crew update', 'crew updates'], reviews: ['review to ask for', 'reviews to ask for'] };
+  const repLabel = (id, n) => `${n} ${(REP_LABELS[id] || [id, id])[n === 1 ? 0 : 1]}`;
+  // Owner's oversight: what each rep has waiting on their projects.
+  function oversightCard() {
+    const all = buckets().filter((b) => REP_BUCKETS.includes(b.id) && !b.info);
+    const reps = team.filter((x) => x.active !== false).map((x) => {
+      const items = all.map((b) => [b, b.list.filter((j) => j.salesId === x.id)]).filter(([, l]) => l.length);
+      return { x, items, waiting: items.reduce((t, [, l]) => t + l.length, 0), projects: jobs.filter((j) => j.salesId === x.id && OPEN.includes(j.status)).length };
+    }).filter((r) => r.projects || r.waiting);
+    if (!reps.length) return null;
+    return el('section', { class: 'card stack oversight' },
+      el('div', { class: 'todo-head' }, el('span', { class: 'todo-ic' }, '👀'),
+        el('div', { style: 'flex:1;min-width:0' }, el('h3', {}, 'Your reps’ projects'), el('p', { class: 'muted small' }, 'Each rep runs their own projects. Here’s what’s waiting on each of them. Tap a rep to see everything.'))),
+      ...reps.map((r) => el('button', { type: 'button', class: 'rep-row', onclick: () => salesDetail(r.x.id) },
+        el('span', { class: 'avatar' }, initials(r.x.name)),
+        el('span', { class: 'body' }, el('b', {}, r.x.name), el('span', { class: 'muted small' }, `${r.projects} open project${r.projects === 1 ? '' : 's'}`),
+          r.items.length ? el('span', { class: 'flags' }, ...r.items.map(([b, l]) => el('span', { class: 'flag' + (['invoice', 'materials', 'declined', 'schedule'].includes(b.id) ? ' hot' : '') }, `${b.icon} ${repLabel(b.id, l.length)}`)))
+            : el('span', { class: 'small good-text' }, '✓ Nothing waiting')),
+        el('span', { class: 'todo-count' + (r.waiting ? '' : ' zero') }, String(r.waiting)))));
+  }
   const attentionCount = () => myBuckets().filter((b) => !b.info).reduce((t, b) => t + b.list.length, 0);
 
   function render() {
@@ -280,6 +314,7 @@
         : el('div', { class: 'kpis three' }, kpi(jobs.filter((j) => ['new', 'qualifying'].includes(j.status)).length, 'Open leads'),
           kpi(jobs.filter((j) => estWith(j, 'sent')).length, 'Estimates out'), kpi(money(soldTotal(jobs)), 'Sold')),
       calendarCard(),
+      isStaff ? oversightCard() : null,
       ...(sections.length ? sections : [el('div', { class: 'card caught-up' },
         el('div', { style: 'font-size:2.4rem' }, '🎉'), el('h2', {}, 'All caught up'), el('p', { class: 'muted' }, 'Nothing needs your attention right now.'))]),
       el('button', { class: 'ghost block', onclick: () => { tab = 'jobs'; history.replaceState(null, '', '#jobs'); render(); } }, 'See all jobs →'),
@@ -373,6 +408,9 @@
       needsInvoice(j) ? [`🧾 ${nextDue(j).label} invoice due`, 'hot'] : null,
       owedOn(j) > 0 ? [`💵 ${docs.usd(owedOn(j))} due`, 'hot'] : null,
       estWith(j, 'sent') ? ['⏳ Estimate sent', ''] : null,
+      (j.materials || []).some((m) => m.status === 'needed') && j.status !== 'completed' ? [`🛒 ${(j.materials || []).filter((m) => m.status === 'needed').length} to order`, 'hot'] : null,
+      j.status === 'completed' && !j.review?.requestedAt && !j.review?.rating ? ['⭐ Ask for a review', ''] : null,
+      j.review?.rating ? [`${'★'.repeat(j.review.rating)} review`, ''] : null,
     ].filter(Boolean);
     return el('button', { class: 'lead' + (j.status === 'new' && !pick ? ' new-dot' : '') + (pick ? ' pickable' + (pick.on ? ' picked' : '') : ''),
       ...(pick ? { 'aria-pressed': String(pick.on) } : {}), onclick: pick ? pick.toggle : () => openLead(j.id) },
@@ -511,6 +549,10 @@
     const details = el('section', { class: 'card stack' },
       el('h3', {}, 'What the customer asked for'),
       el('p', { style: 'white-space:pre-wrap' }, j.description),
+      TH.styleOf(j.style) ? el('div', { class: 'style-chosen' }, el('img', { src: TH.styleOf(j.style).img, alt: '' }),
+        el('span', {}, el('span', { class: 'muted small' }, 'Style they picked'), el('b', {}, TH.styleOf(j.style).label))) : null,
+      ['new', 'qualifying', 'hot'].includes(j.status) && j.buyer.phone ? el('a', { class: 'btn ghost small', style: 'align-self:flex-start',
+        href: smsHref(j.buyer.phone, `Hi ${first}, here are some style ideas from ${settings.name || 'Top Hat Contracting'}. Pick the look you like best and tell us: ${new URL('index.html#/styles' + (TH.styleOf(j.style) ? '?room=' + TH.styleOf(j.style).room.id : ''), location.href).href}`) }, '🖼️ Text them style ideas') : null,
       el('dl', { class: 'dl' },
         el('dt', {}, 'Needed'), el('dd', {}, find(TIMEFRAMES, j.timeframe)?.label || '—'),
         el('dt', {}, 'Budget'), el('dd', {}, find(BUDGETS, j.budget)?.label || 'Not sure yet'),
@@ -538,10 +580,10 @@
     // Crew & schedule
     const sameSt = (c) => !!j.state && c.state === j.state;
     const sortedCrew = crew.filter((c) => c.active || c.id === j.contractorId)
-      .sort((a, c) => (sameSt(c) - sameSt(a)) || (c.trades.includes(j.trade) - a.trades.includes(j.trade)) || a.name.localeCompare(c.name));
+      .sort((a, c) => (sameSt(c) - sameSt(a)) || (TH.doesTrade(c, j.trade) - TH.doesTrade(a, j.trade)) || a.name.localeCompare(c.name));
     const crewSel = el('select', { name: 'contractorId' },
       el('option', { value: '' }, '— Not assigned —'),
-      ...sortedCrew.map((c) => el('option', { value: c.id, selected: c.id === j.contractorId }, `${c.trades.includes(j.trade) ? '★ ' : ''}${c.name}${c.state ? ` · ${c.state}` : ''}${j.state && c.state && c.state !== j.state ? ' (other state)' : ''}`)));
+      ...sortedCrew.map((c) => el('option', { value: c.id, selected: c.id === j.contractorId }, `${TH.doesTrade(c, j.trade) ? '★ ' : ''}${c.name}${c.state ? ` · ${c.state}` : ''}${j.state && c.state && c.state !== j.state ? ' (other state)' : ''}`)));
     const whenInput = el('input', { type: 'datetime-local', name: 'scheduledFor', value: j.scheduledFor || '' });
     const crewLink = j.crewToken ? new URL(`crew.html?t=${j.crewToken}`, location.href).href : null;
     // Sent to the crew lead. Never include prices, budget or notes here.
@@ -834,7 +876,8 @@
       else if (owedInv) step = { icon: '💵', title: `Collect payment: ${docs.usd(docs.owed(owedInv))} due`, why: `Record it when ${first} pays: cash, check, Zelle, card, Venmo or Cash App.`, act: ['Record a payment', () => openDoc(j.id, owedInv.id)] };
       else if (draftInv) step = { icon: '🧾', title: `Finish and send invoice ${draftInv.number}`, act: ['Open the invoice', () => openDoc(j.id, draftInv.id)] };
       else if (!invs.length && !plan.length) step = { icon: '🧾', title: 'Job finished: send the invoice', why: invoiceBase ? `It starts from approved estimate ${invoiceBase.number}.` : 'Add the work and the total.', act: ['+ Create invoice', () => openDoc(j.id, null, 'invoice', invoiceBase)] };
-      else step = { icon: '🎉', title: 'All done: paid in full', why: 'Nice work.' };
+      else if (!j.review?.requestedAt && !j.review?.rating) step = { icon: '⭐', title: `Paid in full. Ask ${first} for a review`, why: 'Happy customers bring the next ones. One tap opens a text with the link.', act: ['⭐ Ask for a review', () => reviewCard && reviewCard.querySelector('a.btn').click()] };
+      else step = { icon: '🎉', title: 'All done: paid in full', why: j.review?.rating ? `${first} gave it ${'★'.repeat(j.review.rating)}.` : 'Nice work.' };
     }
     // Back one step, in case someone tapped the wrong thing.
     const ORDER = ['new', 'qualifying', 'hot', 'scheduled', 'in_progress', 'completed'];
@@ -856,6 +899,18 @@
       backBtn,
     ) : null;
 
+    // Reviews: ask after the job; see what they said.
+    const reviewText = `Hi ${first}, thanks for choosing ${settings.name || 'Top Hat Contracting'}! How did we do? You can rate your job here: ${siteUrl()}#/jobs${settings.reviewLink ? `\nOr leave us a Google review: ${settings.reviewLink}` : ''}`;
+    const askHref = j.buyer.phone ? smsHref(j.buyer.phone, reviewText) : j.buyer.email ? `mailto:${j.buyer.email}?subject=${encodeURIComponent('How did we do?')}&body=${encodeURIComponent(reviewText)}` : null;
+    const askBtn = (label, cls) => el('a', { class: `btn ${cls} block`, href: askHref || '#', onclick: async (e) => { if (!askHref) e.preventDefault(); try { await api.reviews.ask(j.id); } catch {} setTimeout(async () => { await load(); openLead(j.id); }, 400); } }, label);
+    const reviewCard = j.status === 'completed' ? el('section', { class: 'card stack review-card' },
+      el('h3', {}, '⭐ Customer review'),
+      j.review?.rating ? [el('div', { class: 'stars-show', 'aria-label': `${j.review.rating} out of 5 stars` }, '★'.repeat(j.review.rating) + '☆'.repeat(5 - j.review.rating)),
+        j.review.comment ? el('p', {}, `“${j.review.comment}”`) : null, el('p', { class: 'muted small' }, `${ago(j.review.at)}`)]
+        : j.review?.requestedAt ? [el('p', { class: 'muted small' }, `Asked ${ago(j.review.requestedAt)} by ${j.review.requestedBy}. No rating yet.`), askBtn('⭐ Ask again', 'ghost')]
+          : [el('p', { class: 'muted small' }, 'The job is finished. Ask the customer how it went: they can rate it in the app' + (settings.reviewLink ? ' and post a Google review.' : '.')), askBtn(`⭐ Ask ${first} for a review`, 'gold')]) : null;
+    const materialsCard = j.status !== 'lost' ? TH.materialsCard(j, { mode: 'office', onChange: async () => { await load(); openLead(j.id); } }) : null;
+
     // Tabs keep the job short and easy to scan.
     // Each section says what's inside, so it's clear where a tap leads.
     const TABS = [
@@ -870,7 +925,7 @@
       tabsBar.replaceChildren(...TABS.map(([id, icon, label, sub]) => el('button', { type: 'button', role: 'tab', 'data-tab': id, 'aria-selected': String(leadTab === id), 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } },
         el('span', { class: 'tab-ic', 'aria-hidden': 'true' }, icon), el('span', { class: 'tab-txt' }, el('b', {}, label), el('span', {}, sub)))));
       const content = {
-        overview: [nextCard, progress, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, designCard, details, permitCard,
+        overview: [nextCard, reviewCard, progress, materialsCard, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, designCard, details, permitCard,
           !setupWanted && ['new', 'qualifying', 'hot'].includes(j.status) ? el('button', { type: 'button', class: 'link small', style: 'align-self:flex-start', onclick: focusSetup }, '👷 Assign a crew & date now (skip the visit)') : null],
         money: [scheduleCard, crewBillsCard, docsCard, moneyCard],
         files: [filesCard],
@@ -1070,10 +1125,10 @@
     const sortedCrew = crew.filter((c) => c.active).sort((a, b) => a.name.localeCompare(b.name));
     const tradeSel = el('select', { name: 'trade', onchange: () => {
       const tr = tradeSel.value;
-      [...crewSel.options].forEach((o) => { const c = crew.find((x) => x.id === o.value); if (c) o.textContent = `${c.trades.includes(tr) ? '★ ' : ''}${c.name}`; });
+      [...crewSel.options].forEach((o) => { const c = crew.find((x) => x.id === o.value); if (c) o.textContent = `${TH.doesTrade(c, tr) ? '★ ' : ''}${c.name}`; });
     } }, ...TRADES.map((t) => el('option', { value: t.id }, `${t.icon} ${t.label}`)));
     const crewSel = el('select', { name: 'contractorId' }, el('option', { value: '' }, '— Decide later —'),
-      ...sortedCrew.map((c) => el('option', { value: c.id }, `${c.trades.includes(TRADES[0].id) ? '★ ' : ''}${c.name}`)));
+      ...sortedCrew.map((c) => el('option', { value: c.id }, `${TH.doesTrade(c, TRADES[0].id) ? '★ ' : ''}${c.name}`)));
 
     const form = el('form', { class: 'panel-body', novalidate: true, onsubmit: async (e) => {
       e.preventDefault();
@@ -1356,6 +1411,7 @@
       f('paymentInstructions', 'Payment terms & how to pay: on invoices', { rows: 8 }, 'Printed on every invoice. Your payment schedule, Zelle, and ACH details (routing and account number).'),
       f('estimateTerms', 'Terms on estimates', { rows: 2 }),
       f('invoiceTerms', 'Notes on invoices', { rows: 2 }),
+      f('reviewLink', 'Review link (optional)', { type: 'url', inputmode: 'url', placeholder: 'https://g.page/r/… your Google review link' }, 'After a customer rates a finished job in the app, they get a button to post it here. It’s also in the review text you send them.'),
       el('button', { type: 'submit' }, 'Save'),
     );
     // AI design studio switch. Preview: the key lives in this browser only. Live: it's a server secret.
@@ -1537,29 +1593,56 @@
   }
 
   /* ---------- crew ---------- */
+  let crewGroupBy = 'skill'; let skillFilter = '';
+  const skillOf = (id) => TH.SKILLS.find((x) => x.id === id) || tradeOf(id);
+  // "Does it all", "Concrete only", or the list of what they do.
+  const skillLine = (c) => (c.trades || []).includes('allround') ? '🧰 Does it all'
+    : (c.trades || []).length === 1 ? `${skillOf(c.trades[0]).icon} ${skillOf(c.trades[0]).label} only`
+      : (c.trades || []).map((id) => skillOf(id).label).join(', ') || 'No skills set';
   function crewView() {
     const activeJobs = (cid) => jobs.filter((j) => j.contractorId === cid && OPEN.includes(j.status)).length;
     const groups = statesIn(crew, (c) => c.state);
+    const sf = groups.length > 1 ? usableState(groups) : '';
+    const inSt = (c) => !sf || (sf === 'none' ? !c.state : c.state === sf);
     const crewStSel = groups.length > 1 ? el('select', { 'aria-label': 'State', onchange: (e) => { stateFilter = e.target.value; render(); } },
       el('option', { value: '' }, `🗺 All states (${crew.length})`),
-      ...groups.map(([c, n]) => el('option', { value: c || 'none', selected: stateFilter === (c || 'none') }, `${c ? TH.stateName(c) : 'No state set'} (${n})`))) : null;
+      ...groups.map(([c, n]) => el('option', { value: c || 'none', selected: sf === (c || 'none') }, `${c ? TH.stateName(c) : 'No state set'} (${n})`))) : null;
+    const pool = crew.filter(inSt);
+    const skillCount = (id) => pool.filter((c) => (c.trades || []).includes(id)).length;
+    const skillSel = el('select', { 'aria-label': 'Skill', onchange: (e) => { skillFilter = e.target.value; render(); } },
+      el('option', { value: '' }, '🧰 All skills'),
+      ...TH.SKILLS.filter((x) => skillCount(x.id)).map((x) => el('option', { value: x.id, selected: skillFilter === x.id }, `${x.icon} ${x.label} (${skillCount(x.id)})`)));
     const crewItem = (c) =>
         el('div', { class: 'crew-item' + (c.active ? '' : ' inactive') },
           el('span', { class: 'avatar' }, initials(c.name)),
           el('div', { class: 'body' },
             el('b', {}, c.name), c.active ? null : el('span', { class: 'muted small' }, ' (inactive)'),
-            el('p', { class: 'muted small' }, c.trades.map((id) => tradeOf(id).label).join(', ') || 'No trades set'),
-            el('p', { class: 'small' }, c.phone ? el('a', { href: telHref(c.phone) }, c.phone) : null, ` · ${activeJobs(c.id)} open job${activeJobs(c.id) === 1 ? '' : 's'}`,
+            el('p', { class: 'skill-line' + ((c.trades || []).includes('allround') ? ' all' : '') }, skillLine(c)),
+            el('p', { class: 'small' }, c.state ? `${c.state} · ` : '', c.phone ? el('a', { href: telHref(c.phone) }, c.phone) : null, ` · ${activeJobs(c.id)} open job${activeJobs(c.id) === 1 ? '' : 's'}`,
               c.login === 'active' ? el('span', { class: 'pill s-completed', style: 'margin-left:6px' }, '🔑 Login') : c.login === 'invited' ? el('span', { class: 'pill s-qualifying', style: 'margin-left:6px' }, 'Invited') : null)),
           el('button', { class: 'ghost small', onclick: () => crewForm(c) }, 'Edit'));
-    const sf = groups.length > 1 ? usableState(groups) : '';
-    const shownGroups = groups.filter(([st]) => !sf || (sf === 'none' ? !st : st === sf));
-    const list = crew.length ? el('div', { class: 'stack' }, ...shownGroups.map(([st, n]) => el('section', { class: 'stack', style: 'gap:6px' },
-      el('div', { class: 'month-head' }, el('b', {}, st ? `🗺 ${TH.stateName(st)}` : 'No state set'), el('span', {}, `${n} contractor${n === 1 ? '' : 's'}`)),
-      el('div', { class: 'card crew' }, ...crew.filter((c) => (c.state || '') === st).sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name)).map(crewItem)))))
-      : el('div', { class: 'card crew' }, el('p', { class: 'muted' }, 'No crew added yet.'));
-    return [el('div', { class: 'row' }, el('h2', {}, 'Your contractors'), el('span', { class: 'spacer' }), el('button', { class: 'gold small', onclick: () => crewForm() }, '+ Add')), crewStSel, list,
-      el('p', { class: 'muted small' }, 'Crew sign in at ', el('a', { href: 'crew.html', target: '_blank' }, new URL('crew.html', location.href).href), '. Open a crew member to invite them.')];
+    const sortC = (l) => l.slice().sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name));
+    const section = (title, list, sub) => list.length ? el('section', { class: 'stack', style: 'gap:6px' },
+      el('div', { class: 'month-head' }, el('b', {}, title), el('span', {}, sub || `${list.length} contractor${list.length === 1 ? '' : 's'}`)),
+      el('div', { class: 'card crew' }, ...sortC(list).map(crewItem))) : null;
+    let sections;
+    if (crewGroupBy === 'state') {
+      sections = groups.filter(([st]) => !sf || (sf === 'none' ? !st : st === sf)).map(([st]) => section(st ? `🗺 ${TH.stateName(st)}` : 'No state set', pool.filter((c) => (c.state || '') === st && (!skillFilter || c.trades.includes(skillFilter)))));
+    } else {
+      // Do-it-all contractors first, then the specialists for each trade (someone who does two trades shows under both).
+      const shown = TH.SKILLS.filter((x) => !skillFilter || x.id === skillFilter);
+      sections = shown.map((x) => section(`${x.icon} ${x.id === 'allround' ? 'Does it all (general contractors)' : x.label}`,
+        pool.filter((c) => (c.trades || []).includes(x.id) && (x.id === 'allround' || !(c.trades || []).includes('allround')))));
+      const none = pool.filter((c) => !(c.trades || []).length);
+      if (!skillFilter && none.length) sections.push(section('No skills set yet', none));
+    }
+    const toggle = el('div', { class: 'seg3 group-by', role: 'radiogroup', 'aria-label': 'Group contractors by' },
+      ...[['skill', '🧰 By skill'], ['state', '🗺 By state']].map(([id, label]) => el('button', { type: 'button', role: 'radio', 'aria-checked': String(crewGroupBy === id), onclick: () => { crewGroupBy = id; render(); } }, label)));
+    const list = crew.length ? el('div', { class: 'stack' }, ...sections.filter(Boolean).length ? sections.filter(Boolean) : [el('div', { class: 'card muted' }, 'No contractors match.')])
+      : el('div', { class: 'card crew' }, el('p', { class: 'muted' }, 'No contractors added yet.'));
+    return [el('div', { class: 'row' }, el('h2', {}, 'Your contractors'), el('span', { class: 'spacer' }), el('button', { class: 'gold small', onclick: () => crewForm() }, '+ Add')),
+      toggle, el('div', { class: 'two filters' }, skillSel, crewStSel), list,
+      el('p', { class: 'muted small' }, 'Contractors sign in at ', el('a', { href: 'crew.html', target: '_blank' }, new URL('crew.html', location.href).href), '. Open one to invite them.')];
   }
 
   function crewForm(c) {
@@ -1646,8 +1729,8 @@
       el('label', { class: 'field' }, 'Name', el('input', { name: 'name', value: c.name, required: true, autocomplete: 'off' })),
       el('label', { class: 'field' }, 'Phone', el('input', { name: 'phone', type: 'tel', value: c.phone, autocomplete: 'off' })),
       el('label', { class: 'field' }, 'State they work in', el('select', { name: 'state' }, ...stateOptions(c.state || ''))),
-      el('div', { class: 'field' }, el('b', { style: 'font-size:.92rem' }, 'Trades'),
-        el('div', { class: 'choices', style: 'margin-top:6px' }, ...TRADES.filter((t) => t.id !== 'other').map((t) =>
+      el('div', { class: 'field' }, el('b', { style: 'font-size:.92rem' }, 'Skills'), el('span', { class: 'hint' }, 'Pick “Does it all” for general contractors, or just what they specialize in (e.g. only Concrete).'),
+        el('div', { class: 'choices', style: 'margin-top:6px' }, ...TH.SKILLS.map((t) =>
           el('label', { class: 'choice' }, el('input', { type: 'checkbox', name: 'trades', value: t.id, checked: c.trades.includes(t.id) }), el('span', {}, `${t.icon} ${t.label}`))))),
       el('label', { class: 'row', style: 'font-weight:600' }, el('input', { type: 'checkbox', name: 'active', checked: c.active, style: 'width:22px;height:22px' }), 'Active (can be assigned jobs)'),
       el('button', { type: 'submit' }, editing ? 'Save' : 'Add to crew'),

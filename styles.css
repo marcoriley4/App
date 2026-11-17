@@ -827,3 +827,63 @@ label.field .hint { font-weight: 500; }
 }
 .narrow-only { display: none; }
 @media (max-width: 420px) { .narrow-only { display: inline; } }
+
+/* Style ideas: three looks per room */
+.style-pick { display: grid; gap: 12px; }
+.style-card { display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 0; overflow: hidden; text-align: left; white-space: normal; position: relative;
+  background: var(--surface); color: var(--text); border: 2px solid var(--border); border-radius: 16px; font-weight: 500; }
+.style-card img { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; display: block; background: var(--surface-2); }
+.style-card .style-txt { display: flex; flex-direction: column; gap: 2px; padding: 10px 14px 12px; }
+.style-card .style-txt b { font-size: 1.15rem; }
+.style-card .style-txt span { color: var(--muted); font-size: .95rem; }
+.style-card.on { border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold); }
+.style-card .style-check { position: absolute; top: 10px; right: 10px; width: 36px; height: 36px; border-radius: 99px; display: grid; place-items: center; font-weight: 800; font-size: 1.2rem; }
+.style-card.on .style-check { background: var(--gold); color: var(--ink); }
+.style-card.static { cursor: default; }
+.style-card.static > button { margin: 0 14px 14px; width: auto; }
+.style-chosen { display: flex; align-items: center; gap: 12px; padding: 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.style-chosen img { width: 96px; height: 64px; object-fit: cover; border-radius: 8px; flex: none; }
+.style-chosen > span { display: flex; flex-direction: column; min-width: 0; }
+.style-link { margin-top: 10px; white-space: normal; text-align: center; }
+.room-chips .chip.on { background: var(--gold); color: var(--ink); border-color: var(--gold); }
+
+/* Materials */
+.mat-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.mat { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--border); border-left: 5px solid var(--warn); border-radius: 12px; background: var(--surface); }
+.mat.ordered { border-left-color: var(--accent); }
+.mat.delivered { border-left-color: var(--good); }
+.mat-ic { font-size: 1.4rem; flex: none; }
+.mat-body { flex: 1 1 160px; min-width: 0; display: flex; flex-direction: column; }
+.mat-st { font-weight: 800; font-size: .9rem; color: var(--warn); }
+.mat.ordered .mat-st { color: var(--accent); }
+.mat.delivered .mat-st { color: var(--good); }
+.mat-actions { display: flex; gap: 8px; align-items: center; flex: 1 1 100%; }
+.mat-actions select { flex: 1; min-width: 0; }
+.mat-actions input[type=date] { flex: 1; min-width: 0; max-width: 100%; -webkit-appearance: none; appearance: none; }
+.mat-add { display: grid; gap: 8px; }
+.mat-add-row { display: grid; grid-template-columns: 1fr 90px; gap: 8px; }
+.mat-sum { display: flex; gap: 4px; flex-wrap: wrap; }
+
+/* Reviews */
+.stars { display: flex; gap: 6px; }
+.stars button { width: 52px; height: 52px; min-height: 0; padding: 0; font-size: 2rem; line-height: 1; background: var(--surface-2); color: var(--border); border: 1px solid var(--border); border-radius: 12px; }
+.stars button.on { color: #f5a400; background: var(--gold-soft); border-color: var(--gold); }
+.review-box { border: 2px solid var(--gold); background: var(--gold-soft); border-radius: 14px; padding: 14px; }
+.stars-show { font-size: 1.7rem; color: #f5a400; letter-spacing: 2px; }
+.good-text { color: var(--good); font-weight: 700; }
+
+/* Owner oversight + contractor skills */
+.rep-row { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; white-space: normal; justify-content: flex-start; padding: 10px; border-radius: 12px;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border); font-weight: 500; }
+.rep-row .body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.todo-count.zero { background: var(--surface-2); color: var(--muted); }
+.skill-line { font-weight: 700; font-size: .95rem; color: var(--muted); }
+.skill-line.all { color: var(--good); }
+.group-by { margin-top: 2px; }
+.seg3.group-by { grid-template-columns: 1fr 1fr; }
+.mat-actions { flex-wrap: wrap; }
+.mat-actions select, .mat-actions input[type=date] { flex: 1 1 150px; }
+.tiles .tile { white-space: normal; line-height: 1.15; text-align: left; }
+.stars-show { color: #b77800; }
+:root[data-theme="dark"] .stars-show { color: #ffc400; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .stars-show { color: #ffc400; } }

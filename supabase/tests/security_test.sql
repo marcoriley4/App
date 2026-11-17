@@ -16,11 +16,12 @@ select t.ok((select role from public.profiles where id = :'A') = 'buyer', 'sign-
 select set_config('request.jwt.claim.sub', :'A', false);
 set role authenticated;
 do $$ begin
-  begin perform public.create_job('plumbing', 'Leaky faucet in the kitchen', '1 Main St', '62701', '', 'asap', 'u1k'); perform t.ok(false, 'x');
+  begin perform public.create_job('plumbing', 'Leaky faucet in the kitchen', '1 Main St', '62701', '', 'asap', 'u1k', ''); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'a request needs a state'); end;
 end $$;
-create temp table ids as select * from public.create_job('plumbing', 'Leaky faucet in the kitchen', '1 Main St', '62701', 'il', 'asap', 'u1k');
+create temp table ids as select * from public.create_job('plumbing', 'Leaky faucet in the kitchen', '1 Main St', '62701', 'il', 'asap', 'u1k', 'kitchen/modern');
 select t.ok((public.my_jobs()->0->>'state') = 'IL', 'customer job keeps its state');
+select t.ok((public.my_jobs()->0->>'style') = 'kitchen/modern', 'customer job keeps the style they picked');
 select t.ok((select number from ids) = 1001, 'first job number is 1001');
 select t.ok((select count(*) from public.jobs) = 0, 'customer cannot read jobs table directly');
 select t.ok((select count(*) from public.job_private) = 0, 'customer cannot read prices/notes');
@@ -111,7 +112,7 @@ do $$ begin
   exception when raise_exception then perform t.ok(true, 'crew cannot file into office folder'); end;
   begin insert into storage.objects (bucket_id, name) values ('job-files', current_setting('t.job') || '/staff/evil.pdf'); perform t.ok(false, 'x');
   exception when insufficient_privilege then perform t.ok(true, 'crew cannot upload into office folder'); end;
-  begin perform public.create_job('x', 'xxxxxxxxxxxxx', 'y', '', 'IL', '', ''); perform t.ok(false, 'x');
+  begin perform public.create_job('x', 'xxxxxxxxxxxxx', 'y', '', 'IL', '', '', ''); perform t.ok(false, 'x');
   exception when insufficient_privilege then perform t.ok(true, 'not-logged-in cannot create jobs'); end;
 end $$;
 reset role;
@@ -814,6 +815,66 @@ do $$ begin
   exception when check_violation then perform t.ok(true, 'a signature must be a PNG picture'); end;
 end $$;
 select t.ok((select x::text from jsonb_array_elements(public.my_jobs()) x where x->>'id' = current_setting('t.hot')) !~ '3200|price', 'customer job data still has no price');
+reset role;
+
+-- ========== Materials and reviews ==========
+-- (Ray's crew login was turned off above; turn it back on for these checks.)
+reset role;
+update public.contractors set user_id = :'C' where name = 'Ray Johnson';
+update public.profiles set role = 'crew', contractor_id = (select id from public.contractors where name = 'Ray Johnson') where id = :'C';
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+update public.jobs set contractor_id = (select id from public.contractors where name = 'Ray Johnson'), status = 'in_progress' where id = current_setting('t.job')::uuid;
+insert into public.job_materials (job_id, name, qty, status) values (current_setting('t.job')::uuid, 'Quartz slab', '1', 'ordered');
+select t.ok((select count(*) from public.job_materials where job_id = current_setting('t.job')::uuid) = 1, 'office adds materials');
+do $$ begin
+  begin perform public.office_ask_review(current_setting('t.job')::uuid); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'no review request before the job is finished'); end;
+end $$;
+reset role;
+select set_config('request.jwt.claim.sub', :'C', false);
+set role authenticated;
+select t.ok(public.crew_material_add(current_setting('t.job')::uuid, 'Drip edge', '10', '') is not null, 'crew adds a material they need');
+select t.ok((select count(*) from public.job_materials) = 0, 'crew cannot read the materials table directly');
+select t.ok(jsonb_array_length(public.crew_my_jobs()->0->'materials') = 2, 'crew sees the job''s materials');
+select public.crew_material_delivered((select (x->>'id')::uuid from jsonb_array_elements(public.crew_my_jobs()->0->'materials') x where x->>'name' = 'Quartz slab'));
+do $$ begin
+  begin insert into public.job_materials (job_id, name) values (current_setting('t.job')::uuid, 'Sneaky'); perform t.ok(false, 'x');
+  exception when insufficient_privilege then perform t.ok(true, 'crew cannot insert materials directly'); end;
+end $$;
+reset role;
+select t.ok((select status from public.job_materials where name = 'Quartz slab') = 'delivered', 'crew marks a material delivered');
+select t.ok(exists (select 1 from public.job_events where text like '✅ Quartz slab: delivered%') and exists (select 1 from public.job_events where text like '🛒 % added material: Drip edge%'), 'material changes go into the job history');
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+select t.ok((select count(*) from public.job_materials) = 0, 'customer cannot read the materials table directly');
+select t.ok(jsonb_array_length((select x->'materials' from jsonb_array_elements(public.my_jobs()) x where x->>'id' = current_setting('t.job'))) = 2, 'customer sees materials on their job');
+do $$ begin
+  begin perform public.customer_review(current_setting('t.job')::uuid, 5, 'Great'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'no review before the job is finished'); end;
+end $$;
+reset role;
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+update public.jobs set status = 'completed' where id = current_setting('t.job')::uuid;
+select public.office_ask_review(current_setting('t.job')::uuid);
+select t.ok((select review_requested_at from public.jobs where id = current_setting('t.job')::uuid) is not null, 'office asks for a review');
+reset role;
+select set_config('request.jwt.claim.sub', :'B', false);
+set role authenticated;
+do $$ begin
+  begin perform public.customer_review(current_setting('t.job')::uuid, 1, 'Bad'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'another customer cannot review someone else''s job'); end;
+end $$;
+reset role;
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+do $$ begin
+  begin perform public.customer_review(current_setting('t.job')::uuid, 9, ''); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'rating must be 1 to 5'); end;
+end $$;
+select public.customer_review(current_setting('t.job')::uuid, 5, 'Great job');
+select t.ok((select (x->>'review_rating')::int from jsonb_array_elements(public.my_jobs()) x where x->>'id' = current_setting('t.job')) = 5, 'customer rates the finished job');
 reset role;
 
 -- ========== Closed job: crew link off ==========

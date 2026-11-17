@@ -60,14 +60,14 @@
     return wrap;
   }
 
-  const emptyDraft = () => ({ step: 1, trade: '', description: '', measurements: '', address: '', zip: '', state: '', timeframe: '', budget: '', photos: [] });
+  const emptyDraft = () => ({ step: 1, trade: '', description: '', measurements: '', address: '', zip: '', state: '', room: '', style: '', timeframe: '', budget: '', photos: [] });
   let draft = emptyDraft();
   try { draft = { ...draft, ...JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}') }; } catch (e) { /* ignore */ }
   function saveDraft() { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch (e) { /* photos may not fit; fine */ } }
   function clearDraft() { draft = emptyDraft(); try { localStorage.removeItem(DRAFT_KEY); } catch (e) { /* ignore */ } }
 
   /* ---------- routing ---------- */
-  const routes = { '': home, request, done, jobs: myJobs, login, design };
+  const routes = { '': home, request, done, jobs: myJobs, login, design, styles: styleGuide };
   async function route() {
     const name = location.hash.replace(/^#\/?/, '').split('?')[0];
     const fn = routes[name] || home;
@@ -116,6 +116,7 @@
         el('a', { class: 'btn gold block hero-cta', href: '#/request', onclick: () => { if (draft.step > 4) clearDraft(); } },
           el('h1', {}, 'Start your project the right way, right now.')),
         el('p', { class: 'cta-note' }, 'Tap to start'),
+        el('a', { class: 'btn ghost block style-link', href: '#/styles' }, '🖼️ Browse style ideas: kitchens, baths, basements & more'),
       ),
       el('section', { class: 'four-steps' },
         el('h2', {}, 'It’s simple: ', el('span', { class: 'hl' }, '4 steps'), ' and you’re on your way'),
@@ -149,14 +150,17 @@
   async function request() {
     const me = await api.auth.me();
     if (me && me.role === 'staff') { view.append(el('div', { class: 'card', style: 'margin-top:24px' }, 'You are logged in as staff. ', el('a', { href: 'admin.html' }, 'Go to the staff area'), '.')); return; }
-    const SCREENS = ['trade', 'photos', 'describe', 'where', 'when', 'budget', ...(me ? [] : ['contact'])];
+    // Room projects (kitchens, baths…) get a "pick a style" screen after they describe it.
+    const wantsStyle = TH.STYLE_TRADES.includes(draft.trade) || !!TH.roomFromText(draft.description) || !!draft.style;
+    const SCREENS = ['trade', 'photos', 'describe', ...(wantsStyle ? ['style'] : []), 'where', 'when', 'budget', ...(me ? [] : ['contact'])];
     const total = SCREENS.length;
+    const at = (name) => SCREENS.indexOf(name) + 1;
     // Never skip ahead past something we still need.
     const missing = () => {
       if (!find(TRADES, draft.trade)) return 1;
-      if ((draft.description || '').trim().length < 10) return 3;
-      if (!(draft.address || '').trim() || !/^\d{5}$/.test(draft.zip || '') || !draft.state) return 4;
-      if (!draft.timeframe) return 5;
+      if ((draft.description || '').trim().length < 10) return at('describe');
+      if (!(draft.address || '').trim() || !/^\d{5}$/.test(draft.zip || '') || !draft.state) return at('where');
+      if (!draft.timeframe) return at('when');
       return total;
     };
     let step = Math.max(1, Math.min(Number(draft.step) || 1, total, missing()));
@@ -232,6 +236,27 @@
         if (draft.description.length < 10) return showError('Tell us a little more: just a sentence is fine.');
         next();
       } }));
+      return;
+    }
+
+    if (screen === 'style') {
+      const room = TH.STYLE_ROOMS.find((r) => r.id === (draft.room || TH.roomFromText(draft.description)));
+      if (!room) {
+        view.append(shell('Which room is it?', 'We’ll show you three looks to choose from.', [
+          el('div', { class: 'tiles big-tiles' }, ...TH.STYLE_ROOMS.map((r) => el('button', { type: 'button', class: 'tile', onclick: () => { draft.room = r.id; saveDraft(); route(); } },
+            el('span', { class: 'ic' }, r.icon), el('span', {}, r.label)))),
+        ], { nextLabel: 'Skip: not a room project', onNext: () => { draft.room = ''; draft.style = ''; saveDraft(); next(); } }));
+        return;
+      }
+      view.append(shell(`Which ${room.label.toLowerCase()} look do you like?`, 'Tap the one closest to what you want. You’ll fine-tune it with your project manager.', [
+        el('div', { class: 'style-pick' }, ...room.styles.map((st) => { const key = `${room.id}/${st.id}`;
+          return el('button', { type: 'button', class: 'style-card' + (draft.style === key ? ' on' : ''), 'aria-pressed': String(draft.style === key),
+            onclick: () => { draft.room = room.id; draft.style = key; saveDraft(); setTimeout(next, 250); route(); } },
+            el('img', { src: `img/styles/${room.id}-${st.id}.svg`, alt: `${st.name} ${room.label.toLowerCase()}` }),
+            el('span', { class: 'style-txt' }, el('b', {}, st.name), el('span', {}, st.desc)),
+            el('span', { class: 'style-check', 'aria-hidden': 'true' }, draft.style === key ? '✓' : '')); })),
+        el('button', { type: 'button', class: 'link', onclick: () => { draft.room = '__pick'; draft.style = ''; saveDraft(); route(); } }, 'It’s a different room'),
+      ], { nextLabel: draft.style ? 'Next' : 'Not sure yet: skip', onNext: () => { saveDraft(); next(); } }));
       return;
     }
 
@@ -398,6 +423,8 @@
             el('div', { class: 't' }, el('h3', {}, trade.label), el('p', { class: 'muted small' }, `Job TH-${j.number} · ${j.address}${j.state ? ", " + j.state : ""} · requested ${ago(j.created)}`)),
             el('span', { class: `pill s-${j.status}` }, st.buyer)),
           el('p', { class: 'small' }, j.description),
+          TH.styleOf(j.style) ? el('div', { class: 'style-chosen' }, el('img', { src: TH.styleOf(j.style).img, alt: '' }),
+            el('span', {}, el('span', { class: 'muted small' }, 'The look you picked'), el('b', {}, TH.styleOf(j.style).label))) : null,
           j.status === 'lost' ? el('p', { class: 'muted small' }, 'This request was closed. Questions? Just request a new job and mention it.')
             : el('div', { class: 'track', 'aria-label': `Progress: ${st.buyer}` }, ...TRACK_LABELS.map((l, i) => el('div', { class: i <= reached ? 'on' : '' }, l))),
           j.status === 'hot' ? el('div', { class: 'callout' }, '🤝 ', j.visitAt
@@ -420,6 +447,8 @@
             el('span', {}, '🎨 Design studio'),
             el('span', { class: 'small' }, j.designCount ? `${j.designCount} picture${j.designCount === 1 ? '' : 's'} · keep changing it` : 'See your remodel before we build it')) : null,
           j.status !== 'lost' ? permitBox(j, me) : null,
+          (j.materials || []).length && j.status !== 'lost' ? TH.materialsCard(j, { mode: 'customer' }) : null,
+          j.status === 'completed' ? reviewBox(j, company) : null,
           (paper[j.id] || []).length ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Estimates & invoices'),
             el('div', { class: 'doc-list' }, ...paper[j.id].map((dc) => el('button', { type: 'button', class: 'doc-row', onclick: () => openPaper(j, dc) },
               el('span', { class: 'ic' }, dc.type === 'invoice' ? '🧾' : '📝'),
@@ -467,6 +496,52 @@
       !company.phone && company.email ? el('a', { class: 'btn gold small', href: `mailto:${company.email}` }, '✉️ Email') : null));
     if (!rows.length) return null;
     return el('section', { class: 'contact-card' }, el('span', { class: 'contact-title' }, 'Questions? We’re one tap away'), ...rows);
+  }
+
+  // After the job: how did we do? 1-5 stars and a comment, then (if set up) a link to post it on Google.
+  function reviewBox(j, company) {
+    const r = j.review || {};
+    const link = company.reviewLink;
+    if (r.rating) return el('div', { class: 'callout good review-done' }, el('b', {}, '⭐'.repeat(r.rating) + ' Thanks for your review!'),
+      r.comment ? el('div', { class: 'small' }, `“${r.comment}”`) : null,
+      link ? el('a', { class: 'btn gold block', href: link, target: '_blank', rel: 'noopener' }, '⭐ Share it on Google too') : null);
+    let stars = 0;
+    const err = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const starRow = el('div', { class: 'stars', role: 'radiogroup', 'aria-label': 'Your rating' });
+    const drawStars = () => starRow.replaceChildren(...[1, 2, 3, 4, 5].map((n) => el('button', { type: 'button', role: 'radio', 'aria-checked': String(n === stars), 'aria-label': `${n} star${n === 1 ? '' : 's'}`,
+      class: n <= stars ? 'on' : '', onclick: () => { stars = n; err.hidden = true; drawStars(); } }, '★')));
+    drawStars();
+    const comment = el('textarea', { rows: 3, maxlength: '1000', placeholder: 'Tell us how it went (optional)', 'aria-label': 'Your review' });
+    return el('section', { class: 'review-box stack' },
+      el('h3', {}, '⭐ How did we do?'), el('p', { class: 'muted small' }, 'Your job is finished. A quick rating helps us and helps your neighbors find good contractors.'),
+      starRow, comment, err,
+      el('button', { type: 'button', class: 'gold block', onclick: async (e) => {
+        e.currentTarget.disabled = true;
+        try { await api.reviews.leave(j.id, stars, comment.value); route(); }
+        catch (ex) { err.textContent = ex.message; err.hidden = false; e.currentTarget.disabled = false; }
+      } }, 'Send my review'));
+  }
+
+  // Style ideas: three looks for each room. Anyone can browse; "Start a project in this style" begins a request with it picked.
+  async function styleGuide() {
+    const q = new URLSearchParams(location.hash.split('?')[1] || '');
+    let room = TH.STYLE_ROOMS.find((r) => r.id === q.get('room')) || TH.STYLE_ROOMS[0];
+    const body = el('div', { class: 'stack' });
+    const draw = () => body.replaceChildren(
+      el('div', { class: 'stage-chips room-chips' }, ...TH.STYLE_ROOMS.map((r) => el('button', { type: 'button', class: 'chip' + (r.id === room.id ? ' on' : ''), 'aria-pressed': String(r.id === room.id),
+        onclick: () => { room = r; draw(); } }, `${r.icon} ${r.label}`))),
+      el('div', { class: 'style-pick' }, ...room.styles.map((st) => el('article', { class: 'style-card static' },
+        el('img', { src: `img/styles/${room.id}-${st.id}.svg`, alt: `${st.name} ${room.label.toLowerCase()}` }),
+        el('span', { class: 'style-txt' }, el('b', {}, st.name), el('span', {}, st.desc)),
+        el('button', { type: 'button', class: 'gold block', onclick: () => {
+          Object.assign(draft, emptyDraft(), { trade: 'remodel', room: room.id, style: `${room.id}/${st.id}`, description: `${room.label} remodel, ${st.name.toLowerCase()} style.`, step: 2 });
+          saveDraft(); go('request');
+        } }, 'Start a project in this style')))));
+    draw();
+    view.append(el('div', { class: 'stack', style: 'margin-top:24px' },
+      el('a', { class: 'link', href: '#/' }, '← Home'),
+      el('h1', {}, '🖼️ Style ideas'), el('p', { class: 'muted' }, 'Three looks for each room. Pick the one closest to what you want, and your project manager will help you fine-tune it.'),
+      body));
   }
 
   // Building permit: the customer tells Top Hat to apply, and signs with their name.

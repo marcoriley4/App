@@ -21,7 +21,53 @@
     { id: 'flooring', label: 'Flooring', icon: '🪵' },
     { id: 'remodel', label: 'Remodel', icon: '🛠️' },
     { id: 'landscaping', label: 'Landscaping', icon: '🌳' },
+    { id: 'concrete', label: 'Concrete', icon: '🪨' },
+    { id: 'decks', label: 'Decks & patios', icon: '🪚' },
+    { id: 'fencing', label: 'Fencing', icon: '🚧' },
+    { id: 'siding', label: 'Siding', icon: '🏘️' },
+    { id: 'windows', label: 'Windows & doors', icon: '🪟' },
     { id: 'other', label: 'Something else', icon: '📋' },
+  ];
+  // What a contractor can do: "does it all" (general) or the trades they specialize in.
+  const SKILLS = [{ id: 'allround', label: 'Does it all (general)', icon: '🧰' }, ...TRADES.filter((t) => t.id !== 'other')];
+  const doesTrade = (c, trade) => (c.trades || []).includes('allround') || (c.trades || []).includes(trade);
+
+  // Sample design styles customers pick from: three looks for each room.
+  const STYLE_ROOMS = [
+    { id: 'kitchen', label: 'Kitchen', icon: '🍳', words: ['kitchen', 'cabinet', 'countertop', 'island', 'backsplash'], styles: [
+      { id: 'modern', name: 'Modern', desc: 'Flat white cabinets, black hardware, quartz counters' },
+      { id: 'farmhouse', name: 'Farmhouse', desc: 'White shaker cabinets, wood accents, apron sink' },
+      { id: 'classic', name: 'Classic warm', desc: 'Wood cabinets, cream counters, traditional trim' }] },
+    { id: 'bathroom', label: 'Bathroom', icon: '🛁', words: ['bath', 'shower', 'tub', 'vanity', 'toilet'], styles: [
+      { id: 'spa', name: 'Modern spa', desc: 'Walk-in glass shower, floating vanity, large tile' },
+      { id: 'farmhouse', name: 'Farmhouse', desc: 'Shaker vanity, subway tile, black fixtures' },
+      { id: 'classic', name: 'Classic', desc: 'Tub and shower, wood vanity, warm tones' }] },
+    { id: 'living', label: 'Living room', icon: '🛋️', words: ['living', 'family room', 'den', 'fireplace'], styles: [
+      { id: 'modern', name: 'Modern', desc: 'Clean lines, light walls, big windows' },
+      { id: 'farmhouse', name: 'Farmhouse', desc: 'Shiplap wall, wood beams, cozy colors' },
+      { id: 'classic', name: 'Traditional', desc: 'Fireplace with mantel, crown molding, rich colors' }] },
+    { id: 'bedroom', label: 'Bedroom', icon: '🛏️', words: ['bedroom', 'closet', 'master'], styles: [
+      { id: 'modern', name: 'Calm modern', desc: 'Soft gray walls, simple lines, wood floor' },
+      { id: 'farmhouse', name: 'Cozy farmhouse', desc: 'Board-and-batten wall, warm wood, soft whites' },
+      { id: 'classic', name: 'Classic', desc: 'Wainscoting, deep color, traditional trim' }] },
+    { id: 'basement', label: 'Basement', icon: '🏚️', words: ['basement', 'lower level', 'rec room'], styles: [
+      { id: 'family', name: 'Family room', desc: 'Open space, sectional, bright lighting' },
+      { id: 'theater', name: 'Home theater', desc: 'Dark walls, big screen, theater seats' },
+      { id: 'guest', name: 'Guest suite', desc: 'Bedroom corner, bath nearby, warm and finished' }] },
+    { id: 'garage', label: 'Garage', icon: '🚗', words: ['garage', 'workshop', 'epoxy'], styles: [
+      { id: 'clean', name: 'Clean & simple', desc: 'Painted walls, epoxy floor, bright lights' },
+      { id: 'workshop', name: 'Workshop', desc: 'Workbench, pegboard, tool storage' },
+      { id: 'showroom', name: 'Showroom', desc: 'Gray flake floor, slat wall, cabinets' }] },
+  ];
+  const STYLE_TRADES = ['remodel', 'painting', 'flooring', 'drywall', 'other'];
+  // Which room the customer is talking about, from what they typed (or '' if we can't tell).
+  const roomFromText = (t) => { const x = String(t || '').toLowerCase(); const r = STYLE_ROOMS.find((rm) => rm.words.some((w) => x.includes(w))); return r ? r.id : ''; };
+  const styleOf = (key) => { const [room, id] = String(key || '').split('/'); const r = STYLE_ROOMS.find((x) => x.id === room); const st = r && r.styles.find((x) => x.id === id);
+    return st ? { key: `${r.id}/${st.id}`, room: r, style: st, label: `${r.label}: ${st.name}`, img: `img/styles/${r.id}-${st.id}.svg` } : null; };
+  const MATERIAL_STATUS = [
+    { id: 'needed', label: 'Needs ordering', icon: '🛒' },
+    { id: 'ordered', label: 'Ordered', icon: '📦' },
+    { id: 'delivered', label: 'Delivered', icon: '✅' },
   ];
 
   const TIMEFRAMES = [
@@ -206,6 +252,7 @@
     paymentInstructions: 'We accept cash, check, Zelle, card, Venmo and Cash App.\nMake checks payable to Top Hat Contracting.',
     estimateTerms: 'This estimate is valid for 30 days. Work begins once the estimate is approved.',
     invoiceTerms: 'Thank you for choosing Top Hat Contracting!',
+    reviewLink: '', // e.g. your Google review link; customers get it after they rate the job
   };
   const isoDay = (ms) => new Date(ms - new Date(ms).getTimezoneOffset() * 60e3).toISOString().slice(0, 10);
   const docTotal = (doc) => {
@@ -529,6 +576,20 @@
         const MO = { 'Derek Coleman': 'MO', 'Andre Mitchell': 'MO', 'Lou Bianchi': 'MO' };
         d.contractors.forEach((c) => { c.state = MO[c.name] || 'IL'; });
         d.jobs.filter((j) => [1004, 1011, 1018].includes(j.number)).forEach((j) => { j.zip = '65804'; j.state = 'MO'; });
+        // Skills: a do-it-all contractor and a few specialists.
+        const ray = d.contractors.find((c) => c.name === 'Ray Johnson'); if (ray) ray.trades = ['allround', 'roofing', 'remodel'];
+        d.contractors.push({ id: uid(), name: 'Tony Russo', phone: '(555) 300-7301', trades: ['concrete'], active: true, state: 'IL' },
+          { id: uid(), name: 'Dave Novak', phone: '(555) 300-7302', trades: ['decks'], active: true, state: 'IL' },
+          { id: uid(), name: 'Carlos Vega', phone: '(555) 300-7303', trades: ['fencing', 'decks'], active: true, state: 'MO' });
+        // Materials and reviews on a few jobs.
+        const at = Date.now(); const day = (n) => isoDay(at + n * 86400e3);
+        const mat = (name, qty, status, eta, by) => ({ id: uid(), name, qty, status, eta: eta || null, note: '', by, at: at - 86400e3, updatedBy: by, updatedAt: at - 3600e3 });
+        const byNo = (n) => d.jobs.find((j) => j.number === n);
+        if (byNo(1005)) byNo(1005).materials = [mat('Shaker cabinet boxes', '12', 'ordered', day(3), 'Maria Lopez'), mat('Quartz countertop slab', '1', 'needed', null, 'Ray Johnson'), mat('Cabinet pulls, matte black', '24', 'delivered', null, 'Maria Lopez')];
+        if (byNo(1009)) byNo(1009).materials = [mat('Architectural shingles, Weathered Wood', '28 bundles', 'ordered', day(1), 'Maria Lopez'), mat('Drip edge', '10 pcs', 'needed', null, 'Top Hat Office')];
+        if (byNo(1013)) byNo(1013).materials = [mat('Shingles, Weathered Wood', '22 bundles', 'needed', null, 'Ray Johnson')];
+        if (byNo(1001)) byNo(1001).review = { requestedAt: at - 9 * 86400e3, requestedBy: 'Maria Lopez', rating: 5, comment: 'Ray and his crew were on time and cleaned up every day. Kitchen looks amazing!', at: at - 8 * 86400e3, by: 'customer' };
+        if (byNo(1002)) byNo(1002).review = { requestedAt: at - 2 * 86400e3, requestedBy: 'Top Hat Office' };
       } await addMissingSamples(d); writeDb(d); return d;
     })();
     return dbPromise;
@@ -717,6 +778,7 @@
         const rec = {
           id: uid(), number: d.nextNumber++, buyerId: u.id, status: 'new', created: now, files: [], docs: [],
           trade: job.trade, description: job.description.trim(), address: job.address.trim(), zip: (job.zip || '').trim(), state: cleanState(job.state) || stateFromZip(job.zip),
+          style: styleOf(job.style) ? job.style : '',
           timeframe: job.timeframe, budget: job.budget || '', photos: job.photos || [],
           contractorId: null, scheduledFor: null, price: null, crewPay: null, notes: '',
           log: [{ at: now, text: 'Lead received' }],
@@ -801,7 +863,9 @@
             timeframe: j.timeframe, budget: j.budget, photos: j.photos, scheduledFor: j.scheduledFor,
             visitAt: j.status === 'hot' ? j.visitAt || null : null,
             permit: j.permit ? { status: j.permit.status, number: j.permit.number || '', authorizedBy: j.permit.authorizedBy || '', authorizedAt: j.permit.authorizedAt || null } : { status: 'none' },
-            designCount: (j.designs || []).length,
+            designCount: (j.designs || []).length, style: j.style || '',
+            materials: (j.materials || []).map(({ id, name, qty, status, eta }) => ({ id, name, qty, status, eta })),
+            review: j.review ? { requestedAt: j.review.requestedAt || null, rating: j.review.rating || null, comment: j.review.comment || '', at: j.review.at || null } : null,
             repName: j.status === 'hot' && j.visitAt ? ((d.team || []).find((x) => x.id === j.salesId)?.name || '').split(' ')[0] || null : null,
             pm: (() => { const sp = j.status !== 'lost' && (d.team || []).find((x) => x.id === j.salesId && x.active !== false); return sp ? { name: sp.name, phone: sp.phone || '' } : null; })(),
             contractorName: c && ['scheduled', 'in_progress', 'completed'].includes(j.status) ? c.name : null,
@@ -1160,6 +1224,71 @@
       },
     },
 
+    // Materials on a job: what needs ordering, what's ordered, what's delivered.
+    // Office and the job's salesperson manage the list; the contractor can add what they need and mark things delivered; customers see it.
+    materials: {
+      async _job(jobId) {
+        const u = await me(); if (!u) throw new Error('Please log in.');
+        const d = await db(); const j = d.jobs.find((x) => x.id === jobId);
+        if (!j) throw new Error('Job not found.');
+        if (u.role === 'crew') { const c = d.contractors.find((x) => x.userId === u.id); if (!c || j.contractorId !== c.id) throw new Error('That job isn’t assigned to you.'); return { d, j, u, role: 'crew' }; }
+        if (u.role === 'staff') return { d, j, u, role: 'staff' };
+        if (u.role === 'sales') { const sp = (d.team || []).find((x) => x.id === u.salesId && x.active !== false); if (!sp || j.salesId !== sp.id) throw new Error('Job not found.'); return { d, j, u, role: 'sales' }; }
+        throw new Error('Only Top Hat and the crew can change materials.');
+      },
+      async add(jobId, { name, qty = '', note = '' } = {}) {
+        const { d, j, u, role } = await api.materials._job(jobId);
+        name = String(name || '').trim().slice(0, 120);
+        if (name.length < 2) throw new Error('What material is it?');
+        const m = { id: uid(), name, qty: String(qty || '').trim().slice(0, 40), note: String(note || '').trim().slice(0, 300), status: 'needed', eta: null, by: u.name, at: Date.now(), updatedBy: u.name, updatedAt: Date.now() };
+        (j.materials ||= []).push(m);
+        j.log.push({ at: Date.now(), text: `🛒 ${u.name}${role === 'crew' ? ' (crew)' : ''} added material: ${m.name}${m.qty ? ` (${m.qty})` : ''}` });
+        writeDb(d); return { ...m };
+      },
+      async update(jobId, id, patch = {}) {
+        const { d, j, u, role } = await api.materials._job(jobId);
+        const m = (j.materials || []).find((x) => x.id === id); if (!m) throw new Error('That material isn’t on this job.');
+        if (role === 'crew' && (Object.keys(patch).some((k) => k !== 'status') || patch.status !== 'delivered')) throw new Error('The office orders materials. You can mark them delivered.');
+        if ('status' in patch) {
+          if (!MATERIAL_STATUS.some((x) => x.id === patch.status)) throw new Error('Pick a status.');
+          if (patch.status !== m.status) j.log.push({ at: Date.now(), text: `${MATERIAL_STATUS.find((x) => x.id === patch.status).icon} ${m.name}: ${MATERIAL_STATUS.find((x) => x.id === patch.status).label.toLowerCase()} (${u.name})` });
+          m.status = patch.status;
+        }
+        if ('eta' in patch) m.eta = /^\d{4}-\d{2}-\d{2}$/.test(patch.eta || '') ? patch.eta : null;
+        if ('note' in patch) m.note = String(patch.note || '').trim().slice(0, 300);
+        if ('qty' in patch) m.qty = String(patch.qty || '').trim().slice(0, 40);
+        m.updatedBy = u.name; m.updatedAt = Date.now();
+        writeDb(d); return { ...m };
+      },
+      async remove(jobId, id) {
+        const { d, j, role } = await api.materials._job(jobId);
+        if (role === 'crew') throw new Error('Ask the office to remove it.');
+        j.materials = (j.materials || []).filter((x) => x.id !== id); writeDb(d);
+      },
+    },
+
+    // Reviews: the office or the job's salesperson asks; the customer rates the job.
+    reviews: {
+      async ask(jobId) {
+        const { j, u } = await officeJob(jobId);
+        const d = await db(); const jj = d.jobs.find((x) => x.id === j.id);
+        jj.review = { ...(jj.review || {}), requestedAt: Date.now(), requestedBy: u.name };
+        jj.log.push({ at: Date.now(), text: `⭐ ${u.name} asked the customer for a review` });
+        writeDb(d);
+      },
+      async leave(jobId, rating, comment = '') {
+        const u = await me(); const d = await db();
+        const j = u && d.jobs.find((x) => x.id === jobId && x.buyerId === u.id);
+        if (!j) throw new Error('Job not found.');
+        if (j.status !== 'completed') throw new Error('You can review the job once it’s finished.');
+        rating = Math.round(Number(rating));
+        if (!(rating >= 1 && rating <= 5)) throw new Error('Tap 1 to 5 stars.');
+        j.review = { ...(j.review || {}), rating, comment: String(comment || '').trim().slice(0, 1000), at: Date.now(), by: u.name };
+        j.log.push({ at: Date.now(), text: `⭐ ${u.name} left a ${rating}-star review${j.review.comment ? `: “${j.review.comment}”` : ''}` });
+        writeDb(d);
+      },
+    },
+
     contractors: {
       async list() {
         const ctx = await requireOffice();
@@ -1382,7 +1511,8 @@
             address: j.address, zip: j.zip, state: j.state || '', description: j.description,
             customerName: b.name || '', customerPhone: b.phone || '',
             stage: j.stage || null, progressAt: j.progressAt || null, progressBy: j.progressBy || '',
-            crewToken: j.crewToken, crewPay: showPay ? j.crewPay : null,
+            crewToken: j.crewToken, crewPay: showPay ? j.crewPay : null, style: j.style || '',
+            materials: (j.materials || []).map((m) => ({ ...m })),
             photos: j.files.filter((f) => f.source === 'crew' && f.contractorId === c.id).length,
             uploads: await Promise.all(j.files.filter((f) => f.source === 'crew' && f.contractorId === c.id).map(async (f) => {
               const w = await withUrl(f); return { name: f.name, stage: f.stage || '', uploaded: f.uploaded, mime: f.mime, url: w.url };
@@ -1633,6 +1763,50 @@
     document.head.append(sc);
   }));
 
+  // Materials list on a job, shared by every screen.
+  // mode: 'office' (add, order, set arrival date, remove) · 'crew' (add what's needed, mark delivered) · 'customer' (read only)
+  function materialsCard(job, { mode = 'customer', onChange = () => {} } = {}) {
+    const list = job.materials || [];
+    const st = (id) => MATERIAL_STATUS.find((x) => x.id === id) || MATERIAL_STATUS[0];
+    const fmt = (d) => (d ? new Date(d + 'T12:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
+    const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const run = async (fn) => { try { await fn(); onChange(); } catch (e) { errorBox.textContent = e.message; errorBox.hidden = false; } };
+    const counts = MATERIAL_STATUS.map((x) => [x, list.filter((m) => m.status === x.id).length]).filter(([, n]) => n);
+    const row = (m) => {
+      const s = st(m.status);
+      const sub = [m.qty ? `Qty ${m.qty}` : null, m.status === 'ordered' && m.eta ? `arriving ${fmt(m.eta)}` : null, m.note || null].filter(Boolean).join(' · ');
+      let actions = null;
+      if (mode === 'office') {
+        const sel = el('select', { 'aria-label': `Status of ${m.name}`, onchange: (e) => run(() => api.materials.update(job.id, m.id, { status: e.target.value })) },
+          ...MATERIAL_STATUS.map((x) => el('option', { value: x.id, selected: x.id === m.status }, `${x.icon} ${x.label}`)));
+        const eta = m.status === 'ordered' ? el('input', { type: 'date', value: m.eta || '', 'aria-label': `When ${m.name} arrives`, onchange: (e) => run(() => api.materials.update(job.id, m.id, { eta: e.target.value })) }) : null;
+        actions = el('div', { class: 'mat-actions' }, sel, eta,
+          el('button', { type: 'button', class: 'icon x', 'aria-label': `Remove ${m.name}`, onclick: () => { if (confirm(`Remove ${m.name}?`)) run(() => api.materials.remove(job.id, m.id)); } }, '✕'));
+      } else if (mode === 'crew' && m.status === 'ordered') {
+        actions = el('button', { type: 'button', class: 'ghost small', onclick: () => run(() => api.materials.update(job.id, m.id, { status: 'delivered' })) }, '✅ It’s here');
+      }
+      return el('li', { class: 'mat ' + m.status },
+        el('span', { class: 'mat-ic', 'aria-hidden': 'true' }, s.icon),
+        el('span', { class: 'mat-body' }, el('b', {}, m.name), el('span', { class: 'mat-st' }, s.label), sub ? el('span', { class: 'muted small' }, sub) : null),
+        actions);
+    };
+    let form = null;
+    if (mode !== 'customer') {
+      const name = el('input', { placeholder: mode === 'crew' ? 'What do you need? e.g. 2 bundles of shingles' : 'Material, e.g. Quartz countertop', 'aria-label': 'Material', maxlength: '120' });
+      const qty = el('input', { placeholder: 'Qty', 'aria-label': 'Quantity', maxlength: '40' });
+      form = el('form', { class: 'mat-add', onsubmit: (e) => { e.preventDefault(); run(() => api.materials.add(job.id, { name: name.value, qty: qty.value })); } },
+        el('div', { class: 'mat-add-row' }, name, qty), el('button', { type: 'submit', class: 'ghost block' }, mode === 'crew' ? '+ Tell the office I need this' : '+ Add material'));
+    }
+    return el('section', { class: 'card stack materials-card' },
+      el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, '📦 Materials'),
+        counts.length ? el('span', { class: 'mat-sum' }, ...counts.map(([x, n]) => el('span', { class: 'pill mat-pill ' + x.id }, `${x.icon} ${n}`))) : null),
+      el('p', { class: 'muted small' }, mode === 'customer' ? 'What’s been ordered for your project and when it arrives.'
+        : mode === 'crew' ? 'What’s ordered and what’s here. Need something? Add it and the office will order it.'
+          : 'Everything for this job: what needs ordering, what’s ordered, and what’s delivered. The crew and customer see it too.'),
+      list.length ? el('ul', { class: 'mat-list' }, ...list.map(row)) : el('p', { class: 'muted small' }, mode === 'customer' ? 'Nothing ordered yet.' : 'No materials added yet.'),
+      errorBox, form);
+  }
+
   // Light / dark mode button in the top bar. Starts with the phone's setting; a tap picks one and it's remembered.
   function setupTheme() {
     const btn = document.getElementById('themeBtn');
@@ -1651,5 +1825,5 @@
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupTheme); else setupTheme();
 
-  window.TH = { US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+  window.TH = { materialsCard, SKILLS, doesTrade, STYLE_ROOMS, STYLE_TRADES, roomFromText, styleOf, MATERIAL_STATUS, US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();

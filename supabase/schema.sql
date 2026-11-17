@@ -28,7 +28,7 @@ end $$;
 
 -- ---------- clean slate for re-runs ----------
 drop trigger if exists on_auth_user_created on auth.users;
-drop table if exists public.crew_bills, public.payment_reports, public.design_versions, public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
+drop table if exists public.job_materials, public.crew_bills, public.payment_reports, public.design_versions, public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
 drop function if exists public.handle_new_user, public.is_staff, public.new_crew_token, public.owns_job,
   public.customer_can_read, public.crew_token_active, public.create_job, public.add_customer_file, public.my_jobs,
   public.crew_job, public.crew_add_file, public.jobs_after_insert, public.jobs_before_update, public.jobs_after_update,
@@ -40,7 +40,8 @@ drop function if exists public.handle_new_user, public.is_staff, public.new_crew
   public.my_sales, public.can_access_job, public.office_can_see_profile, public.office_can_access_path, public.sales_guard,
   public.private_guard, public.costs_after_update, public.log_call, public.staff_invite_sales, public.staff_revoke_sales,
   public.sales_invite_info, public.claim_sales_invite, public.office_crew_list,
-  public.authorize_permit, public.can_design, public.permit_label, public.report_payment, public.resolve_payment_report, public.crew_bill, public.staff_crew_bill, public.crew_halfway cascade;
+  public.authorize_permit, public.can_design, public.permit_label, public.report_payment, public.resolve_payment_report, public.crew_bill, public.staff_crew_bill, public.crew_halfway,
+  public.crew_material_add, public.crew_material_delivered, public.job_materials_log, public.office_ask_review, public.customer_review cascade;
 
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
@@ -136,6 +137,12 @@ create table public.jobs (
   address text not null,
   zip text not null default '',
   state text not null default '' check (state = '' or state ~ '^[A-Z]{2}$'),   -- 2-letter state, to organize leads by state
+  style text not null default '' check (style = '' or style ~ '^[a-z]{2,20}/[a-z]{2,20}$'),   -- sample style the customer picked, e.g. kitchen/farmhouse
+  review_requested_at timestamptz,
+  review_requested_by text not null default '',
+  review_rating smallint check (review_rating between 1 and 5),
+  review_comment text not null default '' check (length(review_comment) <= 1000),
+  review_at timestamptz,
   timeframe text not null default '',
   budget text not null default '',
   -- 'hot' = the customer agreed to the phone estimate (or approved it in writing): worth a rep visit.
@@ -231,6 +238,23 @@ create table public.job_files (
 create index on public.job_files (job_id);
 
 -- Notes the assigned contractor writes for the office. Office reads them; customers never do.
+-- Materials for a job: what needs ordering, what's ordered (and when it arrives), what's delivered.
+-- Office and the job's salesperson manage it directly; crew go through crew_material_add / crew_material_delivered; customers see it in my_jobs().
+create table public.job_materials (
+  id uuid primary key default gen_random_uuid(),
+  job_id uuid not null references public.jobs(id) on delete cascade,
+  name text not null check (length(trim(name)) between 2 and 120),
+  qty text not null default '' check (length(qty) <= 40),
+  note text not null default '' check (length(note) <= 300),
+  status text not null default 'needed' check (status in ('needed', 'ordered', 'delivered')),
+  eta date,
+  added_by text not null default '',
+  updated_by text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index on public.job_materials (job_id);
+
 create table public.crew_notes (
   id uuid primary key default gen_random_uuid(),
   job_id uuid not null references public.jobs(id) on delete cascade,
@@ -474,7 +498,7 @@ language sql stable security definer set search_path = '' as $$
   select exists (select 1 from public.jobs where id::text = j and buyer_id = auth.uid());
 $$;
 
-create function public.create_job(p_trade text, p_description text, p_address text, p_zip text, p_state text, p_timeframe text, p_budget text)
+create function public.create_job(p_trade text, p_description text, p_address text, p_zip text, p_state text, p_timeframe text, p_budget text, p_style text)
 returns table (id uuid, number bigint)
 language plpgsql security definer set search_path = '' as $$
 begin
@@ -483,10 +507,11 @@ begin
   if length(trim(coalesce(p_address, ''))) = 0 then raise exception 'Please enter the address where the work is.'; end if;
   if upper(trim(coalesce(p_state, ''))) !~ '^[A-Z]{2}$' then raise exception 'Pick the state the project is in.'; end if;
   return query
-    insert into public.jobs as j (buyer_id, trade, description, address, zip, state, timeframe, budget)
+    insert into public.jobs as j (buyer_id, trade, description, address, zip, state, timeframe, budget, style)
     values (auth.uid(), left(p_trade, 40), left(trim(p_description), 4000), left(trim(p_address), 300),
             left(trim(coalesce(p_zip, '')), 10), case when upper(trim(coalesce(p_state, ''))) ~ '^[A-Z]{2}$' then upper(trim(p_state)) else '' end,
-            left(coalesce(p_timeframe, ''), 40), left(coalesce(p_budget, ''), 40))
+            left(coalesce(p_timeframe, ''), 40), left(coalesce(p_budget, ''), 40),
+            case when coalesce(p_style, '') ~ '^[a-z]{2,20}/[a-z]{2,20}$' then p_style else '' end)
     returning j.id, j.number;
 end $$;
 
@@ -510,7 +535,10 @@ language sql stable security definer set search_path = '' as $$
     'visit_at', case when j.status = 'hot' then j.visit_at end,
     'permit_status', j.permit_status, 'permit_number', j.permit_number,
     'permit_authorized_by', j.permit_authorized_by, 'permit_authorized_at', j.permit_authorized_at,
-    'design_count', (select count(*) from public.design_versions v where v.job_id = j.id),
+    'design_count', (select count(*) from public.design_versions v where v.job_id = j.id), 'style', j.style,
+    'materials', (select coalesce(jsonb_agg(jsonb_build_object('id', m.id, 'name', m.name, 'qty', m.qty, 'status', m.status, 'eta', m.eta) order by m.created_at), '[]'::jsonb)
+                  from public.job_materials m where m.job_id = j.id),
+    'review_requested_at', j.review_requested_at, 'review_rating', j.review_rating, 'review_comment', j.review_comment, 'review_at', j.review_at,
     'rep_name', case when j.status = 'hot' and j.visit_at is not null then split_part(sp.name, ' ', 1) end,
     'pm_name', case when j.status <> 'lost' and sp.active then sp.name end,
     'pm_phone', case when j.status <> 'lost' and sp.active then sp.phone end,
@@ -1015,7 +1043,9 @@ begin
       'started_at', j.started_at, 'finished_at', j.finished_at, 'halfway_at', j.halfway_at,
       'customer_photos', (select coalesce(jsonb_agg(f.path order by f.uploaded_at), '[]'::jsonb) from public.job_files f
                            where f.job_id = j.id and f.source = 'customer' and f.mime like 'image/%'),
-      'address', j.address, 'zip', j.zip, 'state', j.state, 'description', j.description,
+      'address', j.address, 'zip', j.zip, 'state', j.state, 'description', j.description, 'style', j.style,
+      'materials', (select coalesce(jsonb_agg(jsonb_build_object('id', m.id, 'name', m.name, 'qty', m.qty, 'note', m.note, 'status', m.status, 'eta', m.eta) order by m.created_at), '[]'::jsonb)
+                    from public.job_materials m where m.job_id = j.id),
       'customer_name', coalesce(b.name, j.contact_name), 'customer_phone', coalesce(b.phone, j.contact_phone), 'crew_token', p.crew_token,
       'crew_pay', case when coalesce(show_pay, true) then (select k.crew_pay from public.job_costs k where k.job_id = j.id) end,
       'photos', (select count(*) from public.job_files f where f.job_id = j.id and f.source = 'crew' and f.contractor_id = cid),
@@ -1214,8 +1244,80 @@ revoke insert, update, delete on public.design_versions from authenticated;
 
 -- ---------- function permissions ----------
 revoke execute on all functions in schema public from public, anon, authenticated;
+-- Materials: office and the job's salesperson read and change them; crew add what they need and mark things delivered.
+alter table public.job_materials enable row level security;
+create policy "office reads materials" on public.job_materials for select to authenticated using (public.can_access_job(job_id));
+create policy "office adds materials" on public.job_materials for insert to authenticated with check (public.can_access_job(job_id));
+create policy "office changes materials" on public.job_materials for update to authenticated using (public.can_access_job(job_id)) with check (public.can_access_job(job_id));
+create policy "office removes materials" on public.job_materials for delete to authenticated using (public.can_access_job(job_id));
+revoke all on public.job_materials from anon;
+
+create function public.crew_material_add(p_job uuid, p_name text, p_qty text, p_note text) returns uuid
+language plpgsql security definer set search_path = '' as $$
+declare cid uuid := public.my_crew(); who text; nm text := trim(coalesce(p_name, '')); rid uuid;
+begin
+  if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
+  if not exists (select 1 from public.jobs where id = p_job and contractor_id = cid and status in ('scheduled', 'in_progress', 'completed')) then raise exception 'That job isn’t assigned to you.'; end if;
+  if length(nm) < 2 then raise exception 'What material is it?'; end if;
+  select name into who from public.contractors where id = cid;
+  insert into public.job_materials (job_id, name, qty, note, added_by, updated_by) values (p_job, left(nm, 120), left(trim(coalesce(p_qty, '')), 40), left(trim(coalesce(p_note, '')), 300), coalesce(who, 'Crew'), coalesce(who, 'Crew')) returning id into rid;
+  return rid;
+end $$;
+
+create function public.crew_material_delivered(p_item uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+declare cid uuid := public.my_crew(); who text; m record;
+begin
+  if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
+  select x.* into m from public.job_materials x join public.jobs j on j.id = x.job_id where x.id = p_item and j.contractor_id = cid;
+  if m.id is null then raise exception 'That material isn’t on your job.'; end if;
+  select name into who from public.contractors where id = cid;
+  update public.job_materials set status = 'delivered', updated_by = coalesce(who, 'Crew'), updated_at = now() where id = p_item and status <> 'delivered';
+end $$;
+
+-- Every material added or moved along goes into the job's history.
+create function public.job_materials_log() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  if tg_op = 'INSERT' then
+    perform public.log_event(new.job_id, '🛒 ' || coalesce(nullif(new.added_by, ''), 'Office') || ' added material: ' || new.name || case when new.qty <> '' then ' (' || new.qty || ')' else '' end);
+  elsif new.status is distinct from old.status then
+    perform public.log_event(new.job_id, case new.status when 'ordered' then '📦 ' when 'delivered' then '✅ ' else '🛒 ' end || new.name || ': '
+      || case new.status when 'needed' then 'needs ordering' else new.status end || ' (' || coalesce(nullif(new.updated_by, ''), 'Office') || ')');
+  end if;
+  return new;
+end $$;
+create trigger job_materials_log after insert or update on public.job_materials for each row execute function public.job_materials_log();
+
+-- Reviews: the office or the job's salesperson asks; the customer rates the finished job.
+create function public.office_ask_review(p_job uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+declare who text;
+begin
+  if not public.can_access_job(p_job) then raise exception 'Job not found.'; end if;
+  select name into who from public.profiles where id = auth.uid();
+  update public.jobs set review_requested_at = now(), review_requested_by = coalesce(who, 'Office') where id = p_job and status = 'completed';
+  if not found then raise exception 'You can ask for a review once the job is finished.'; end if;
+  perform public.log_event(p_job, '⭐ ' || coalesce(who, 'Office') || ' asked the customer for a review');
+end $$;
+
+create function public.customer_review(p_job uuid, p_rating int, p_comment text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare who text; c text := left(trim(coalesce(p_comment, '')), 1000);
+begin
+  if p_rating is null or p_rating < 1 or p_rating > 5 then raise exception 'Tap 1 to 5 stars.'; end if;
+  select name into who from public.profiles where id = auth.uid();
+  update public.jobs set review_rating = p_rating, review_comment = c, review_at = now() where id = p_job and buyer_id = auth.uid() and status = 'completed';
+  if not found then raise exception 'You can review the job once it’s finished.'; end if;
+  perform public.log_event(p_job, '⭐ ' || coalesce(who, 'Customer') || ' left a ' || p_rating || '-star review' || case when c <> '' then ': “' || c || '”' else '' end);
+end $$;
+
+grant select, insert, update, delete on public.job_materials to authenticated;
+grant execute on function public.crew_material_add(uuid, text, text, text), public.crew_material_delivered(uuid),
+  public.office_ask_review(uuid), public.customer_review(uuid, int, text) to authenticated;
+
 grant execute on function public.is_staff(), public.owns_job(text), public.customer_can_read(text),
-  public.create_job(text, text, text, text, text, text, text), public.add_customer_file(uuid, text, text, text, bigint),
+  public.create_job(text, text, text, text, text, text, text, text), public.add_customer_file(uuid, text, text, text, bigint),
   public.my_jobs(), public.my_documents(), public.respond_estimate(uuid, boolean, text, text),
   public.staff_invite_crew(uuid), public.staff_revoke_crew(uuid), public.claim_crew_invite(text),
   public.crew_my_jobs(), public.crew_set_progress(uuid, text, text), public.crew_respond(uuid, text, text),
