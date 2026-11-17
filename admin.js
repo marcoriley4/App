@@ -799,11 +799,18 @@
     ) : null;
 
     // Tabs keep the job short and easy to scan.
-    const TABS = [['overview', 'Overview'], ['money', 'Money'], ['files', `Files${files.length ? ` (${files.length})` : ''}`], ['history', 'Notes & history']];
-    const tabsBar = el('div', { class: 'tabs-bar lead-tabs', role: 'tablist' });
+    // Each section says what's inside, so it's clear where a tap leads.
+    const TABS = [
+      ['overview', '📋', 'The job', 'Next step, customer, crew & date'],
+      ['money', '💵', 'Payments', isStaff ? 'Price, invoices & crew pay' : 'Price, estimates & invoices'],
+      ['files', '📸', `Photos & papers${files.length ? ` (${files.length})` : ''}`, 'Pictures, estimates, permits'],
+      ['history', '🗒️', 'Notes & timeline', 'Notes and everything that happened'],
+    ];
+    const tabsBar = el('div', { class: 'lead-tabs', role: 'tablist', 'aria-label': 'Job sections' });
     const tabBody = el('div', { class: 'stack' });
     function renderTab() {
-      tabsBar.replaceChildren(...TABS.map(([id, label]) => el('button', { role: 'tab', 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } }, label)));
+      tabsBar.replaceChildren(...TABS.map(([id, icon, label, sub]) => el('button', { type: 'button', role: 'tab', 'data-tab': id, 'aria-selected': String(leadTab === id), 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } },
+        el('span', { class: 'tab-ic', 'aria-hidden': 'true' }, icon), el('span', { class: 'tab-txt' }, el('b', {}, label), el('span', {}, sub)))));
       const content = {
         overview: [nextCard, progress, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, designCard, details, permitCard,
           !setupWanted && ['new', 'qualifying', 'hot'].includes(j.status) ? el('button', { type: 'button', class: 'link small', style: 'align-self:flex-start', onclick: focusSetup }, '👷 Assign a crew & date now (skip the visit)') : null],

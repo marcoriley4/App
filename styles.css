@@ -386,7 +386,14 @@ button.icon:hover { color: var(--bad); }
 .next-step .eyebrow { color: var(--warn); }
 .next-step h3 { font-size: 1.1rem; }
 .next-ic { font-size: 1.8rem; line-height: 1; }
-.lead-tabs { margin: 0; padding: 0; border-bottom: 1px solid var(--border); }
+.lead-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0; }
+.lead-tabs button { display: flex; align-items: center; justify-content: flex-start; gap: 10px; text-align: left; white-space: normal; min-height: 64px; padding: 10px 12px;
+  background: var(--surface); color: var(--text); border: 2px solid var(--border); border-radius: 14px; font-weight: 800; }
+.lead-tabs button[aria-selected="true"] { border-color: var(--gold); background: var(--gold-soft); box-shadow: inset 0 -4px 0 var(--gold); }
+.lead-tabs .tab-ic { font-size: 1.5rem; line-height: 1; flex: none; }
+.lead-tabs .tab-txt { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.lead-tabs .tab-txt b { font-size: 1rem; }
+.lead-tabs .tab-txt span { font-size: .86rem; font-weight: 500; color: var(--muted); margin-top: 2px; }
 .stepper { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px; position: relative; }
 .stepper button { background: none; border: none; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 4px 0; min-height: 0; font-weight: 700; font-size: .78rem; letter-spacing: -.01em; white-space: normal; position: relative; }
 .stepper button::before { content: ""; position: absolute; top: 18px; left: -50%; right: 50%; height: 3px; background: var(--border); z-index: 0; }
@@ -755,3 +762,8 @@ input[type="date"]::-webkit-date-and-time-value, input[type="datetime-local"]::-
 .logo small { font-size: .72rem; font-weight: 800; }
 label.field .hint { font-weight: 500; }
 .muted { font-weight: 500; }
+
+/* Payment rows: amount and button sit under the name, so long names read on one or two lines */
+.sched-list li { flex-wrap: wrap; align-items: flex-start; }
+.sched-list .body { flex: 1 1 calc(100% - 40px); }
+.sched-list li > :last-child:not(.body):not(.n) { margin-left: 38px; }
