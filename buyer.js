@@ -151,8 +151,9 @@
     const me = await api.auth.me();
     if (me && me.role === 'staff') { view.append(el('div', { class: 'card', style: 'margin-top:24px' }, 'You are logged in as staff. ', el('a', { href: 'admin.html' }, 'Go to the staff area'), '.')); return; }
     // Room projects (kitchens, baths…) get a "pick a style" screen after they describe it.
-    const wantsStyle = TH.STYLE_TRADES.includes(draft.trade) || !!TH.roomFromText(draft.description) || !!draft.style;
-    const SCREENS = ['trade', 'photos', 'describe', ...(wantsStyle ? ['style'] : []), 'where', 'when', 'budget', ...(me ? [] : ['contact'])];
+    // Room projects (remodel, painting, flooring…) get the design screen: pick one of the 3 looks, add photos, and we design their room in it.
+    const roomTrade = TH.STYLE_TRADES.includes(draft.trade);
+    const SCREENS = ['trade', roomTrade ? 'design' : 'photos', 'describe', 'where', 'when', 'budget', ...(me ? [] : ['contact'])];
     const total = SCREENS.length;
     const at = (name) => SCREENS.indexOf(name) + 1;
     // Never skip ahead past something we still need.
@@ -195,7 +196,7 @@
       return;
     }
 
-    if (screen === 'photos') {
+    if (screen === 'photos' || (screen === 'design' && draft.room === 'none')) {
       const grid = el('div', { class: 'photos' });
       const btnWrap = el('div', { class: 'wiz-next' });
       const draw = () => {
@@ -213,9 +214,61 @@
           for (const f of files) { try { draft.photos.push(await shrinkImage(f)); } catch (err) { showError(err.message); } }
           saveDraft(); draw();
         } }));
-      view.append(shell('Show us the space', 'A few phone pictures help us price it right. Up to 5.', [addBtn, grid]));
+      view.append(shell('Show us the space', 'A few phone pictures help us price it right. Up to 5.', [addBtn, grid,
+        screen === 'design' ? el('button', { type: 'button', class: 'link', onclick: () => { draft.room = ''; saveDraft(); route(); } }, '← Pick a room and a look instead') : null]));
       view.querySelector('.wiz').append(btnWrap);
       draw();
+      return;
+    }
+
+    // Design: 1) pick one of the three looks for their room, 2) add photos. After they send it, we make their room in that look.
+    if (screen === 'design') {
+      const room = TH.STYLE_ROOMS.find((r) => r.id === draft.room);
+      if (!room) {
+        view.append(shell('Which room are we working on?', 'Then pick the look you want and add a photo. We’ll show you your room in that look.', [
+          el('div', { class: 'tiles big-tiles' }, ...TH.STYLE_ROOMS.map((r) => el('button', { type: 'button', class: 'tile', onclick: () => { draft.room = r.id; if (!(draft.style || '').startsWith(r.id + '/')) draft.style = ''; saveDraft(); route(); } },
+            el('span', { class: 'ic' }, r.icon), el('span', {}, r.label)))),
+          el('button', { type: 'button', class: 'link', onclick: () => { draft.room = 'none'; draft.style = ''; saveDraft(); route(); } }, 'Not one of these? Just add photos'),
+        ], { nextLabel: 'Skip for now', onNext: () => { saveDraft(); next(); } }));
+        return;
+      }
+      const grid = el('div', { class: 'photos' });
+      const btnWrap = el('div', { class: 'wiz-next' });
+      const looks = el('div', { class: 'look-list', role: 'radiogroup', 'aria-label': 'Pick a look' });
+      const drawLooks = () => looks.replaceChildren(...room.styles.map((st, i) => { const key = `${room.id}/${st.id}`; const on = draft.style === key;
+        return el('button', { type: 'button', role: 'radio', 'aria-checked': String(on), class: 'look' + (on ? ' on' : ''), onclick: () => { draft.style = on ? '' : key; saveDraft(); drawLooks(); drawBtn(); } },
+          el('img', { src: `img/styles/${room.id}-${st.id}.svg`, alt: '' }),
+          el('span', { class: 'look-txt' }, el('b', {}, `${i + 1}. ${st.name}`), el('span', {}, st.desc)),
+          el('span', { class: 'look-check', 'aria-hidden': 'true' }, on ? '✓' : '')); }));
+      const drawBtn = () => {
+        const n = draft.photos.length;
+        btnWrap.replaceChildren(n || draft.style
+          ? el('button', { type: 'button', class: 'gold block big', onclick: next }, 'Next')
+          : el('button', { type: 'button', class: 'ghost block', onclick: next }, 'Skip for now'));
+      };
+      const draw = () => {
+        grid.replaceChildren(...draft.photos.map((src, i) => el('div', { class: 'photo' },
+          el('img', { src, alt: `Photo ${i + 1}` }),
+          el('button', { type: 'button', 'aria-label': `Remove photo ${i + 1}`, onclick: () => { draft.photos.splice(i, 1); saveDraft(); draw(); } }, '✕'))));
+        addBtn.hidden = draft.photos.length >= MAX_PHOTOS;
+        drawBtn();
+      };
+      const addBtn = el('label', { class: 'btn gold block big photo-btn' }, '📷 Take or add photos',
+        el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async (e) => {
+          const files = [...e.target.files].slice(0, MAX_PHOTOS - draft.photos.length);
+          for (const f of files) { try { draft.photos.push(await shrinkImage(f)); } catch (err) { showError(err.message); } }
+          saveDraft(); draw();
+        } }));
+      view.append(shell(`Design your ${room.label.toLowerCase()}`, null, [
+        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Pick the look you want'),
+        looks,
+        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), `Add photos of your ${room.label.toLowerCase()}`),
+        el('p', { class: 'wiz-sub' }, 'We’ll turn your photo into the look you picked, and it helps us price it right. Up to 5.'),
+        addBtn, grid,
+        el('button', { type: 'button', class: 'link', onclick: () => { draft.room = ''; saveDraft(); route(); } }, 'It’s a different room'),
+      ]));
+      view.querySelector('.wiz').append(btnWrap);
+      drawLooks(); draw();
       return;
     }
 
@@ -236,27 +289,6 @@
         if (draft.description.length < 10) return showError('Tell us a little more: just a sentence is fine.');
         next();
       } }));
-      return;
-    }
-
-    if (screen === 'style') {
-      const room = TH.STYLE_ROOMS.find((r) => r.id === (draft.room || TH.roomFromText(draft.description)));
-      if (!room) {
-        view.append(shell('Which room is it?', 'We’ll show you three looks to choose from.', [
-          el('div', { class: 'tiles big-tiles' }, ...TH.STYLE_ROOMS.map((r) => el('button', { type: 'button', class: 'tile', onclick: () => { draft.room = r.id; saveDraft(); route(); } },
-            el('span', { class: 'ic' }, r.icon), el('span', {}, r.label)))),
-        ], { nextLabel: 'Skip: not a room project', onNext: () => { draft.room = ''; draft.style = ''; saveDraft(); next(); } }));
-        return;
-      }
-      view.append(shell(`Which ${room.label.toLowerCase()} look do you like?`, 'Tap the one closest to what you want. You’ll fine-tune it with your project manager.', [
-        el('div', { class: 'style-pick' }, ...room.styles.map((st) => { const key = `${room.id}/${st.id}`;
-          return el('button', { type: 'button', class: 'style-card' + (draft.style === key ? ' on' : ''), 'aria-pressed': String(draft.style === key),
-            onclick: () => { draft.room = room.id; draft.style = key; saveDraft(); setTimeout(next, 250); route(); } },
-            el('img', { src: `img/styles/${room.id}-${st.id}.svg`, alt: `${st.name} ${room.label.toLowerCase()}` }),
-            el('span', { class: 'style-txt' }, el('b', {}, st.name), el('span', {}, st.desc)),
-            el('span', { class: 'style-check', 'aria-hidden': 'true' }, draft.style === key ? '✓' : '')); })),
-        el('button', { type: 'button', class: 'link', onclick: () => { draft.room = '__pick'; draft.style = ''; saveDraft(); route(); } }, 'It’s a different room'),
-      ], { nextLabel: draft.style ? 'Next' : 'Not sure yet: skip', onNext: () => { saveDraft(); next(); } }));
       return;
     }
 
@@ -321,7 +353,9 @@
   async function submitJob(showError) {
     try {
       const m = (draft.measurements || '').trim();
-      await api.jobs.create({ ...draft, description: m ? `${draft.description}\n\nMeasurements: ${m}` : draft.description });
+      const job = await api.jobs.create({ ...draft, description: m ? `${draft.description}\n\nMeasurements: ${m}` : draft.description });
+      // Their room in the look they picked: made on the next screen.
+      try { sessionStorage.removeItem('tophat.makeDesign'); if (job && job.id && TH.styleOf(draft.style) && draft.photos.length) sessionStorage.setItem('tophat.makeDesign', JSON.stringify({ jobId: job.id, style: draft.style, photo: draft.photos[0] })); } catch (e) {}
       clearDraft();
       go('done');
     } catch (err) { showError(err.message); }
@@ -334,9 +368,40 @@
       el('div', { class: 'done-mark' }, '✓'),
       el('h1', {}, "You're all set!"),
       el('p', { class: 'muted' }, `Thanks${me ? ', ' + me.name.split(' ')[0] : ''}. The Top Hat team will look over your measurements and photos and call you ${me?.phone ? 'at ' + me.phone : 'soon'} with an estimate over the phone. If the price works for you, we'll book a time for your Top Hat project manager to come out. You'll see every step under My jobs.`),
+      makeDesignCard(),
       el('a', { class: 'btn block', href: '#/jobs' }, 'See my jobs'),
       el('a', { class: 'btn ghost block', href: '#/request' }, 'Start another project'),
     ));
+  }
+
+  // Right after they send it: their photo, redesigned in the look they picked.
+  function makeDesignCard() {
+    let job = null;
+    try { job = JSON.parse(sessionStorage.getItem('tophat.makeDesign') || 'null'); sessionStorage.removeItem('tophat.makeDesign'); } catch (e) {}
+    const look = job && TH.styleOf(job.style);
+    if (!look) return null;
+    const card = el('section', { class: 'make-design stack' });
+    const studio = el('a', { class: 'btn ghost block', href: `#/design?job=${job.jobId}` }, '🎨 Change it in the Design studio');
+    card.replaceChildren(el('h2', {}, `🎨 Making your ${look.room.label.toLowerCase()} in the ${look.style.name} look…`),
+      el('div', { class: 'make-wait' }, el('img', { src: job.photo, alt: 'Your photo' }), el('span', { class: 'spinner', 'aria-hidden': 'true' })),
+      el('p', { class: 'muted small' }, 'This takes about 10 to 30 seconds.'));
+    (async () => {
+      try {
+        const photo = await api.designs.addPhoto(job.jobId, job.photo);
+        const v = await api.designs.generate(job.jobId, photo.id,
+          `Redesign this ${look.room.label.toLowerCase()} in the ${look.style.name} style: ${look.style.desc}. Keep the same room, walls, windows and camera angle.`);
+        await api.designs.choose(job.jobId, v.id).catch(() => {});
+        const url = (await api.designs.list(job.jobId)).find((x) => x.id === v.id)?.url;
+        card.replaceChildren(el('h2', {}, `🎨 Your ${look.room.label.toLowerCase()}, ${look.style.name} look`),
+          url ? el('img', { class: 'made', src: url, alt: `Your ${look.room.label.toLowerCase()} in the ${look.style.name} look` }) : null,
+          el('p', { class: 'muted small' }, 'Saved to your job. Your project manager will see it too.'), studio);
+      } catch (e) {
+        // AI not turned on (or busy): show the look they picked; the office and their rep see it on the job.
+        card.replaceChildren(el('h2', {}, `🎨 You picked: ${look.label}`), el('img', { class: 'made', src: look.img, alt: '' }),
+          el('p', { class: 'muted small' }, 'Your design picture will show up in the Design studio on your job once it’s ready. Your project manager already sees the look you picked.'), studio);
+      }
+    })();
+    return card;
   }
 
   /* ---------- my jobs ---------- */
@@ -448,7 +513,7 @@
             el('span', { class: 'small' }, j.designCount ? `${j.designCount} picture${j.designCount === 1 ? '' : 's'} · keep changing it` : 'See your remodel before we build it')) : null,
           j.status !== 'lost' ? permitBox(j, me) : null,
           (j.materials || []).length && j.status !== 'lost' ? TH.materialsCard(j, { mode: 'customer' }) : null,
-          j.status === 'completed' ? reviewBox(j, company) : null,
+          j.status === 'completed' && (j.review?.rating || paidUp(paper[j.id] || [])) ? reviewBox(j, company) : null,
           (paper[j.id] || []).length ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Estimates & invoices'),
             el('div', { class: 'doc-list' }, ...paper[j.id].map((dc) => el('button', { type: 'button', class: 'doc-row', onclick: () => openPaper(j, dc) },
               el('span', { class: 'ic' }, dc.type === 'invoice' ? '🧾' : '📝'),
@@ -498,6 +563,8 @@
     return el('section', { class: 'contact-card' }, el('span', { class: 'contact-title' }, 'Questions? We’re one tap away'), ...rows);
   }
 
+  // Finished and the last invoice paid: time to ask how we did.
+  const paidUp = (list) => { const inv = list.filter((dc) => dc.type === 'invoice' && !['draft', 'void'].includes(dc.status)); return inv.length > 0 && inv.every((dc) => TH.docs.owed(dc) <= 0.005); };
   // After the job: how did we do? 1-5 stars and a comment, then (if set up) a link to post it on Google.
   function reviewBox(j, company) {
     const r = j.review || {};

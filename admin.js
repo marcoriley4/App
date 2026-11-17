@@ -111,6 +111,8 @@
     });
   }
   // The next payment that's due but not sent yet (a draft counts as not sent).
+  // Finished and every invoice paid: now it's time to ask for a review.
+  const paidUp = (j) => j.status === 'completed' && liveInvoices(j).length > 0 && owedOn(j) <= 0.005 && !needsInvoice(j) && !liveInvoices(j).some((d) => d.status === 'draft');
   const nextDue = (j) => planOf(j).find((p) => p.due && (!p.covered || p.inv?.status === 'draft')) || null;
   const needsInvoice = (j) => !!nextDue(j);
   // Crew money on a job: their pay plus approved extras, and what's been paid so far.
@@ -176,8 +178,8 @@
       { id: 'materials', icon: '🛒', title: 'Materials to order', why: 'Things a job needs that haven’t been ordered yet.',
         list: open.filter((j) => j.status !== 'completed' && (j.materials || []).some((m) => m.status === 'needed')),
         line: (j) => (j.materials || []).filter((m) => m.status === 'needed').map((m) => m.name + (m.qty ? ` (${m.qty})` : '')).join(', ') },
-      { id: 'reviews', icon: '⭐', title: 'Ask for a review', why: 'Finished jobs where the customer hasn’t been asked yet.',
-        list: jobs.filter((j) => j.status === 'completed' && !j.review?.requestedAt && !j.review?.rating && (j.finishedAt || j.created) > Date.now() - 90 * 86400e3),
+      { id: 'reviews', icon: '⭐', title: 'Ask for a review', why: 'Finished and paid in full, and the customer hasn’t been asked yet.',
+        list: jobs.filter((j) => paidUp(j) && !j.review?.requestedAt && !j.review?.rating && (j.finishedAt || j.created) > Date.now() - 90 * 86400e3),
         line: (j) => `${tradeOf(j.trade).label} · finished ${ago(j.finishedAt || j.created)}` },
       { id: 'newreviews', icon: '🌟', title: 'New reviews', why: 'What customers said this week.', info: true,
         list: jobs.filter((j) => j.review?.rating && j.review.at > Date.now() - 7 * 86400e3),
@@ -409,7 +411,7 @@
       owedOn(j) > 0 ? [`💵 ${docs.usd(owedOn(j))} due`, 'hot'] : null,
       estWith(j, 'sent') ? ['⏳ Estimate sent', ''] : null,
       (j.materials || []).some((m) => m.status === 'needed') && j.status !== 'completed' ? [`🛒 ${(j.materials || []).filter((m) => m.status === 'needed').length} to order`, 'hot'] : null,
-      j.status === 'completed' && !j.review?.requestedAt && !j.review?.rating ? ['⭐ Ask for a review', ''] : null,
+      paidUp(j) && !j.review?.requestedAt && !j.review?.rating ? ['⭐ Ask for a review', ''] : null,
       j.review?.rating ? [`${'★'.repeat(j.review.rating)} review`, ''] : null,
     ].filter(Boolean);
     return el('button', { class: 'lead' + (j.status === 'new' && !pick ? ' new-dot' : '') + (pick ? ' pickable' + (pick.on ? ' picked' : '') : ''),
@@ -903,7 +905,7 @@
     const reviewText = `Hi ${first}, thanks for choosing ${settings.name || 'Top Hat Contracting'}! How did we do? You can rate your job here: ${siteUrl()}#/jobs${settings.reviewLink ? `\nOr leave us a Google review: ${settings.reviewLink}` : ''}`;
     const askHref = j.buyer.phone ? smsHref(j.buyer.phone, reviewText) : j.buyer.email ? `mailto:${j.buyer.email}?subject=${encodeURIComponent('How did we do?')}&body=${encodeURIComponent(reviewText)}` : null;
     const askBtn = (label, cls) => el('a', { class: `btn ${cls} block`, href: askHref || '#', onclick: async (e) => { if (!askHref) e.preventDefault(); try { await api.reviews.ask(j.id); } catch {} setTimeout(async () => { await load(); openLead(j.id); }, 400); } }, label);
-    const reviewCard = j.status === 'completed' ? el('section', { class: 'card stack review-card' },
+    const reviewCard = j.review?.rating || paidUp(j) ? el('section', { class: 'card stack review-card' },
       el('h3', {}, '⭐ Customer review'),
       j.review?.rating ? [el('div', { class: 'stars-show', 'aria-label': `${j.review.rating} out of 5 stars` }, '★'.repeat(j.review.rating) + '☆'.repeat(5 - j.review.rating)),
         j.review.comment ? el('p', {}, `“${j.review.comment}”`) : null, el('p', { class: 'muted small' }, `${ago(j.review.at)}`)]

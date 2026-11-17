@@ -888,3 +888,26 @@ label.field .hint { font-weight: 500; }
 :root[data-theme="dark"] .stars-show { color: #ffc400; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .stars-show { color: #ffc400; } }
 .next-step .block { white-space: normal; text-align: center; }
+
+/* Sign-up design step: 1) pick a look 2) add photos */
+.wiz-part { display: flex; align-items: center; gap: 10px; font-size: 1.15rem; margin-top: 6px; }
+.wiz-part .n { width: 30px; height: 30px; border-radius: 99px; background: var(--ink); color: var(--gold); display: grid; place-items: center; font-size: .95rem; flex: none; }
+.look-list { display: grid; gap: 10px; }
+.look { display: flex; align-items: center; gap: 12px; padding: 8px; text-align: left; white-space: normal; justify-content: flex-start; position: relative;
+  background: var(--surface); color: var(--text); border: 2px solid var(--border); border-radius: 14px; font-weight: 500; min-height: 0; }
+.look img { width: 128px; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 10px; flex: none; background: var(--surface-2); }
+.look-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; padding-right: 30px; }
+.look-txt b { font-size: 1.05rem; }
+.look-txt span { color: var(--muted); font-size: .9rem; line-height: 1.3; }
+.look.on { border-color: var(--gold); background: var(--gold-soft); box-shadow: 0 0 0 2px var(--gold); }
+.look-check { position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; border-radius: 99px; display: grid; place-items: center; font-weight: 800; }
+.look.on .look-check { background: var(--gold); color: var(--ink); }
+/* After sending: their room in the look they picked */
+.make-design { text-align: left; border: 2px solid var(--gold); background: var(--gold-soft); border-radius: 16px; padding: 14px; }
+.make-design h2 { font-size: 1.2rem; }
+.make-wait { position: relative; }
+.make-wait img { width: 100%; border-radius: 12px; display: block; opacity: .55; }
+.make-wait .spinner { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px; border: 5px solid rgba(0,0,0,.15); border-top-color: var(--ink); border-radius: 50%; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.make-design img.made { width: 100%; border-radius: 12px; display: block; }
+.wiz-next button, .make-design .btn { white-space: normal; text-align: center; }
