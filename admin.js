@@ -62,7 +62,7 @@
       return loginView(me);
     }
     nav.replaceChildren(
-      el('a', { class: 'btn ghost small', href: 'index.html', target: '_blank' }, 'Customer site'),
+      el('a', { class: 'btn ghost small', href: 'index.html', target: '_blank' }, el('span', { class: 'wide-only' }, 'Customer site'), el('span', { class: 'narrow-only' }, '🌐 Site')),
       el('button', { class: 'link small', onclick: async () => { await api.auth.signOut(); location.reload(); } }, 'Log out'),
     );
     meUser = me; isStaff = me.role === 'staff';
@@ -78,8 +78,8 @@
   }
 
   /* ---------- main ---------- */
-  const MAIN_TABS = [['today', 'Today'], ['jobs', 'Jobs'], ['sales', 'Sales'], ['crew', 'Crew'], ['business', 'Business']];
-  const SALES_TABS = [['today', 'Today'], ['jobs', 'My clients']];
+  const MAIN_TABS = [['today', 'Today', '📅'], ['jobs', 'Jobs', '🗂️'], ['sales', 'Sales', '💼'], ['crew', 'Contractors', '👷'], ['business', 'Settings', '⚙️']];
+  const SALES_TABS = [['today', 'Today', '📅'], ['jobs', 'My clients', '🗂️']];
   if (MAIN_TABS.some(([id]) => id === location.hash.slice(1))) tab = location.hash.slice(1);
   const salesName = (id) => team.find((x) => x.id === id)?.name;
   let stateFilter = ''; // jobs, customers and crew: show one state ('' = all, 'none' = no state set)
@@ -188,15 +188,72 @@
     const todo = attentionCount();
     const newCount = jobs.filter((j) => j.status === 'new').length;
     const tabs = el('div', { class: 'tabs-bar main-tabs', role: 'tablist', style: 'margin-top:8px' },
-      ...(isStaff ? MAIN_TABS : SALES_TABS).map(([id, label]) => el('button', { role: 'tab', 'aria-current': String(tab === id), onclick: () => { tab = id; history.replaceState(null, '', '#' + id); render(); } },
-        label,
-        id === 'today' && todo ? el('span', { class: 'count hot' }, String(todo)) : null,
-        id === 'jobs' && newCount ? el('span', { class: 'count' }, String(newCount)) : null)));
+      ...(isStaff ? MAIN_TABS : SALES_TABS).map(([id, label, icon]) => el('button', { role: 'tab', 'aria-current': String(tab === id), onclick: () => { tab = id; history.replaceState(null, '', '#' + id); render(); } },
+        el('span', { class: 'tab-ic', 'aria-hidden': 'true' }, icon,
+          id === 'today' && todo ? el('span', { class: 'count hot' }, String(todo)) : null,
+          id === 'jobs' && newCount ? el('span', { class: 'count' }, String(newCount)) : null),
+        el('span', { class: 'tab-lbl' }, label))));
     const body = tab === 'today' ? todayView() : tab === 'jobs' ? leadsView() : tab === 'sales' ? salesTeamView() : tab === 'crew' ? crewView() : businessView();
     view.replaceChildren(tabs, el('div', { class: 'stack', style: 'margin:16px 0' }, body));
   }
 
   /* ---------- today ---------- */
+  // Calendar on Today: crew work days and rep visits. Tap a day to see it, tap a job to open it.
+  let calMonth = null; let calDay = null;
+  function calendarCard() {
+    const todayK = dayKey(Date.now());
+    if (!calDay) calDay = todayK;
+    if (!calMonth) calMonth = calDay.slice(0, 7);
+    const events = [];
+    jobs.filter((j) => j.status !== 'lost').forEach((j) => {
+      if (j.scheduledFor && ['scheduled', 'in_progress', 'completed'].includes(j.status)) events.push({ j, at: j.scheduledFor, kind: 'work' });
+      if (j.visitAt) events.push({ j, at: j.visitAt, kind: 'visit' });
+    });
+    const byDay = {};
+    events.forEach((e) => { (byDay[e.at.slice(0, 10)] ||= []).push(e); });
+    Object.values(byDay).forEach((l) => l.sort((a, b) => a.at.localeCompare(b.at)));
+    const [y, m] = calMonth.split('-').map(Number);
+    const first = new Date(y, m - 1, 1); const days = new Date(y, m, 0).getDate();
+    const pad = (n) => String(n).padStart(2, '0');
+    const card = el('section', { class: 'card stack cal-card' });
+    const draw = () => {
+      const cells = [];
+      for (let i = 0; i < first.getDay(); i++) cells.push(el('span', { class: 'tcal-blank' }));
+      for (let d = 1; d <= days; d++) {
+        const k = `${y}-${pad(m)}-${pad(d)}`; const ev = byDay[k] || [];
+        cells.push(el('button', { type: 'button', class: 'tcal-cell' + (k === calDay ? ' on' : '') + (k === todayK ? ' today' : '') + (ev.length ? ' has' : ''),
+          'aria-label': `${new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}: ${ev.length ? ev.length + (ev.length === 1 ? ' job' : ' jobs') : 'nothing'}`,
+          'aria-pressed': String(k === calDay), onclick: () => { calDay = k; draw(); } },
+          el('span', { class: 'tcal-num' }, String(d)),
+          ev.length ? el('span', { class: 'tcal-dots' }, ...ev.slice(0, 3).map((e) => el('i', { class: e.kind }))) : null,
+          ev.length > 3 ? el('span', { class: 'tcal-more' }, `+${ev.length - 3}`) : null));
+      }
+      const list = byDay[calDay] || [];
+      const dayName = new Date(calDay + 'T12:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+      const go = (dm) => { const d = new Date(y, m - 1 + dm, 1); calMonth = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; render(); };
+      card.replaceChildren(...[
+        el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, '📅 Calendar'),
+          el('span', { class: 'tcal-key' }, el('i', { class: 'work' }), 'Crew', el('i', { class: 'visit' }), 'Rep visit')),
+        el('div', { class: 'tcal-head' },
+          el('button', { type: 'button', class: 'ghost small', 'aria-label': 'Previous month', onclick: () => go(-1) }, '‹'),
+          el('b', {}, first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })),
+          el('button', { type: 'button', class: 'ghost small', 'aria-label': 'Next month', onclick: () => go(1) }, '›')),
+        el('div', { class: 'tcal-grid' }, ...['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((x) => el('span', { class: 'tcal-dow' }, x)), ...cells),
+        calMonth !== todayK.slice(0, 7) || calDay !== todayK ? el('button', { type: 'button', class: 'link small', style: 'align-self:center', onclick: () => { calDay = todayK; calMonth = todayK.slice(0, 7); render(); } }, 'Back to today') : null,
+        el('div', { class: 'tcal-day' },
+          el('b', {}, calDay === todayK ? `Today · ${dayName}` : dayName),
+          list.length ? el('div', { class: 'tcal-list' }, ...list.map((e) => {
+            const who = e.kind === 'work' ? (crewName(e.j) ? '👷 ' + crewName(e.j) : '👷 No crew yet') : '🤝 Rep visit' + (salesName(e.j.salesId) ? ' · ' + salesName(e.j.salesId) : '');
+            return el('button', { type: 'button', class: 'tcal-item ' + e.kind, onclick: () => openLead(e.j.id, 'overview') },
+              el('span', { class: 'tcal-time' }, new Date(e.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })),
+              el('span', { class: 'body' }, el('b', {}, `${e.j.buyer.name}`), el('span', { class: 'muted small' }, `${tradeOf(e.j.trade).icon} ${tradeOf(e.j.trade).label} · ${jobNo(e.j)}`), el('span', { class: 'small' }, who)),
+              el('span', { class: 'chev', 'aria-hidden': 'true' }, '›'));
+          })) : el('p', { class: 'muted small' }, 'Nothing scheduled this day.'))].filter(Boolean));
+    };
+    draw();
+    return card;
+  }
+
   function todayView() {
     const bs = myBuckets();
     const today = dayKey(Date.now()), weekEnd = dayKey(Date.now() + 7 * 86400e3);
@@ -222,6 +279,7 @@
       isStaff ? el('div', { class: 'kpis three' }, kpi(bs[0].list.length, 'New leads'), kpi(thisWeek, 'Jobs this week'), kpi(money(jobs.reduce((t, j) => t + owedOn(j), 0)), 'Owed to you'))
         : el('div', { class: 'kpis three' }, kpi(jobs.filter((j) => ['new', 'qualifying'].includes(j.status)).length, 'Open leads'),
           kpi(jobs.filter((j) => estWith(j, 'sent')).length, 'Estimates out'), kpi(money(soldTotal(jobs)), 'Sold')),
+      calendarCard(),
       ...(sections.length ? sections : [el('div', { class: 'card caught-up' },
         el('div', { style: 'font-size:2.4rem' }, '🎉'), el('h2', {}, 'All caught up'), el('p', { class: 'muted' }, 'Nothing needs your attention right now.'))]),
       el('button', { class: 'ghost block', onclick: () => { tab = 'jobs'; history.replaceState(null, '', '#jobs'); render(); } }, 'See all jobs →'),
@@ -1500,7 +1558,7 @@
       el('div', { class: 'month-head' }, el('b', {}, st ? `🗺 ${TH.stateName(st)}` : 'No state set'), el('span', {}, `${n} contractor${n === 1 ? '' : 's'}`)),
       el('div', { class: 'card crew' }, ...crew.filter((c) => (c.state || '') === st).sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name)).map(crewItem)))))
       : el('div', { class: 'card crew' }, el('p', { class: 'muted' }, 'No crew added yet.'));
-    return [el('div', { class: 'row' }, el('h2', {}, 'Your crew'), el('span', { class: 'spacer' }), el('button', { class: 'gold small', onclick: () => crewForm() }, '+ Add')), crewStSel, list,
+    return [el('div', { class: 'row' }, el('h2', {}, 'Your contractors'), el('span', { class: 'spacer' }), el('button', { class: 'gold small', onclick: () => crewForm() }, '+ Add')), crewStSel, list,
       el('p', { class: 'muted small' }, 'Crew sign in at ', el('a', { href: 'crew.html', target: '_blank' }, new URL('crew.html', location.href).href), '. Open a crew member to invite them.')];
   }
 

@@ -1633,5 +1633,23 @@
     document.head.append(sc);
   }));
 
+  // Light / dark mode button in the top bar. Starts with the phone's setting; a tap picks one and it's remembered.
+  function setupTheme() {
+    const btn = document.getElementById('themeBtn');
+    if (!btn) return;
+    const mq = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
+    const now = () => document.documentElement.dataset.theme || (mq && mq.matches ? 'dark' : 'light');
+    const draw = () => { const dark = now() === 'dark'; btn.textContent = dark ? '☀️' : '🌙'; btn.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode'); btn.title = btn.getAttribute('aria-label'); };
+    btn.addEventListener('click', () => {
+      const next = now() === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = next;
+      try { localStorage.setItem('tophat.theme', next); } catch (e) {}
+      draw();
+    });
+    if (mq && mq.addEventListener) mq.addEventListener('change', draw);
+    draw();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupTheme); else setupTheme();
+
   window.TH = { US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();
