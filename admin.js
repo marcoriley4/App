@@ -231,6 +231,7 @@
         el('span', { class: 'tab-lbl' }, label))));
     const body = tab === 'today' ? todayView() : tab === 'jobs' ? leadsView() : tab === 'sales' ? salesTeamView() : tab === 'crew' ? crewView() : businessView();
     view.replaceChildren(tabs, el('div', { class: 'stack', style: 'margin:16px 0' }, body));
+    if (tab === 'today') fillDreams();
   }
 
   /* ---------- today ---------- */
@@ -302,6 +303,8 @@
         el('div', { style: 'flex:1;min-width:0' }, el('h3', {}, b.title), el('p', { class: 'muted small' }, b.why)),
         el('span', { class: 'todo-count' }, String(b.list.length))),
       el('div', { class: 'todo-list' }, ...b.list.slice(0, 8).map((j) => el('div', { class: 'todo-row' },
+        (j.designs || []).some((v) => v.chosen) && ['new', 'qualifying', 'hot'].includes(j.status)
+          ? el('button', { type: 'button', class: 'todo-dream', 'data-dream': j.id, 'aria-label': `See ${j.buyer.name}’s dream design`, onclick: () => openLead(j.id, 'overview') }) : null,
         el('button', { type: 'button', class: 'todo-open', onclick: () => openLead(j.id, 'overview') },
           el('b', {}, j.buyer.name), el('span', { class: 'muted small' }, `${jobNo(j)} · ${b.line(j)}`)),
         b.call && j.buyer.phone ? el('a', { class: 'btn gold small', href: telHref(j.buyer.phone) }, '📞 Call')
@@ -321,6 +324,13 @@
         el('div', { style: 'font-size:2.4rem' }, '🎉'), el('h2', {}, 'All caught up'), el('p', { class: 'muted' }, 'Nothing needs your attention right now.'))]),
       el('button', { class: 'ghost block', onclick: () => { tab = 'jobs'; history.replaceState(null, '', '#jobs'); render(); } }, 'See all jobs →'),
     ];
+  }
+  // Fill in the little dream pictures on Today once the page is drawn.
+  async function fillDreams() {
+    for (const b of document.querySelectorAll('.todo-dream:not(.ready)')) {
+      b.classList.add('ready');
+      try { const v = (await api.designs.list(b.dataset.dream)).find((x) => x.chosen); if (v && v.url) b.append(el('img', { src: v.url, alt: '' })); else b.remove(); } catch (e) { b.remove(); }
+    }
   }
 
   /* ---------- jobs list ---------- */
@@ -509,8 +519,10 @@
     // Design studio: the customer's AI pictures, and the one they picked.
     const chosen = designs.find((v) => v.chosen);
     const aiCount = designs.filter((v) => v.source === 'ai').length;
-    const designCard = el('section', { class: 'card stack' },
-      el('div', { class: 'row' }, el('h3', {}, '🎨 Design studio'), el('span', { class: 'spacer' }), aiCount ? el('span', { class: 'pill' }, `${aiCount} design${aiCount === 1 ? '' : 's'}`) : null),
+    // A lead with a dream picture: show it right under the next step, so the call starts from the same picture.
+    const dreamFirst = !!chosen && ['new', 'qualifying', 'hot'].includes(j.status);
+    const designCard = el('section', { class: 'card stack' + (dreamFirst ? ' dream-card' : '') },
+      el('div', { class: 'row' }, el('h3', {}, dreamFirst ? `🌟 ${first}’s dream ${TH.styleOf(j.style) ? TH.styleOf(j.style).room.label.toLowerCase() + ' · ' + TH.styleOf(j.style).style.name : 'design'}` : '🎨 Design studio'), el('span', { class: 'spacer' }), aiCount ? el('span', { class: 'pill' }, `${aiCount} design${aiCount === 1 ? '' : 's'}`) : null),
       chosen ? el('figure', { class: 'design-chosen' }, el('a', { href: chosen.url, target: '_blank', rel: 'noopener' }, el('img', { src: chosen.url, alt: 'The customer’s chosen design' })),
         el('figcaption', {}, el('b', {}, '⭐ The one they picked'), el('ol', { class: 'studio-steps' },
           ...(() => { const out = []; for (let x = chosen; x && x.source === 'ai'; x = designs.find((y) => y.id === x.parentId)) out.unshift(x); return out; })().map((v) => el('li', {}, v.prompt)))))
@@ -927,7 +939,7 @@
       tabsBar.replaceChildren(...TABS.map(([id, icon, label, sub]) => el('button', { type: 'button', role: 'tab', 'data-tab': id, 'aria-selected': String(leadTab === id), 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } },
         el('span', { class: 'tab-ic', 'aria-hidden': 'true' }, icon), el('span', { class: 'tab-txt' }, el('b', {}, label), el('span', {}, sub)))));
       const content = {
-        overview: [nextCard, reviewCard, progress, materialsCard, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, designCard, details, permitCard,
+        overview: [dreamFirst ? designCard : null, nextCard, reviewCard, progress, materialsCard, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, dreamFirst ? null : designCard, details, permitCard,
           !setupWanted && ['new', 'qualifying', 'hot'].includes(j.status) ? el('button', { type: 'button', class: 'link small', style: 'align-self:flex-start', onclick: focusSetup }, '👷 Assign a crew & date now (skip the visit)') : null],
         money: [scheduleCard, crewBillsCard, docsCard, moneyCard],
         files: [filesCard],

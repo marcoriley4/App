@@ -12,6 +12,45 @@ const BUCKET = 'job-files';
 const MODEL = Deno.env.get('DESIGN_MODEL') || 'gemini-2.5-flash-image';
 const DAILY_LIMIT = Number(Deno.env.get('DESIGN_DAILY_LIMIT') || 40); // AI pictures per job per day: caps the bill
 const MAX_BYTES = 8 * 1024 * 1024;
+// Sign-up "dream" previews happen before the customer has an account, so they're capped per visitor and per day overall.
+const DREAMS_PER_VISITOR = Number(Deno.env.get('DREAMS_PER_VISITOR') || 8);
+const DREAMS_PER_DAY = Number(Deno.env.get('DREAMS_PER_DAY') || 300);
+// Same looks as data.js STYLE_ROOMS: the server builds the request, so a visitor can't ask for anything else.
+const LOOKS: Record<string, [string, string, string]> = {
+  'kitchen/modern': ['kitchen', 'Modern', 'Flat white cabinets, black hardware, quartz counters'],
+  'kitchen/farmhouse': ['kitchen', 'Farmhouse', 'White shaker cabinets, wood accents, apron sink'],
+  'kitchen/classic': ['kitchen', 'Classic warm', 'Wood cabinets, cream counters, traditional trim'],
+  'bathroom/spa': ['bathroom', 'Modern spa', 'Walk-in glass shower, floating vanity, large tile'],
+  'bathroom/farmhouse': ['bathroom', 'Farmhouse', 'Shaker vanity, subway tile, black fixtures'],
+  'bathroom/classic': ['bathroom', 'Classic', 'Tub and shower, wood vanity, warm tones'],
+  'living/modern': ['living room', 'Modern', 'Clean lines, light walls, big windows'],
+  'living/farmhouse': ['living room', 'Farmhouse', 'Shiplap wall, wood beams, cozy colors'],
+  'living/classic': ['living room', 'Traditional', 'Fireplace with mantel, crown molding, rich colors'],
+  'bedroom/modern': ['bedroom', 'Calm modern', 'Soft gray walls, simple lines, wood floor'],
+  'bedroom/farmhouse': ['bedroom', 'Cozy farmhouse', 'Board-and-batten wall, warm wood, soft whites'],
+  'bedroom/classic': ['bedroom', 'Classic', 'Wainscoting, deep color, traditional trim'],
+  'basement/family': ['basement', 'Family room', 'Open space, sectional, bright lighting'],
+  'basement/theater': ['basement', 'Home theater', 'Dark walls, big screen, theater seats'],
+  'basement/guest': ['basement', 'Guest suite', 'Bedroom corner, bath nearby, warm and finished'],
+  'garage/clean': ['garage', 'Clean & simple', 'Painted walls, epoxy floor, bright lights'],
+  'garage/workshop': ['garage', 'Workshop', 'Workbench, pegboard, tool storage'],
+  'garage/showroom': ['garage', 'Showroom', 'Gray flake floor, slat wall, cabinets'],
+};
+const dreamRequest = (key: string, extra: string) => { const [room, name, desc] = LOOKS[key];
+  return `Redesign this ${room} in the ${name} style: ${desc}.${extra.trim() ? ' Also: ' + extra.trim().slice(0, 200) + '.' : ''}`; };
+async function callGemini(key: string, mime: string, bytes: Uint8Array, text: string) {
+  const ai = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(MODEL)}:generateContent`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+    body: JSON.stringify({ contents: [{ role: 'user', parts: [{ inline_data: { mime_type: mime, data: encodeBase64(bytes) } }, { text }] }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } }),
+  });
+  const out = await ai.json().catch(() => ({}));
+  if (!ai.ok) { console.error('Gemini error', ai.status, JSON.stringify(out).slice(0, 500)); throw Object.assign(new Error('The AI service had a problem. Please try again in a minute.'), { status: 502 }); }
+  const parts = out?.candidates?.[0]?.content?.parts || [];
+  const img = parts.map((p: Record<string, Record<string, string>>) => p.inlineData || p.inline_data).find((x: Record<string, string>) => x && x.data);
+  if (!img) { const said = parts.map((p: Record<string, string>) => p.text).filter(Boolean).join(' ').slice(0, 200);
+    throw Object.assign(new Error(said ? `The AI couldn’t make that picture: ${said}` : 'The AI didn’t send back a picture. Try again.'), { status: 422 }); }
+  return { mime: img.mimeType || img.mime_type || 'image/png', data: img.data as string };
+}
 const TRADES: Record<string, string> = {
   plumbing: 'Plumbing', electrical: 'Electrical', roofing: 'Roofing', hvac: 'Heating & AC', painting: 'Painting',
   drywall: 'Drywall', flooring: 'Flooring', remodel: 'Remodel', landscaping: 'Landscaping', other: 'Home project',
@@ -59,6 +98,28 @@ Deno.serve(async (req) => {
 
   let body: Record<string, string>;
   try { body = await req.json(); } catch { return fail('Bad request.'); }
+
+  // Sign-up preview: their photo in the look they picked. Nothing is saved; capped per visitor and per day.
+  if (body.action === 'dream') {
+    const key = Deno.env.get('GEMINI_API_KEY');
+    if (!key) return fail('Picture previews aren’t turned on yet. We’ll still see the look you picked.', 503);
+    if (!LOOKS[String(body.style || '')]) return fail('Pick a look first.');
+    let img;
+    try { img = parseDataUrl(body.image); } catch (e) { return fail((e as Error).message); }
+    const ip = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || 'unknown';
+    const visitor = encodeBase64(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ip + (Deno.env.get('SUPABASE_URL') || ''))))).slice(0, 24);
+    const since = new Date(Date.now() - 86400e3).toISOString();
+    const { count: mine } = await admin.from('design_dreams').select('id', { count: 'exact', head: true }).eq('visitor', visitor).gte('created_at', since);
+    if ((mine || 0) >= DREAMS_PER_VISITOR) return fail('That’s all the previews for today. Send your request and your project manager will make more with you.', 429);
+    const { count: all } = await admin.from('design_dreams').select('id', { count: 'exact', head: true }).gte('created_at', since);
+    if ((all || 0) >= DREAMS_PER_DAY) return fail('Picture previews are busy right now. Send your request and we’ll make yours with you.', 429);
+    await admin.from('design_dreams').insert({ visitor });
+    try {
+      const out = await callGemini(key, img.mime, img.bytes, designPrompt('Remodel', '', [], dreamRequest(String(body.style), String(body.extra || ''))));
+      return reply({ image: `data:${out.mime};base64,${out.data}` });
+    } catch (e) { return fail((e as Error).message, (e as { status?: number }).status || 500); }
+  }
+
   const job = String(body.job || '');
   if (!uuid.test(job)) return fail('Job not found.', 404);
 
@@ -140,6 +201,16 @@ Deno.serve(async (req) => {
         const mime = img.mimeType || img.mime_type || 'image/png';
         const version = await save(decodeBase64(img.data), mime, { source: 'ai', prompt, parent_id: from.id });
         return reply({ version });
+      }
+      case 'adopt': {
+        // Right after sign-up: their photo and the dream picture they saw, saved on the job as the one they picked.
+        const { count } = await admin.from('design_versions').select('id', { count: 'exact', head: true }).eq('job_id', job);
+        if ((count || 0) > 0) return fail('This job already has designs.', 409);
+        const photo = parseDataUrl(body.photo); const pic = parseDataUrl(body.image);
+        const ph = await save(photo.bytes, photo.mime, { source: 'photo', prompt: '' });
+        const v = await save(pic.bytes, pic.mime, { source: 'ai', prompt: String(body.prompt || '').slice(0, 1500), parent_id: ph.id, chosen: true });
+        await admin.from('job_events').insert({ job_id: job, text: `🌟 ${byName} designed their dream room while signing up` });
+        return reply({ version: v });
       }
       case 'choose': {
         const id = String(body.id || '');

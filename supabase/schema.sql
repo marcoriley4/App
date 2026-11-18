@@ -28,7 +28,7 @@ end $$;
 
 -- ---------- clean slate for re-runs ----------
 drop trigger if exists on_auth_user_created on auth.users;
-drop table if exists public.job_materials, public.crew_bills, public.payment_reports, public.design_versions, public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
+drop table if exists public.design_dreams, public.job_materials, public.crew_bills, public.payment_reports, public.design_versions, public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
 drop function if exists public.handle_new_user, public.is_staff, public.new_crew_token, public.owns_job,
   public.customer_can_read, public.crew_token_active, public.create_job, public.add_customer_file, public.my_jobs,
   public.crew_job, public.crew_add_file, public.jobs_after_insert, public.jobs_before_update, public.jobs_after_update,
@@ -238,6 +238,17 @@ create table public.job_files (
 create index on public.job_files (job_id);
 
 -- Notes the assigned contractor writes for the office. Office reads them; customers never do.
+-- Sign-up "dream" previews (before the customer has an account): one row per picture, so the design
+-- function can cap them per visitor and per day. Only the server (service role) touches it.
+create table public.design_dreams (
+  id bigint generated always as identity primary key,
+  visitor text not null,
+  created_at timestamptz not null default now()
+);
+create index on public.design_dreams (visitor, created_at);
+alter table public.design_dreams enable row level security;
+revoke all on public.design_dreams from anon, authenticated;
+
 -- Materials for a job: what needs ordering, what's ordered (and when it arrives), what's delivered.
 -- Office and the job's salesperson manage it directly; crew go through crew_material_add / crew_material_delivered; customers see it in my_jobs().
 create table public.job_materials (

@@ -658,6 +658,8 @@
   function aiConfig() { try { return { model: DEFAULT_IMAGE_MODEL, ...(JSON.parse(localStorage.getItem(AI_KEY)) || {}) }; } catch (e) { return { model: DEFAULT_IMAGE_MODEL }; } }
   // Connect the AI design studio with the owner's own Gemini key (preview: saved in this browser only).
   // Checks the key with Google first, trying the stable picture model and then the newer one.
+  // What a sign-up "dream" picture asks for (kept the same in supabase/functions/design).
+  const dreamRequest = (look, extra) => `Redesign this ${look.room.label.toLowerCase()} in the ${look.style.name} style: ${look.style.desc}.${String(extra || '').trim() ? ' Also: ' + String(extra).trim().slice(0, 200) + '.' : ''}`;
   const IMAGE_MODELS = [DEFAULT_IMAGE_MODEL, 'gemini-3.1-flash-image'];
   async function connectAi(key) {
     key = String(key || '').trim();
@@ -1483,6 +1485,33 @@
         writeDb(d);
         return v;
       },
+      // Sign-up: their photo in the look they picked, before they've even sent the request (nothing saved yet).
+      async dream(photo, styleKey, extra = '') {
+        const look = styleOf(styleKey);
+        if (!look) throw new Error('Pick a look first.');
+        if (!photo) throw new Error('Add a photo of your space first.');
+        const ai = aiConfig();
+        if (!ai.key && !window.TH_AI_MOCK) throw new Error('Picture previews aren’t turned on yet. We’ll still see the look you picked.');
+        let used = { day: '', n: 0 };
+        try { used = JSON.parse(localStorage.getItem('tophat.dreams') || '{}'); } catch (e) {}
+        const today = isoDay(Date.now());
+        if (used.day !== today) used = { day: today, n: 0 };
+        if (used.n >= 8) throw new Error('That’s all the previews for today. Send your request and your project manager will make more with you.');
+        const instruction = designPrompt({ trade: 'Remodel', description: '', earlier: [], request: dreamRequest(look, extra) });
+        const out = window.TH_AI_MOCK ? await window.TH_AI_MOCK(photo, instruction) : await callImageAI(ai, photo, instruction);
+        used.n++; try { localStorage.setItem('tophat.dreams', JSON.stringify(used)); } catch (e) {}
+        return shrinkImage(await (await fetch(out)).blob(), 1280, 0.82);
+      },
+      // After they send the request: save their photo and the dream picture to the job, marked as the one they picked.
+      async adopt(jobId, photo, image, prompt) {
+        const { d, j, u } = await designJob(jobId);
+        const save = async (src, v) => { await blobs.put('design:' + v.id, await (await fetch(src)).blob()); (j.designs ||= []).push(v); return v; };
+        const ph = await save(photo, { id: uid(), parentId: null, source: 'photo', prompt: '', by: u.name, at: Date.now(), chosen: false });
+        await save(image, { id: uid(), parentId: ph.id, source: 'ai', prompt: String(prompt || '').slice(0, 1500), by: u.name, at: Date.now(), chosen: true });
+        j.designs.forEach((x) => { x.chosen = x.source === 'ai' && x.parentId === ph.id; });
+        j.log.push({ at: Date.now(), text: `🌟 ${u.name} designed their dream ${(styleOf(j.style) || {}).room?.label?.toLowerCase() || 'room'} while signing up` });
+        writeDb(d);
+      },
       // "This is the one": the design the office should quote and build.
       async choose(jobId, id) {
         const { d, j, u } = await designJob(jobId);
@@ -1843,5 +1872,5 @@
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupTheme); else setupTheme();
 
-  window.TH = { materialsCard, SKILLS, doesTrade, STYLE_ROOMS, STYLE_TRADES, roomFromText, styleOf, MATERIAL_STATUS, US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, connect: connectAi, disconnect: () => { try { localStorage.removeItem(AI_KEY); } catch (e) {} }, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+  window.TH = { dreamRequest, materialsCard, SKILLS, doesTrade, STYLE_ROOMS, STYLE_TRADES, roomFromText, styleOf, MATERIAL_STATUS, US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, connect: connectAi, disconnect: () => { try { localStorage.removeItem(AI_KEY); } catch (e) {} }, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();

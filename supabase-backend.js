@@ -549,6 +549,13 @@
         return mapDesign((await designCall({ action: 'generate', job: jobId, from: fromId, prompt })).version);
       },
       async choose(jobId, id) { await designCall({ action: 'choose', job: jobId, id }); },
+      // Sign-up preview: works before they have an account (the server limits how many per day).
+      async dream(photo, styleKey, extra = '') {
+        if (!TH.styleOf(styleKey)) throw new Error('Pick a look first.');
+        const r = await designCall({ action: 'dream', image: photo, style: styleKey, extra: String(extra || '').slice(0, 200) });
+        return r.image;
+      },
+      async adopt(jobId, photo, image, prompt) { await designCall({ action: 'adopt', job: jobId, photo, image, prompt: prompt || '' }); },
     },
 
     crewPortal: {

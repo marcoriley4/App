@@ -915,3 +915,17 @@ label.field .hint { font-weight: 500; }
 .ai-connect { border: 2px solid var(--gold); background: var(--gold-soft); border-radius: 14px; padding: 14px; }
 .ai-connect ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
 .ai-on { color: var(--good); font-weight: 700; }
+/* ✨ Dream room during sign-up */
+.dream-box { display: flex; flex-direction: column; gap: 10px; }
+.dream-btn { background: linear-gradient(135deg, #ffc400, #ff9d00); color: #1b1404; border: 0; font-size: 1.1rem; white-space: normal; text-align: center; }
+.dream-wait { position: relative; display: none; }
+.dream-box.making .dream-wait { display: block; }
+.dream-wait img { width: 100%; border-radius: 12px; display: block; opacity: .55; }
+.dream-wait .spinner { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px; border: 5px solid rgba(0,0,0,.15); border-top-color: var(--ink); border-radius: 50%; animation: spin 1s linear infinite; }
+.dream-img { width: 100%; border-radius: 14px; display: block; border: 3px solid var(--gold); }
+.dream-box h3 { font-size: 1.15rem; }
+.dream-again { display: grid; gap: 8px; }
+.dream-card { border: 2px solid var(--gold); }
+.dream-card .design-chosen img { width: 100%; }
+.todo-dream { flex: none; width: 64px; height: 48px; padding: 0; min-height: 0; border-radius: 8px; overflow: hidden; background: var(--surface-2); border: 2px solid var(--gold); }
+.todo-dream img { width: 100%; height: 100%; object-fit: cover; display: block; }
