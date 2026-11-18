@@ -116,7 +116,6 @@
         el('a', { class: 'btn gold block hero-cta', href: '#/request', onclick: () => { if (draft.step > 4) clearDraft(); } },
           el('h1', {}, 'Start your project the right way, right now.')),
         el('p', { class: 'cta-note' }, 'Tap to start'),
-        el('a', { class: 'btn ghost block style-link', href: '#/styles' }, '🖼️ Browse style ideas: kitchens, baths, basements & more'),
       ),
       el('section', { class: 'four-steps' },
         el('h2', {}, 'It’s simple: ', el('span', { class: 'hl' }, '4 steps'), ' and you’re on your way'),
@@ -196,7 +195,7 @@
       return;
     }
 
-    if (screen === 'photos' || (screen === 'design' && draft.room === 'none')) {
+    if (screen === 'photos') {
       const grid = el('div', { class: 'photos' });
       const btnWrap = el('div', { class: 'wiz-next' });
       const draw = () => {
@@ -215,37 +214,45 @@
           saveDraft(); draw();
         } }));
       view.append(shell('Show us the space', 'A few phone pictures help us price it right. Up to 5.', [addBtn, grid,
-        screen === 'design' ? el('button', { type: 'button', class: 'link', onclick: () => { draft.room = ''; saveDraft(); route(); } }, '← Pick a room and a look instead') : null]));
+        ]));
       view.querySelector('.wiz').append(btnWrap);
       draw();
       return;
     }
 
-    // Design: 1) pick one of the three looks for their room, 2) add photos. After they send it, we make their room in that look.
+    // Design: 1) add a photo of their space, 2) pick the room, 3) pick one of the three looks, then see their dream room.
     if (screen === 'design') {
-      const room = TH.STYLE_ROOMS.find((r) => r.id === draft.room);
-      if (!room) {
-        view.append(shell('Which room are we working on?', 'Then pick the look you want and add a photo. We’ll show you your room in that look.', [
-          el('div', { class: 'tiles big-tiles' }, ...TH.STYLE_ROOMS.map((r) => el('button', { type: 'button', class: 'tile', onclick: () => { draft.room = r.id; if (!(draft.style || '').startsWith(r.id + '/')) draft.style = ''; saveDraft(); route(); } },
-            el('span', { class: 'ic' }, r.icon), el('span', {}, r.label)))),
-          el('button', { type: 'button', class: 'link', onclick: () => { draft.room = 'none'; draft.style = ''; saveDraft(); route(); } }, 'Not one of these? Just add photos'),
-        ], { nextLabel: 'Skip for now', onNext: () => { saveDraft(); next(); } }));
-        return;
-      }
+      let room = TH.STYLE_ROOMS.find((r) => r.id === draft.room) || null;
       const grid = el('div', { class: 'photos' });
       const btnWrap = el('div', { class: 'wiz-next' });
+      const rooms = el('div', { class: 'stage-chips room-chips', role: 'radiogroup', 'aria-label': 'Which room' });
       const looks = el('div', { class: 'look-list', role: 'radiogroup', 'aria-label': 'Pick a look' });
-      const drawLooks = () => looks.replaceChildren(...room.styles.map((st, i) => { const key = `${room.id}/${st.id}`; const on = draft.style === key;
-        return el('button', { type: 'button', role: 'radio', 'aria-checked': String(on), class: 'look' + (on ? ' on' : ''), onclick: () => { draft.style = on ? '' : key; saveDraft(); drawLooks(); drawBtn(); drawDream(); } },
-          el('img', { src: `img/styles/${room.id}-${st.id}.svg`, alt: '' }),
-          el('span', { class: 'look-txt' }, el('b', {}, `${i + 1}. ${st.name}`), el('span', {}, st.desc)),
-          el('span', { class: 'look-check', 'aria-hidden': 'true' }, on ? '✓' : '')); }));
+      const lookHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '3'), 'Pick the look you want');
+      const drawRooms = () => rooms.replaceChildren(...TH.STYLE_ROOMS.map((r) => el('button', { type: 'button', role: 'radio', 'aria-checked': String(draft.room === r.id), class: 'chip' + (draft.room === r.id ? ' on' : ''),
+        onclick: () => pickRoom(r) }, `${r.icon} ${r.label}`)),
+        el('button', { type: 'button', role: 'radio', 'aria-checked': String(draft.room === 'none'), class: 'chip' + (draft.room === 'none' ? ' on' : ''),
+          onclick: () => pickRoom(null) }, '📋 Something else'));
+      const pickRoom = (r) => {
+        draft.room = r ? r.id : 'none'; room = r;
+        if (!r || !(draft.style || '').startsWith(r.id + '/')) draft.style = '';
+        saveDraft(); drawRooms(); drawLooks(); drawDream(); drawBtn();
+        if (r) setTimeout(() => lookHead.scrollIntoView({ block: 'start', behavior: 'smooth' }), 30);
+      };
+      const drawLooks = () => {
+        lookHead.hidden = !room;
+        looks.replaceChildren(...(room ? room.styles.map((st, i) => { const key = `${room.id}/${st.id}`; const on = draft.style === key;
+          return el('button', { type: 'button', role: 'radio', 'aria-checked': String(on), class: 'look' + (on ? ' on' : ''), onclick: () => { draft.style = on ? '' : key; saveDraft(); drawLooks(); drawBtn(); drawDream(); } },
+            el('img', { src: `img/styles/${room.id}-${st.id}.svg`, alt: '' }),
+            el('span', { class: 'look-txt' }, el('b', {}, `${i + 1}. ${st.name}`), el('span', {}, st.desc)),
+            el('span', { class: 'look-check', 'aria-hidden': 'true' }, on ? '✓' : '')); }) : []));
+      };
       // ✨ Their dream room: their own photo in the look they picked, right here before they send anything.
       const dreamBox = el('div', { class: 'dream-box' });
       const drawDream = () => {
-        const look = TH.styleOf(draft.style);
+        const look = room && TH.styleOf(draft.style);
         const d = draft.dream && draft.dream.style === draft.style ? draft.dream : null;
-        if (!look || !draft.photos.length) { dreamBox.replaceChildren(look ? el('p', { class: 'muted small' }, `Add a photo and we’ll show you your ${room.label.toLowerCase()} in the ${look.style.name} look.`) : null); return; }
+        if (!look) { dreamBox.replaceChildren(); return; }
+        if (!draft.photos.length) { dreamBox.replaceChildren(el('p', { class: 'muted small' }, `Add a photo above and we’ll show you your ${room.label.toLowerCase()} in the ${look.style.name} look.`)); return; }
         const err = el('div', { class: 'error', hidden: true, role: 'alert' });
         const make = async (btn, extra = '') => {
           btn.disabled = true; err.hidden = true;
@@ -272,9 +279,8 @@
           el('div', { class: 'dream-again' }, extra, again), err);
       };
       const drawBtn = () => {
-        const n = draft.photos.length;
         const loved = draft.dream && draft.dream.style === draft.style;
-        btnWrap.replaceChildren(n || draft.style
+        btnWrap.replaceChildren(draft.photos.length || draft.style
           ? el('button', { type: 'button', class: 'gold block big', onclick: next }, loved ? '❤️ Love it: next' : 'Next')
           : el('button', { type: 'button', class: 'ghost block', onclick: next }, 'Skip for now'));
       };
@@ -285,22 +291,23 @@
         addBtn.hidden = draft.photos.length >= MAX_PHOTOS;
         drawBtn(); drawDream();
       };
-      const addBtn = el('label', { class: 'btn gold block big photo-btn' }, '📷 Take or add photos',
+      const addBtn = el('label', { class: 'btn gold block big photo-btn' }, draft.photos.length ? '📷 Add more photos' : '📷 Take or add a photo',
         el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async (e) => {
           const files = [...e.target.files].slice(0, MAX_PHOTOS - draft.photos.length);
           for (const f of files) { try { draft.photos.push(await shrinkImage(f)); } catch (err) { showError(err.message); } }
           saveDraft(); draw();
         } }));
-      view.append(shell(`Design your ${room.label.toLowerCase()}`, null, [
-        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Pick the look you want'),
-        looks,
-        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), `Add photos of your ${room.label.toLowerCase()}`),
-        el('p', { class: 'wiz-sub' }, 'We’ll turn your photo into the look you picked, and it helps us price it right. Up to 5.'),
-        addBtn, grid, dreamBox,
-        el('button', { type: 'button', class: 'link', onclick: () => { draft.room = ''; saveDraft(); route(); } }, 'It’s a different room'),
+      view.append(shell('Show us your space and pick a style', 'See your dream room before we even talk.', [
+        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Add a photo of your space'),
+        el('p', { class: 'wiz-sub' }, 'Stand back so the whole room is in the picture. Up to 5.'),
+        addBtn, grid,
+        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), 'Which room is it?'),
+        rooms,
+        lookHead, looks,
+        dreamBox,
       ]));
       view.querySelector('.wiz').append(btnWrap);
-      drawLooks(); draw();
+      drawRooms(); drawLooks(); draw();
       return;
     }
 
