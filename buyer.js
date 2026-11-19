@@ -236,9 +236,11 @@
       const btnWrap = el('div', { class: 'wiz-next' });
       const rooms = el('div', { class: 'stage-chips room-chips', role: 'radiogroup', 'aria-label': 'Which room' });
       const looks = el('div', { class: 'look-list', role: 'radiogroup', 'aria-label': 'Pick a look' });
-      const lookHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '3'), 'Pick the look you want');
+      const lookHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '↳'), 'Pick the look you want');
       // What their dream is right now: a look (rooms) or their own words (everything else). The AFTER picture matches one of these.
-      const dreamKey = () => (room && draft.style ? draft.style : !isRoom && (draft.dreamText || '').trim().length >= 3 ? 'text:' + draft.dreamText.trim() : '');
+      // Never empty: with nothing picked the studio still makes a finished, updated version of their photo.
+      const words = () => (draft.dreamText || '').trim();
+      const dreamKey = () => [room && draft.style ? draft.style : '', words().length >= 3 ? 'text:' + words() : ''].filter(Boolean).join('|') || 'auto';
       const drawRooms = () => rooms.replaceChildren(...TH.STYLE_ROOMS.map((r) => el('button', { type: 'button', role: 'radio', 'aria-checked': String(draft.room === r.id), class: 'chip' + (draft.room === r.id ? ' on' : ''),
         onclick: () => pickRoom(r) }, `${r.icon} ${r.label}`)),
         el('button', { type: 'button', role: 'radio', 'aria-checked': String(draft.room === 'none'), class: 'chip' + (draft.room === 'none' ? ' on' : ''),
@@ -248,11 +250,12 @@
         if (!r || !(draft.style || '').startsWith(r.id + '/')) draft.style = '';
         saveDraft(); drawRooms(); drawLooks(); drawDream(); drawBtn();
         if (r) setTimeout(() => lookHead.scrollIntoView({ block: 'start', behavior: 'smooth' }), 30);
+        else setTimeout(() => dreamText.focus(), 30);
       };
       const drawLooks = () => {
         lookHead.hidden = !room;
         looks.replaceChildren(...(room ? room.styles.map((st, i) => { const key = `${room.id}/${st.id}`; const on = draft.style === key;
-          return el('button', { type: 'button', role: 'radio', 'aria-checked': String(on), class: 'look' + (on ? ' on' : ''), onclick: () => { draft.style = on ? '' : key; saveDraft(); drawLooks(); drawBtn(); drawDream(); } },
+          return el('button', { type: 'button', role: 'radio', 'aria-checked': String(on), class: 'look' + (on ? ' on' : ''), onclick: () => { draft.style = on ? '' : key; saveDraft(); drawLooks(); drawBtn(); drawDream(); if (!on) setTimeout(() => studioHead.scrollIntoView({ block: 'start', behavior: 'smooth' }), 30); } },
             el('img', { src: `img/styles/${room.id}-${st.id}.svg`, alt: '' }),
             el('span', { class: 'look-txt' }, el('b', {}, `${i + 1}. ${st.name}`), el('span', {}, st.desc)),
             el('span', { class: 'look-check', 'aria-hidden': 'true' }, on ? '✓' : '')); }) : []));
@@ -275,43 +278,51 @@
         measureWrap);
       // ✨ The AFTER: their own photo, finished, right here before they send anything.
       const dreamBox = el('div', { class: 'dream-box' });
+      const studioHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '✨'), 'Design studio: see your dream');
       const drawDream = () => {
-        describeWrap.hidden = isRoom && draft.room !== 'none';
+        dreamText.placeholder = isRoom && room ? 'Your own words (optional), e.g. darker floors, bigger window' : dreamText.placeholder;
         const key = dreamKey();
         const look = room && TH.styleOf(draft.style);
-        const d = draft.dream && draft.dream.key === key ? draft.dream : null;
-        if (!key) { dreamBox.replaceChildren(); return; }
-        if (!draft.photos.length) { dreamBox.replaceChildren(el('p', { class: 'muted small' }, `Add your before photo above and we’ll show you your dream ${thing()}.`)); return; }
+        const d = draft.dream && draft.dream.image ? draft.dream : null; // the last picture stays until they make a new one
+        if (!draft.photos.length) {
+          dreamBox.replaceChildren(el('p', { class: 'dream-empty' }, `📷 Add your before photo above, then tap ✨ to see your dream ${thing()}, right here.`));
+          return;
+        }
         const err = el('div', { class: 'error', hidden: true, role: 'alert' });
+        const what = () => (look ? `${look.style.name} look` : words().length >= 3 ? 'your words' : '');
         const make = async (btn, extra = '') => {
           btn.disabled = true; err.hidden = true;
           dreamBox.classList.add('making');
           const label = btn.textContent; btn.textContent = `Making your dream ${thing()}… (10 to 30 seconds)`;
           try {
-            const text = look ? '' : draft.dreamText.trim();
-            const image = await api.designs.dream(draft.photos[0], look ? draft.style : '', look ? extra : [text, extra].filter(Boolean).join('. '), { trade: draft.trade });
-            draft.dream = { key, style: look ? draft.style : '', image, prompt: look ? TH.dreamRequest(look, extra) : TH.dreamRequestText(trade ? trade.label : '', [text, extra].filter(Boolean).join('. ')) };
+            const text = [words(), extra].filter((x) => x && x.trim()).join('. ');
+            const asked = look ? text : (text.length >= 3 ? text : 'finished, updated and looking its best, done right by a pro');
+            const image = await api.designs.dream(draft.photos[0], look ? draft.style : '', asked, { trade: draft.trade });
+            draft.dream = { key, style: look ? draft.style : '', image, photo: draft.photos[0], prompt: look ? TH.dreamRequest(look, text) : TH.dreamRequestText(trade ? trade.label : '', asked) };
             saveDraft(); drawDream(); drawBtn();
             dreamBox.scrollIntoView({ block: 'start', behavior: 'smooth' });
           } catch (e) { err.textContent = e.message; err.hidden = false; btn.disabled = false; btn.textContent = label; }
           finally { dreamBox.classList.remove('making'); }
         };
         if (!d) {
-          const btn = el('button', { type: 'button', class: 'dream-btn block big', onclick: () => make(btn) }, `✨ Show me my dream ${thing()}`);
-          dreamBox.replaceChildren(el('div', { class: 'dream-wait' }, el('img', { src: draft.photos[0], alt: 'Your photo' }), el('span', { class: 'spinner', 'aria-hidden': 'true' })), btn, err);
+          const btn = el('button', { type: 'button', class: 'dream-btn block big', onclick: () => make(btn) }, `✨ Tap to see my dream ${thing()}`);
+          dreamBox.replaceChildren(el('div', { class: 'dream-wait' }, el('img', { src: draft.photos[0], alt: 'Your photo' }), el('span', { class: 'spinner', 'aria-hidden': 'true' })), btn,
+            el('p', { class: 'muted small' }, what() ? `We’ll use the ${what()}.` : `Tap now, or first pick ${isRoom ? 'a room and a look' : 'some ideas'} below to make it yours.`), err);
           return;
         }
         const extra = el('input', { placeholder: 'Change something? e.g. darker colors', 'aria-label': 'Change something', maxlength: '200' });
-        const again = el('button', { type: 'button', class: 'ghost block', onclick: () => make(again, extra.value) }, '🔁 Make it again');
+        const changed = d.key !== key;
+        const again = el('button', { type: 'button', class: changed ? 'dream-btn block' : 'ghost block', onclick: () => make(again, extra.value) },
+          changed && what() ? `✨ Make a new one: ${what()}` : '🔁 Make it again');
         dreamBox.replaceChildren(
-          el('h3', {}, `✨ Your dream ${thing()}${look ? ' · ' + look.style.name : ''}`),
-          TH.beforeAfter([{ url: draft.photos[0], name: 'Your photo', stage: 'before', group: 'g' }, { url: d.image, name: 'Your dream', stage: 'after', group: 'g' }], { title: 'Before & after: slide to compare' }),
+          el('h3', {}, `✨ Your dream ${thing()}${TH.styleOf(d.style) ? ' · ' + TH.styleOf(d.style).style.name : ''}`),
+          TH.beforeAfter([{ url: d.photo || draft.photos[0], name: 'Your photo', stage: 'before', group: 'g' }, { url: d.image, name: 'Your dream', stage: 'after', group: 'g' }], { title: 'Before & after: slide to compare' }),
           el('p', { class: 'muted small' }, 'We’ll see this same before and after when we call you, so we’re talking about the same thing.'),
           el('div', { class: 'dream-again' }, extra, again), err);
       };
       const drawBtn = () => {
-        const loved = draft.dream && draft.dream.key === dreamKey();
-        btnWrap.replaceChildren(draft.photos.length || dreamKey()
+        const loved = !!(draft.dream && draft.dream.image);
+        btnWrap.replaceChildren(draft.photos.length || loved
           ? el('button', { type: 'button', class: 'gold block big', onclick: next }, loved ? '❤️ Love it: next' : 'Next')
           : el('button', { type: 'button', class: 'ghost block', onclick: next }, 'Skip for now'));
       };
@@ -332,10 +343,10 @@
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Your before photo'),
         el('p', { class: 'wiz-sub' }, 'Stand back so the whole area is in the picture. Up to 5 photos.'),
         addBtn, grid,
-        ...(isRoom ? [el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), 'Which room is it?'), rooms, lookHead, looks] : []),
-        isRoom ? null : el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), 'What do you want done?'),
+        studioHead, dreamBox,
+        ...(isRoom ? [el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), 'Which room is it? (optional)'), rooms, lookHead, looks] : []),
+        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, isRoom ? '3' : '2'), isRoom ? 'Or say it in your own words' : 'What do you want done?'),
         describeWrap,
-        dreamBox,
         extrasWrap,
       ]));
       view.querySelector('.wiz').append(btnWrap);
@@ -412,12 +423,12 @@
       const job = await api.jobs.create({ ...draft, description });
       // Their room in the look they picked: made on the next screen.
       try { sessionStorage.removeItem('tophat.makeDesign'); sessionStorage.removeItem('tophat.dreamSaved'); } catch (e) {}
-      if (job && job.id && draft.dream && draft.dream.image && draft.photos.length) {
+      if (job && job.id && draft.dream && draft.dream.image && (draft.dream.photo || draft.photos[0])) {
         // Their before and after go on the job (and into Photos & papers), so everyone sees the same thing when we call.
         try {
-          const v = await api.designs.adopt(job.id, draft.photos[0], draft.dream.image, draft.dream.prompt);
+          const v = await api.designs.adopt(job.id, draft.dream.photo || draft.photos[0], draft.dream.image, draft.dream.prompt);
           if (v && v.id) await api.designs.save(job.id, v.id, TH.styleOf(draft.dream.style)?.label || 'Dream design').catch(() => {});
-          sessionStorage.setItem('tophat.dreamSaved', JSON.stringify({ jobId: job.id, style: draft.dream.style, image: draft.dream.image, photo: draft.photos[0], what: TH.styleOf(draft.dream.style)?.room.label.toLowerCase() || TH.dreamNoun(draft.trade) }));
+          sessionStorage.setItem('tophat.dreamSaved', JSON.stringify({ jobId: job.id, style: draft.dream.style, image: draft.dream.image, photo: draft.dream.photo || draft.photos[0], what: TH.styleOf(draft.dream.style)?.room.label.toLowerCase() || TH.dreamNoun(draft.trade) }));
         } catch (e) { console.warn('Saving the dream picture failed:', e); }
       } else {
         try { if (job && job.id && draft.photos.length && (TH.styleOf(draft.style) || (draft.dreamText || '').trim().length >= 3)) sessionStorage.setItem('tophat.makeDesign', JSON.stringify({ jobId: job.id, style: draft.style, text: (draft.dreamText || '').trim(), trade: draft.trade, photo: draft.photos[0] })); } catch (e) {}

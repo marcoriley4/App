@@ -959,3 +959,4 @@ label.field .hint { font-weight: 500; }
 .step-names span.done { color: var(--good); }
 .step-names span.now { color: var(--text); font-weight: 800; }
 .time-left { margin: 2px 0 0; font-size: .9rem; font-weight: 700; color: var(--muted); }
+.dream-empty { margin: 0; padding: 14px 16px; border: 2px dashed var(--line, #ccc); border-radius: 14px; font-weight: 600; }
