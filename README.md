@@ -54,7 +54,7 @@ Today shows each stage: new leads to call, **🔥 hot leads that need a rep visi
 
 **Customers** (`index.html`)
 1. Answer one simple question per screen (most are a single tap that moves straight on): type of work → photos → what you want done → address → when (tap a day) → budget → name, phone, email and password.
-2. Describe the job with optional measurements and up to 5 photos, then the address, ZIP, a date on the calendar and an optional budget.
+2. Design it: before photo, the dream picture, plus optional notes and measurements (there's no separate "What would you like done?" step). Then the address, ZIP, a date on the calendar and an optional budget. The progress bar names every step (Type · Design · Address · Date · Budget · You) and shows about how many minutes are left.
 3. Create an account with name, mobile phone, email and password. The request is sent as soon as the account is created.
 4. Check **My jobs** anytime to see the status (Received → Estimate call → Rep visit → Scheduled → Done), the rep visit time once it's booked, and the date and crew lead's name once the work is scheduled.
 

@@ -152,13 +152,17 @@
     // Room projects (kitchens, baths…) get a "pick a style" screen after they describe it.
     // Room projects (remodel, painting, flooring…) get the design screen: pick one of the 3 looks, add photos, and we design their room in it.
     const roomTrade = TH.STYLE_TRADES.includes(draft.trade);
-    const SCREENS = ['trade', 'design', 'describe', 'where', 'when', 'budget', ...(me ? [] : ['contact'])];
+    const SCREENS = ['trade', 'design', 'where', 'when', 'budget', ...(me ? [] : ['contact'])];
     const total = SCREENS.length;
     const at = (name) => SCREENS.indexOf(name) + 1;
+    // A rough clock so they know how long is left: about how many seconds each step takes.
+    const STEP_NAMES = { trade: 'Type', design: 'Design', where: 'Address', when: 'Date', budget: 'Budget', contact: 'You' };
+    const STEP_SECS = { trade: 10, design: 75, where: 25, when: 10, budget: 10, contact: 45 };
+    const timeLeft = () => { const secs = SCREENS.slice(step - 1).reduce((t, sc) => t + (STEP_SECS[sc] || 20), 0);
+      return secs < 50 ? '⏱ Less than a minute left' : `⏱ About ${Math.round(secs / 60) || 1} minute${Math.round(secs / 60) > 1 ? 's' : ''} left`; };
     // Never skip ahead past something we still need.
     const missing = () => {
       if (!find(TRADES, draft.trade)) return 1;
-      if ((draft.description || '').trim().length < 10) return at('describe');
       if (!(draft.address || '').trim() || !/^\d{5}$/.test(draft.zip || '') || !draft.state) return at('where');
       if (!draft.timeframe) return at('when');
       return total;
@@ -177,6 +181,8 @@
         step > 1 ? el('button', { type: 'button', class: 'wiz-back', onclick: () => goTo(step - 1) }, '← Back') : el('a', { class: 'wiz-back', href: '#/' }, '← Home'),
         el('span', { class: 'wiz-count' }, `${step} of ${total}`)),
       el('div', { class: 'steps' }, ...SCREENS.map((_, i) => el('span', { class: i < step ? 'on' : '' }))),
+      el('div', { class: 'step-names', 'aria-hidden': 'true' }, ...SCREENS.map((sc, i) => el('span', { class: i + 1 === step ? 'now' : i + 1 < step ? 'done' : '' }, (STEP_NAMES[sc] || sc)))),
+      el('p', { class: 'time-left' }, timeLeft()),
       step > 1 && trade ? el('p', { class: 'wiz-what' }, `${trade.icon} ${trade.label}`) : null,
       el('h1', { class: 'wiz-q' }, title),
       sub ? el('p', { class: 'wiz-sub' }, sub) : null,
@@ -253,11 +259,20 @@
       };
       // Not a room project (or "something else"): describe the dream in a few words.
       const dreamText = el('textarea', { rows: 2, maxlength: '200', value: draft.dreamText || '', 'aria-label': 'Describe your dream',
-        placeholder: draft.trade === 'roofing' ? 'e.g. Charcoal architectural shingles, white gutters' : draft.trade === 'decks' ? 'e.g. Gray composite deck with black railings' : 'e.g. What you want it to look like when it’s done',
+        placeholder: draft.trade === 'roofing' ? 'e.g. New roof, charcoal architectural shingles, white gutters' : draft.trade === 'decks' ? 'e.g. Gray composite deck with black railings' : 'e.g. What needs fixing, and what you want it to look like when it’s done',
         oninput: () => { draft.dreamText = dreamText.value; saveDraft(); drawDream(); drawBtn(); } });
-      const dreamIdeas = el('div', { class: 'stage-chips' }, ...((TH.DESIGN_IDEAS || {})[draft.trade] || (TH.DESIGN_IDEAS || {}).other || []).map((t) => el('button', { type: 'button', class: 'chip',
+      const ideaList = [...(isRoom ? [] : IDEA_CHIPS[draft.trade] || []), ...((TH.DESIGN_IDEAS || {})[draft.trade] || (TH.DESIGN_IDEAS || {}).other || [])].filter((x, i, a) => a.indexOf(x) === i);
+      const dreamIdeas = el('div', { class: 'stage-chips' }, ...ideaList.map((t) => el('button', { type: 'button', class: 'chip',
         onclick: () => { dreamText.value = dreamText.value.trim() ? `${dreamText.value.trim()}, ${t.toLowerCase()}` : t; draft.dreamText = dreamText.value; saveDraft(); drawDream(); drawBtn(); } }, `+ ${t}`)));
       const describeWrap = el('div', { class: 'stack', style: 'gap:8px' }, dreamIdeas, dreamText);
+      // Anything else (optional): notes and measurements. This replaces the old "What would you like done?" step.
+      const notes = el('textarea', { rows: 2, maxlength: '1000', value: draft.description || '', 'aria-label': 'Anything else we should know?', placeholder: 'Anything else we should know? (optional)',
+        oninput: () => { draft.description = notes.value; saveDraft(); } });
+      const measure = el('input', { value: draft.measurements || '', placeholder: 'e.g. Kitchen is about 12 x 14 ft', 'aria-label': 'Measurements', oninput: () => { draft.measurements = measure.value; saveDraft(); } });
+      const measureWrap = el('div', { hidden: !draft.measurements }, measure);
+      const extrasWrap = el('div', { class: 'stack', style: 'gap:8px' }, notes,
+        draft.measurements ? null : el('button', { type: 'button', class: 'link', onclick: (e) => { measureWrap.hidden = false; e.currentTarget.remove(); measure.focus(); } }, '+ Add measurements (optional)'),
+        measureWrap);
       // ✨ The AFTER: their own photo, finished, right here before they send anything.
       const dreamBox = el('div', { class: 'dream-box' });
       const drawDream = () => {
@@ -318,33 +333,14 @@
         el('p', { class: 'wiz-sub' }, 'Stand back so the whole area is in the picture. Up to 5 photos.'),
         addBtn, grid,
         ...(isRoom ? [el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), 'Which room is it?'), rooms, lookHead, looks] : []),
-        isRoom ? null : el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), `Your dream: what should it look like?`),
+        isRoom ? null : el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), 'What do you want done?'),
         describeWrap,
         dreamBox,
+        extrasWrap,
       ]));
       view.querySelector('.wiz').append(btnWrap);
       if (isRoom) { drawRooms(); drawLooks(); }
       draw();
-      return;
-    }
-
-    if (screen === 'describe') {
-      const text = el('textarea', { rows: 4, value: draft.description || '', placeholder: 'e.g. Take out the island and make the kitchen L-shaped. White cabinets, quartz counters.', 'aria-label': 'What would you like done?',
-        oninput: () => { draft.description = text.value; saveDraft(); } });
-      const measure = el('input', { value: draft.measurements || '', placeholder: 'e.g. Kitchen is about 12 x 14 ft', 'aria-label': 'Measurements',
-        oninput: () => { draft.measurements = measure.value; saveDraft(); } });
-      const measureWrap = el('div', { hidden: !draft.measurements }, measure);
-      view.append(shell('What would you like done?', 'Just a sentence or two. Tap to add:', [
-        el('div', { class: 'stage-chips' }, ...(IDEA_CHIPS[draft.trade] || IDEA_CHIPS.other).map((c) => el('button', { type: 'button', class: 'chip',
-          onclick: () => { text.value = text.value.trim() ? `${text.value.trim()}. ${c}` : c; draft.description = text.value; saveDraft(); text.focus(); } }, `+ ${c}`))),
-        text,
-        draft.measurements ? null : el('button', { type: 'button', class: 'link', onclick: (e) => { measureWrap.hidden = false; e.currentTarget.remove(); measure.focus(); } }, '+ Add measurements (optional)'),
-        measureWrap,
-      ], { onNext: () => {
-        draft.description = text.value.trim(); draft.measurements = measure.value.trim(); saveDraft();
-        if (draft.description.length < 10) return showError('Tell us a little more: just a sentence is fine.');
-        next();
-      } }));
       return;
     }
 
@@ -409,8 +405,11 @@
   async function submitJob(showError) {
     try {
       const m = (draft.measurements || '').trim();
-      const dreamWords = !TH.styleOf(draft.style) && (draft.dreamText || '').trim() ? `\n\nTheir dream: ${draft.dreamText.trim()}` : '';
-      const job = await api.jobs.create({ ...draft, description: (m ? `${draft.description}\n\nMeasurements: ${m}` : draft.description) + dreamWords });
+      // The job description, from the design step: the look they picked or what they want done, their notes, and measurements.
+      const look = TH.styleOf(draft.style); const tr = find(TRADES, draft.trade);
+      const what = [look ? `${look.room.label} remodel, ${look.style.name} look (${look.style.desc.toLowerCase()})` : '', (draft.dreamText || '').trim(), (draft.description || '').trim()].filter(Boolean).join('. ');
+      const description = [what.length >= 10 ? what : `${tr ? tr.label : 'Home'} project${what ? ': ' + what : ''}`, m ? `Measurements: ${m}` : ''].filter(Boolean).join('\n\n');
+      const job = await api.jobs.create({ ...draft, description });
       // Their room in the look they picked: made on the next screen.
       try { sessionStorage.removeItem('tophat.makeDesign'); sessionStorage.removeItem('tophat.dreamSaved'); } catch (e) {}
       if (job && job.id && draft.dream && draft.dream.image && draft.photos.length) {
