@@ -1887,7 +1887,9 @@
       const box = el('div', { class: 'ba-slider', style: '--pos:50%' });
       const range = el('input', { type: 'range', min: '0', max: '100', value: '50', class: 'ba-range',
         'aria-label': `Before and after${n ? ' ' + n : ''}: slide right to see the before, left to see the after`,
-        oninput: (e) => box.style.setProperty('--pos', e.target.value + '%') });
+        oninput: (e) => { const v = Number(e.target.value); box.style.setProperty('--pos', v + '%');
+          // A label only shows while its own picture is showing under it.
+          box.classList.toggle('only-after', v < 24); box.classList.toggle('only-before', v > 76); } });
       box.append(
         el('img', { class: 'ba-after-img', src: after.url, alt: `After: ${after.name}`, draggable: 'false' }),
         el('div', { class: 'ba-before-clip' }, el('img', { src: before.url, alt: `Before: ${before.name}`, draggable: 'false' })),

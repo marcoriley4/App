@@ -255,7 +255,7 @@
       const drawLooks = () => {
         lookHead.hidden = !room;
         looks.replaceChildren(...(room ? room.styles.map((st, i) => { const key = `${room.id}/${st.id}`; const on = draft.style === key;
-          return el('button', { type: 'button', role: 'radio', 'aria-checked': String(on), class: 'look' + (on ? ' on' : ''), onclick: () => { draft.style = on ? '' : key; saveDraft(); drawLooks(); drawBtn(); drawDream(); if (!on) setTimeout(() => studioHead.scrollIntoView({ block: 'start', behavior: 'smooth' }), 30); } },
+          return el('button', { type: 'button', role: 'radio', 'aria-checked': String(on), class: 'look' + (on ? ' on' : ''), onclick: () => { draft.style = on ? '' : key; saveDraft(); drawLooks(); drawBtn(); drawDream(); } },
             el('img', { src: `img/styles/${room.id}-${st.id}.svg`, alt: '' }),
             el('span', { class: 'look-txt' }, el('b', {}, `${i + 1}. ${st.name}`), el('span', {}, st.desc)),
             el('span', { class: 'look-check', 'aria-hidden': 'true' }, on ? '✓' : '')); }) : []));
@@ -267,25 +267,26 @@
       const ideaList = [...(isRoom ? [] : IDEA_CHIPS[draft.trade] || []), ...((TH.DESIGN_IDEAS || {})[draft.trade] || (TH.DESIGN_IDEAS || {}).other || [])].filter((x, i, a) => a.indexOf(x) === i);
       const dreamIdeas = el('div', { class: 'stage-chips' }, ...ideaList.map((t) => el('button', { type: 'button', class: 'chip',
         onclick: () => { dreamText.value = dreamText.value.trim() ? `${dreamText.value.trim()}, ${t.toLowerCase()}` : t; draft.dreamText = dreamText.value; saveDraft(); drawDream(); drawBtn(); } }, `+ ${t}`)));
-      const describeWrap = el('div', { class: 'stack', style: 'gap:8px' }, dreamIdeas, dreamText);
+      const describeWrap = el('div', { class: 'stack', style: 'gap:8px' }, dreamIdeas,
+        el('label', { class: 'box-label' }, isRoom ? 'Describe your dream (optional)' : 'Describe your dream', dreamText));
       // Anything else (optional): notes and measurements. This replaces the old "What would you like done?" step.
-      const notes = el('textarea', { rows: 2, maxlength: '1000', value: draft.description || '', 'aria-label': 'Anything else we should know?', placeholder: 'Anything else we should know? (optional)',
+      const notes = el('textarea', { rows: 2, maxlength: '1000', value: draft.description || '', 'aria-label': 'Anything else we should know?', placeholder: 'e.g. Best time to call, pets, gate code',
         oninput: () => { draft.description = notes.value; saveDraft(); } });
       const measure = el('input', { value: draft.measurements || '', placeholder: 'e.g. Kitchen is about 12 x 14 ft', 'aria-label': 'Measurements', oninput: () => { draft.measurements = measure.value; saveDraft(); } });
       const measureWrap = el('div', { hidden: !draft.measurements }, measure);
-      const extrasWrap = el('div', { class: 'stack', style: 'gap:8px' }, notes,
+      const extrasWrap = el('div', { class: 'stack', style: 'gap:8px' }, el('label', { class: 'box-label' }, 'Anything else we should know? (optional)', notes),
         draft.measurements ? null : el('button', { type: 'button', class: 'link', onclick: (e) => { measureWrap.hidden = false; e.currentTarget.remove(); measure.focus(); } }, '+ Add measurements (optional)'),
         measureWrap);
       // ✨ The AFTER: their own photo, finished, right here before they send anything.
       const dreamBox = el('div', { class: 'dream-box' });
-      const studioHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '✨'), 'Design studio: see your dream');
+      const studioHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '3'), '✨ Build my dream');
       const drawDream = () => {
         dreamText.placeholder = isRoom && room ? 'Your own words (optional), e.g. darker floors, bigger window' : dreamText.placeholder;
         const key = dreamKey();
         const look = room && TH.styleOf(draft.style);
         const d = draft.dream && draft.dream.image ? draft.dream : null; // the last picture stays until they make a new one
         if (!draft.photos.length) {
-          dreamBox.replaceChildren(el('p', { class: 'dream-empty' }, `📷 Add your before photo above, then tap ✨ to see your dream ${thing()}, right here.`));
+          dreamBox.replaceChildren(el('p', { class: 'dream-empty' }, `📷 Add your before photo in step 1, then tap here to build your dream ${thing()}.`));
           return;
         }
         const err = el('div', { class: 'error', hidden: true, role: 'alert' });
@@ -305,9 +306,9 @@
           finally { dreamBox.classList.remove('making'); }
         };
         if (!d) {
-          const btn = el('button', { type: 'button', class: 'dream-btn block big', onclick: () => make(btn) }, `✨ Tap to see my dream ${thing()}`);
+          const btn = el('button', { type: 'button', class: 'dream-btn block big', onclick: () => make(btn) }, `✨ Build my dream ${thing()}`);
           dreamBox.replaceChildren(el('div', { class: 'dream-wait' }, el('img', { src: draft.photos[0], alt: 'Your photo' }), el('span', { class: 'spinner', 'aria-hidden': 'true' })), btn,
-            el('p', { class: 'muted small' }, what() ? `We’ll use the ${what()}.` : `Tap now, or first pick ${isRoom ? 'a room and a look' : 'some ideas'} below to make it yours.`), err);
+            el('p', { class: 'muted small' }, what() ? `We’ll use the ${what()}.` : `Pick ${isRoom ? 'a room and a look' : 'some ideas'} in step 2 to make it yours, or just tap.`), err);
           return;
         }
         const extra = el('input', { placeholder: 'Change something? e.g. darker colors', 'aria-label': 'Change something', maxlength: '200' });
@@ -343,11 +344,13 @@
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Your before photo'),
         el('p', { class: 'wiz-sub' }, 'Stand back so the whole area is in the picture. Up to 5 photos.'),
         addBtn, grid,
-        studioHead, dreamBox,
-        ...(isRoom ? [el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), 'Which room is it? (optional)'), rooms, lookHead, looks] : []),
-        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, isRoom ? '3' : '2'), isRoom ? 'Or say it in your own words' : 'What do you want done?'),
+        // 2. What they want: room bubbles + looks (room projects), idea bubbles, their words, notes, measurements.
+        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), isRoom ? 'Which room is it?' : 'What do you want done?'),
+        ...(isRoom ? [rooms, lookHead, looks] : []),
         describeWrap,
         extrasWrap,
+        // 3. The design studio: build the dream (AFTER) from their photo. Core screen: never remove (see CLAUDE.md).
+        studioHead, dreamBox,
       ]));
       view.querySelector('.wiz').append(btnWrap);
       if (isRoom) { drawRooms(); drawLooks(); }

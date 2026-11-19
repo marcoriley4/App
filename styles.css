@@ -960,3 +960,6 @@ label.field .hint { font-weight: 500; }
 .step-names span.now { color: var(--text); font-weight: 800; }
 .time-left { margin: 2px 0 0; font-size: .9rem; font-weight: 700; color: var(--muted); }
 .dream-empty { margin: 0; padding: 14px 16px; border: 2px dashed var(--line, #ccc); border-radius: 14px; font-weight: 600; }
+.ba-slider .ba-tag { transition: opacity .2s; }
+.ba-slider.only-after .ba-tag:not(.after), .ba-slider.only-before .ba-tag.after { opacity: 0; }
+.box-label { display: flex; flex-direction: column; gap: 6px; font-weight: 700; font-size: .95rem; }
