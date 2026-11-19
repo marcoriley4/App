@@ -71,7 +71,7 @@
   }
   const mapFile = (r, url) => ({
     id: r.id, name: r.name, mime: r.mime, size: Number(r.size) || 0, kind: r.kind, stage: r.stage || '', note: r.note || '',
-    shared: !!r.shared, uploaded: ms(r.uploaded_at), by: r.by_name, source: r.source, billId: r.bill_id || null, url: url || null,
+    shared: !!r.shared, uploaded: ms(r.uploaded_at), by: r.by_name, source: r.source, billId: r.bill_id || null, designGroup: r.design_group || null, url: url || null,
   });
 
   const mapDoc = (r) => ({
@@ -358,7 +358,7 @@
         if (!j) return [];
         const list = j.shared_files || [];
         const urls = await signedUrls(list.map((f) => f.path));
-        return list.map((f) => ({ id: f.id, name: f.name, kind: f.kind, size: Number(f.size) || 0, uploaded: ms(f.uploaded_at), url: urls[f.path] || null, source: f.source || '', mime: f.mime || '' }));
+        return list.map((f) => ({ id: f.id, name: f.name, kind: f.kind, size: Number(f.size) || 0, uploaded: ms(f.uploaded_at), url: urls[f.path] || null, source: f.source || '', mime: f.mime || '', stage: f.stage || '', group: f.design_group || '' }));
       },
     },
 
@@ -595,7 +595,7 @@
           crewResponse: j.crew_response || null, crewResponseNote: j.crew_response_note || '',
           startedAt: ms(j.started_at), finishedAt: ms(j.finished_at),
           customerPhotos: (j.customer_photos || []).map((pth) => photoUrls[pth]).filter(Boolean),
-          designPhotos: (j.design_photos || []).map((f) => ({ url: photoUrls[f.path], name: f.name })).filter((f) => f.url),
+          designPhotos: (j.design_photos || []).map((f) => ({ url: photoUrls[f.path], name: f.name, stage: f.stage || 'after', group: f.design_group || f.path })).filter((f) => f.url),
           id: j.id, number: j.number, trade: j.trade, status: j.status, scheduledFor: local16(j.scheduled_for),
           address: j.address, zip: j.zip, state: j.state || '', description: j.description,
           customerName: j.customer_name || '', customerPhone: j.customer_phone || '',

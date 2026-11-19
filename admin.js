@@ -705,6 +705,7 @@
     }
     const filesCard = el('section', { class: 'card stack' },
       el('div', { class: 'row' }, el('h3', {}, `Files · ${jobNo(j)}`), el('span', { class: 'spacer' }), uploadNote),
+      TH.beforeAfter(files.filter((f) => f.source === 'design').map((f) => ({ url: f.url, name: f.name, stage: f.stage, group: f.designGroup })), { title: '🎨 Saved designs: before & after (everyone on the job sees these)' }),
       el('label', { class: 'btn gold' }, '+ Add files or photos',
         el('input', { type: 'file', multiple: true, hidden: true, onchange: async (e) => {
           const picked = [...e.target.files];
@@ -725,8 +726,8 @@
             el('div', { class: 'meta' },
               el('select', { 'aria-label': `Type of ${f.name}`, onchange: (e) => fileUpdate(f.id, { kind: e.target.value }) },
                 ...FILE_KINDS.map((x) => el('option', { value: x.id, selected: x.id === f.kind }, x.label))),
-              f.stage ? el('span', { class: 'pill' }, (find(PHOTO_STAGES, f.stage) || {}).label || f.stage) : null,
-              f.source === 'design' ? el('span', { class: 'pill s-scheduled' }, '🎨 Saved design') : null,
+              f.stage && f.source !== 'design' ? el('span', { class: 'pill' }, (find(PHOTO_STAGES, f.stage) || {}).label || f.stage) : null,
+              f.source === 'design' ? el('span', { class: 'pill s-scheduled' }, f.stage === 'before' ? '🎨 Before' : '🎨 After (design)') : null,
               el('span', {}, `${fileSize(f.size)} · ${new Date(f.uploaded).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}${f.source === 'crew' ? ` · from ${f.by}` : f.source === 'customer' ? ` · from customer${f.by ? ` (${f.by})` : ''}` : ''}`)),
             f.note ? el('p', { class: 'small', style: 'font-style:italic' }, `“${f.note}”`) : null,
             el('label', { class: 'share' },

@@ -933,3 +933,11 @@ label.field .hint { font-weight: 500; }
 .saved-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .saved-pill { background: var(--good-soft); color: var(--good); font-weight: 800; border-radius: 12px; padding: 8px 12px; flex: 1; }
 .saved-designs img { width: 150px; height: 100px; object-fit: cover; border-radius: 10px; border: 2px solid var(--gold); }
+/* Before & after */
+.ba-row { display: flex; align-items: center; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.ba-pic { position: relative; flex: none; display: block; }
+.ba-pic img { width: 150px; height: 104px; object-fit: cover; border-radius: 10px; display: block; border: 2px solid var(--border); }
+.ba-tag { position: absolute; left: 6px; top: 6px; font-size: .78rem; font-weight: 800; padding: 2px 8px; border-radius: 99px; background: var(--ink); color: #fff; }
+.ba-tag.after { background: var(--gold); color: var(--ink); }
+.ba-pic:has(.after) img { border-color: var(--gold); }
+.ba-arrow { font-size: 1.6rem; font-weight: 800; color: var(--muted); flex: none; }

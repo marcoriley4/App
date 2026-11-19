@@ -1022,8 +1022,8 @@
         const j = (await db()).jobs.find((x) => x.id === jobId);
         if (!u || !j || j.buyerId !== u.id) return [];
         return Promise.all(j.files.filter((f) => f.shared).map(async (f) => {
-          const { id, name, kind, size, uploaded, url, source, mime } = await withUrl(f);
-          return { id, name, kind, size, uploaded, url, source: source || '', mime };
+          const { id, name, kind, size, uploaded, url, source, mime, stage, designGroup } = await withUrl(f);
+          return { id, name, kind, size, uploaded, url, source: source || '', mime, stage: stage || '', group: designGroup || '' };
         }));
       },
     },
@@ -1471,26 +1471,42 @@
         }));
       },
       // Save a design to the job's Photos & papers, shared with the customer, office, rep and contractor.
+      // Saving a design also saves the photo it started from, as its "before", so everyone sees where it was and where it's going.
       async save(jobId, id, name = 'Design') {
         const { d, j, u } = await designJob(jobId);
         const v = (j.designs || []).find((x) => x.id === id);
         if (!v) throw new Error('Not found.');
-        if (v.savedFileId && j.files.some((f) => f.id === v.savedFileId)) return;
-        const blob = await blobs.get('design:' + v.id).catch(() => null);
-        if (!blob) throw new Error('That picture is missing.');
-        const meta = { id: uid(), name: `${String(name).slice(0, 80)}.${/png/.test(blob.type) ? 'png' : 'jpg'}`, mime: blob.type || 'image/png', size: blob.size, kind: 'photo', shared: true,
-          uploaded: Date.now(), by: u.name, source: 'design', designId: v.id, note: v.prompt || '' };
-        await blobs.put(meta.id, blob);
-        j.files.push(meta); v.savedFileId = meta.id;
-        j.log.push({ at: Date.now(), text: `💾 ${u.name} saved ${name} from the design studio to Photos & papers` });
+        let root = v; while (root && root.source !== 'photo' && root.parentId) root = j.designs.find((x) => x.id === root.parentId) || null;
+        const group = (root || v).id;
+        const keep = async (ver, stage, label) => {
+          if (ver.savedFileId && j.files.some((f) => f.id === ver.savedFileId)) return false;
+          const blob = await blobs.get('design:' + ver.id).catch(() => null);
+          if (!blob) throw new Error('That picture is missing.');
+          const meta = { id: uid(), name: `${String(label).slice(0, 80)}.${/png/.test(blob.type) ? 'png' : 'jpg'}`, mime: blob.type || 'image/png', size: blob.size, kind: 'photo', shared: true,
+            uploaded: Date.now(), by: u.name, source: 'design', designId: ver.id, stage, designGroup: group, note: ver.prompt || '' };
+          await blobs.put(meta.id, blob);
+          j.files.push(meta); ver.savedFileId = meta.id;
+          return true;
+        };
+        const before = root && root !== v ? await keep(root, 'before', `Before - ${name}`) : false;
+        const after = await keep(v, v.source === 'photo' ? 'before' : 'after', v.source === 'photo' ? `Before - ${name}` : `After - ${name}`);
+        if (before || after) j.log.push({ at: Date.now(), text: `💾 ${u.name} saved ${name}${before ? ' and its before photo' : ''} from the design studio to Photos & papers` });
         writeDb(d);
       },
+      // Take a design back out. Its before photo goes too, unless another saved design still uses it.
       async unsave(jobId, id) {
         const { d, j, u } = await designJob(jobId);
         const v = (j.designs || []).find((x) => x.id === id);
         if (!v || !v.savedFileId) return;
-        j.files = j.files.filter((f) => f.id !== v.savedFileId); await blobs.del(v.savedFileId).catch(() => {});
-        delete v.savedFileId;
+        const drop = async (ver) => { j.files = j.files.filter((f) => f.id !== ver.savedFileId); await blobs.del(ver.savedFileId).catch(() => {}); delete ver.savedFileId; };
+        const file = j.files.find((f) => f.id === v.savedFileId);
+        await drop(v);
+        if (file && file.stage === 'after') {
+          const stillUsed = j.files.some((f) => f.source === 'design' && f.stage === 'after' && f.designGroup === file.designGroup);
+          const beforeFile = !stillUsed && j.files.find((f) => f.source === 'design' && f.stage === 'before' && f.designGroup === file.designGroup);
+          const beforeVer = beforeFile && j.designs.find((x) => x.savedFileId === beforeFile.id);
+          if (beforeVer) await drop(beforeVer);
+        }
         j.log.push({ at: Date.now(), text: `💾 ${u.name} removed a saved design from Photos & papers` });
         writeDb(d);
       },
@@ -1596,7 +1612,7 @@
             crewResponse: j.crewResponse || null, crewResponseNote: j.crewResponseNote || '',
             startedAt: j.startedAt || null, finishedAt: j.finishedAt || null,
             customerPhotos: [...(j.photos || []), ...custFiles.map((f) => f.url).filter(Boolean)],
-            designPhotos: designFiles.map((f) => ({ url: f.url, name: f.name })).filter((f) => f.url),
+            designPhotos: designFiles.map((f) => ({ url: f.url, name: f.name, stage: f.stage || 'after', group: f.designGroup || f.id })).filter((f) => f.url),
             id: j.id, number: j.number, trade: j.trade, status: j.status, scheduledFor: j.scheduledFor,
             address: j.address, zip: j.zip, state: j.state || '', description: j.description,
             customerName: b.name || '', customerPhone: b.phone || '',
@@ -1853,6 +1869,18 @@
     document.head.append(sc);
   }));
 
+  // Saved designs as Before → After, grouped by the photo they started from. files: [{ url, name, stage, group }]
+  function beforeAfter(files, { title = '🎨 Before & after' } = {}) {
+    const list = (files || []).filter((f) => f.url);
+    if (!list.length) return null;
+    const groups = [];
+    list.forEach((f) => { const k = f.group || f.url; let g = groups.find((x) => x.k === k); if (!g) { g = { k, before: null, after: [] }; groups.push(g); } if (f.stage === 'before') g.before = f; else g.after.push(f); });
+    const pic = (f, label) => el('a', { class: 'ba-pic', href: f.url, target: '_blank', rel: 'noopener' }, el('img', { src: f.url, alt: `${label}: ${f.name}` }), el('span', { class: 'ba-tag ' + label.toLowerCase() }, label));
+    return el('div', { class: 'stack', style: 'gap:8px' }, el('b', { class: 'small' }, title),
+      ...groups.map((g) => el('div', { class: 'ba-row' }, g.before ? pic(g.before, 'Before') : null, g.before && g.after.length ? el('span', { class: 'ba-arrow', 'aria-hidden': 'true' }, '→') : null,
+        ...g.after.map((f) => pic(f, 'After')))));
+  }
+
   // Materials list on a job, shared by every screen.
   // mode: 'office' (add, order, set arrival date, remove) · 'crew' (add what's needed, mark delivered) · 'customer' (read only)
   function materialsCard(job, { mode = 'customer', onChange = () => {} } = {}) {
@@ -1915,5 +1943,5 @@
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupTheme); else setupTheme();
 
-  window.TH = { dreamRequest, materialsCard, SKILLS, doesTrade, STYLE_ROOMS, STYLE_TRADES, roomFromText, styleOf, MATERIAL_STATUS, US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, connect: connectAi, disconnect: () => { try { localStorage.removeItem(AI_KEY); } catch (e) {} }, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+  window.TH = { beforeAfter, dreamRequest, materialsCard, SKILLS, doesTrade, STYLE_ROOMS, STYLE_TRADES, roomFromText, styleOf, MATERIAL_STATUS, US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, connect: connectAi, disconnect: () => { try { localStorage.removeItem(AI_KEY); } catch (e) {} }, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();

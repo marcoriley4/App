@@ -215,24 +215,40 @@ Deno.serve(async (req) => {
         return reply({ version: v });
       }
       case 'save': {
-        // Save a design to the job's Photos & papers, shared with the customer, office, rep and contractor.
+        // Save a design to the job's Photos & papers, shared with everyone on the job, together with the photo
+        // it started from (its "before"), so everyone sees where it was and where it's going.
         const id = String(body.id || '');
-        const { data: v } = await admin.from('design_versions').select('id, path, prompt').eq('job_id', job).eq('id', id).maybeSingle();
+        const { data: all } = await admin.from('design_versions').select('id, parent_id, source, path, prompt').eq('job_id', job);
+        const byId = Object.fromEntries((all || []).map((x) => [x.id, x]));
+        const v = byId[id];
         if (!v) return fail('Not found.', 404);
-        const { data: had } = await admin.from('job_files').select('id').eq('design_id', id).maybeSingle();
-        if (!had) {
-          const name = String(body.name || 'Design').replace(/[^\w .&()'-]/g, '').slice(0, 80) || 'Design';
-          const ext = String(v.path).split('.').pop() || 'png';
-          const { error } = await admin.from('job_files').insert({ job_id: job, path: v.path, name: `${name}.${ext}`, mime: ext === 'png' ? 'image/png' : 'image/jpeg', kind: 'photo',
-            shared: true, source: 'design', design_id: id, by_name: byName, note: String(v.prompt || '').slice(0, 500) });
-          if (error) return fail('Couldn’t save it to the project. Try again.');
-          await admin.from('job_events').insert({ job_id: job, text: `💾 ${byName} saved ${name} from the design studio to Photos & papers` });
-        }
+        let root = v; while (root && root.source !== 'photo' && root.parent_id) root = byId[root.parent_id];
+        const group = (root || v).id;
+        const name = String(body.name || 'Design').replace(/[^\w .&()'-]/g, '').slice(0, 80) || 'Design';
+        const keep = async (ver: Record<string, string>, stage: string, label: string) => {
+          const { data: had } = await admin.from('job_files').select('id').eq('design_id', ver.id).maybeSingle();
+          if (had) return false;
+          const ext = String(ver.path).split('.').pop() || 'png';
+          const { error } = await admin.from('job_files').insert({ job_id: job, path: ver.path, name: `${label}.${ext}`, mime: ext === 'png' ? 'image/png' : 'image/jpeg', kind: 'photo',
+            shared: true, source: 'design', design_id: ver.id, design_group: group, stage, by_name: byName, note: String(ver.prompt || '').slice(0, 500) });
+          if (error) throw new Error('Couldn’t save it to the project. Try again.');
+          return true;
+        };
+        const before = root && root.id !== v.id ? await keep(root, 'before', `Before - ${name}`) : false;
+        const after = await keep(v, v.source === 'photo' ? 'before' : 'after', `${v.source === 'photo' ? 'Before' : 'After'} - ${name}`);
+        if (before || after) await admin.from('job_events').insert({ job_id: job, text: `💾 ${byName} saved ${name}${before ? ' and its before photo' : ''} from the design studio to Photos & papers` });
         return reply({ ok: true });
       }
       case 'unsave': {
+        // Take a design out; its before photo goes too unless another saved design still uses it.
         const id = String(body.id || '');
-        await admin.from('job_files').delete().eq('job_id', job).eq('design_id', id).eq('source', 'design');
+        const { data: f } = await admin.from('job_files').select('id, stage, design_group').eq('job_id', job).eq('design_id', id).eq('source', 'design').maybeSingle();
+        if (!f) return reply({ ok: true });
+        await admin.from('job_files').delete().eq('id', f.id);
+        if (f.stage === 'after' && f.design_group) {
+          const { count } = await admin.from('job_files').select('id', { count: 'exact', head: true }).eq('job_id', job).eq('source', 'design').eq('stage', 'after').eq('design_group', f.design_group);
+          if (!count) await admin.from('job_files').delete().eq('job_id', job).eq('source', 'design').eq('stage', 'before').eq('design_group', f.design_group);
+        }
         await admin.from('job_events').insert({ job_id: job, text: `💾 ${byName} removed a saved design from Photos & papers` });
         return reply({ ok: true });
       }
