@@ -407,6 +407,10 @@
         }
         must(await sb.from('documents').update(row).eq('id', docId));
       },
+      async sign(docId, sig) {
+        if (!(await me())) throw new Error('Please log in.');
+        must(await sb.rpc('sign_document', { p_doc: docId, p_sig_name: String(sig?.name || ''), p_sig_image: sig?.image || '' }));
+      },
       async reportPayment(docId, p) {
         if (!(await me())) throw new Error('Please log in.');
         must(await sb.rpc('report_payment', { p_doc: docId, p_amount: Number(p.amount) || 0, p_method: p.method || 'Other', p_note: p.note || '',

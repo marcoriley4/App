@@ -49,7 +49,7 @@
       const cfg = TH.ai.config();
       if (cfg.key) return el('p', { class: 'small ai-on' }, `✓ AI pictures connected (Gemini · ${cfg.model}) `,
         el('button', { type: 'button', class: 'link small', onclick: () => { if (confirm('Disconnect Gemini from this browser?')) { TH.ai.disconnect(); draw(); } } }, 'Disconnect'));
-      const key = el('input', { type: 'password', placeholder: 'Paste your Gemini API key (AIza…)', autocomplete: 'off', 'aria-label': 'Gemini API key' });
+      const key = el('input', { type: 'password', placeholder: 'Paste your Gemini API key', autocomplete: 'off', 'aria-label': 'Gemini API key' });
       const err = el('div', { class: 'error', hidden: true, role: 'alert' });
       const btn = el('button', { type: 'button', class: 'gold block', onclick: async () => {
         btn.disabled = true; btn.textContent = 'Checking with Google…'; err.hidden = true;

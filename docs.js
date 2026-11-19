@@ -151,24 +151,22 @@
         ? el('section', { class: 'doc-notes' }, el('h4', {}, 'Payment terms & how to pay'), ...lines(isInv ? company.paymentInstructions : company.estimatePaymentInstructions),
           isInv && doc.payLink ? el('div', {}, 'Pay by card: ', el('a', { href: doc.payLink, target: '_blank', rel: 'noopener' }, 'secure payment link')) : null)
         : null,
-      // Invoices: the customer's signature when they paid (newest), or lines to sign on paper.
-      isInv && st !== 'void' ? (() => {
-        const signed = (doc.reports || []).filter((r) => r.signature?.image && r.status !== 'not_received').at(-1);
-        return signed ? el('section', { class: 'doc-notes doc-signed' }, el('h4', {}, 'Customer signature'),
-          el('img', { class: 'doc-sig', src: signed.signature.image, alt: `Signature of ${signed.signature.name}` }),
-          el('div', {}, el('b', {}, signed.signature.name), ` · ${new Date(signed.signature.at || signed.at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`),
-          el('div', { class: 'muted' }, `Authorized a payment of ${usd(signed.amount)} by ${signed.method} in the Top Hat app`))
-          : el('section', { class: 'doc-notes' }, el('h4', {}, 'Customer signature'),
-            el('div', {}, `I authorize payment of this invoice (${usd(Math.max(0, t.balance))} due) and agree to the payment terms above.`),
-            el('div', { class: 'sign-lines' }, el('div', {}, 'Signature'), el('div', {}, 'Printed name'), el('div', {}, 'Date')));
-      })() : null,
-      !isInv && doc.signature?.image ? el('section', { class: 'doc-notes doc-signed' }, el('h4', {}, 'Approved and signed'),
-        el('img', { class: 'doc-sig', src: doc.signature.image, alt: `Signature of ${doc.signature.name}` }),
-        el('div', {}, el('b', {}, doc.signature.name), ` · ${new Date(doc.signature.at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`),
-        el('div', { class: 'muted' }, doc.signature.inPerson ? `Signed in person with ${doc.signature.witness || 'Top Hat'}` : 'Signed in the Top Hat app'))
-        : !isInv && st === 'sent' ? el('section', { class: 'doc-notes' }, el('h4', {}, 'Approval'),
-          el('div', {}, `I approve this estimate (${usd(t.total)}) and the payment schedule above.`),
-          el('div', { class: 'sign-lines' }, el('div', {}, 'Signature'), el('div', {}, 'Printed name'), el('div', {}, 'Date'))) : null,
+      // Every estimate and invoice has a place for the customer to sign: their signature once signed, or lines to sign on paper.
+      (() => {
+        if (st === 'void') return null;
+        const viaPay = isInv ? (doc.reports || []).filter((r) => r.signature?.image && r.status !== 'not_received').at(-1) : null;
+        const sig = doc.signature?.image ? doc.signature : viaPay ? { ...viaPay.signature, at: viaPay.signature.at || viaPay.at } : null;
+        if (sig) return el('section', { class: 'doc-notes doc-signed' }, el('h4', {}, isInv ? 'Customer signature' : 'Approved and signed'),
+          el('img', { class: 'doc-sig', src: sig.image, alt: `Signature of ${sig.name}` }),
+          el('div', {}, el('b', {}, sig.name), ` · ${new Date(sig.at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`),
+          el('div', { class: 'muted' }, sig.inPerson ? `Signed in person with ${sig.witness || 'Top Hat'}`
+            : !doc.signature && viaPay ? `Authorized a payment of ${usd(viaPay.amount)} by ${viaPay.method} in the Top Hat app` : 'Signed in the Top Hat app'));
+        return el('section', { class: 'doc-notes doc-sign-here' }, el('h4', {}, isInv ? 'Customer signature' : 'Customer approval'),
+          el('div', {}, isInv
+            ? (t.balance > 0.005 ? `I authorize payment of this invoice (${usd(t.balance)} due) and agree to the payment terms above.` : 'I confirm the work and the payments on this invoice.')
+            : `I approve this estimate (${usd(t.total)}) and the payment schedule above.`),
+          el('div', { class: 'sign-lines' }, el('div', {}, 'Signature'), el('div', {}, 'Printed name'), el('div', {}, 'Date')));
+      })(),
       isInv && (doc.payments || []).length ? el('section', { class: 'doc-notes' }, el('h4', {}, 'Payments received'),
         ...doc.payments.map((p) => el('div', {}, `${fmtDate(p.date)} · ${p.method} · ${usd(p.amount)}`))) : null,
       el('footer', { class: 'doc-foot' }, `${company.name || 'Top Hat Contracting'} · Thank you for your business`),

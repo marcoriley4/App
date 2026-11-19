@@ -877,6 +877,27 @@ select public.customer_review(current_setting('t.job')::uuid, 5, 'Great job');
 select t.ok((select (x->>'review_rating')::int from jsonb_array_elements(public.my_jobs()) x where x->>'id' = current_setting('t.job')) = 5, 'customer rates the finished job');
 reset role;
 
+-- ========== Signing invoices ==========
+select set_config('request.jwt.claim.sub', :'B', false);
+set role authenticated;
+do $$ begin
+  begin perform public.sign_document(current_setting('t.inv')::uuid, 'Bob Other', 'data:image/png;base64,iVBORw0KGgo='); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'another customer cannot sign someone else''s invoice'); end;
+end $$;
+reset role;
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+select public.sign_document(current_setting('t.inv')::uuid, 'Ann Buyer', 'data:image/png;base64,iVBORw0KGgo=');
+select t.ok(public.my_documents()::text like '%"name": "Ann Buyer"%', 'customer sees their signature on the invoice');
+do $$ begin
+  begin perform public.sign_document(current_setting('t.inv')::uuid, 'Ann Buyer', 'data:image/png;base64,iVBORw0KGgo='); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'an invoice is signed only once'); end;
+  begin update public.documents set signature = null where id = current_setting('t.inv')::uuid; perform t.ok(true, 'customer update is a no-op');
+  exception when others then perform t.ok(true, 'customer cannot clear a signature'); end;
+end $$;
+reset role;
+select t.ok((select signature->>'name' from public.documents where id = current_setting('t.inv')::uuid) = 'Ann Buyer', 'customer signs their invoice in the app, and it stays');
+
 -- ========== Closed job: crew link off ==========
 select set_config('request.jwt.claim.sub', :'S', false);
 set role authenticated;

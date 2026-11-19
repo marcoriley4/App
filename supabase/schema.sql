@@ -41,7 +41,7 @@ drop function if exists public.handle_new_user, public.is_staff, public.new_crew
   public.private_guard, public.costs_after_update, public.log_call, public.staff_invite_sales, public.staff_revoke_sales,
   public.sales_invite_info, public.claim_sales_invite, public.office_crew_list,
   public.authorize_permit, public.can_design, public.permit_label, public.report_payment, public.resolve_payment_report, public.crew_bill, public.staff_crew_bill, public.crew_halfway,
-  public.crew_material_add, public.crew_material_delivered, public.job_materials_log, public.office_ask_review, public.customer_review cascade;
+  public.crew_material_add, public.crew_material_delivered, public.job_materials_log, public.sign_document, public.office_ask_review, public.customer_review cascade;
 
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
@@ -736,8 +736,12 @@ begin
   end if;
   new.job_id := old.job_id; new.type := old.type; new.number := old.number; new.created_at := old.created_at;
   new.schedule_step := old.schedule_step; new.schedule_base := old.schedule_base;
-  if new.signature is distinct from old.signature and not (old.type = 'estimate' and old.status = 'sent' and new.status = 'approved' and old.signature is null) then
-    raise exception 'A signature is added only when the estimate is approved.';
+  if new.signature is distinct from old.signature and not (
+       (old.type = 'estimate' and old.status = 'sent' and new.status = 'approved' and old.signature is null)
+    -- signed afterwards: an invoice that's out, or an estimate approved by phone
+    or (old.signature is null and new.signature is not null and new.status = old.status
+        and ((old.type = 'invoice' and old.status not in ('draft', 'void')) or (old.type = 'estimate' and old.status = 'approved')))) then
+    raise exception 'A signature is added only when the estimate is approved, or to an invoice or approved estimate that isn''t signed yet.';
   end if;
   if (new.items, new.tax_rate) is distinct from (old.items, old.tax_rate)
      and not (old.status = 'draft' or (old.status = 'sent' and jsonb_array_length(old.payments) = 0)) then
@@ -861,6 +865,26 @@ begin
           case when p_sig_image is not null then jsonb_build_object('name', left(trim(coalesce(p_sig_name, '')), 120), 'image', p_sig_image, 'at', now()) end);
   perform public.log_event(d.job_id, '💵 ' || coalesce(who, 'Customer') || ' paid ' || public.usd(amt) || ' on ' || d.number
     || case when p_sig_image is not null then ' (signed “' || left(trim(coalesce(p_sig_name, '')), 120) || '”)' else '' end || '. Confirm it when it arrives.');
+end $$;
+
+-- Sign an invoice (any time it's out) or an estimate approved by phone. The customer signs in the app;
+-- the office or the job's salesperson can have them sign in person (marked with who was there).
+create function public.sign_document(p_doc uuid, p_sig_name text, p_sig_image text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare d record; who text; nm text := left(trim(coalesce(p_sig_name, '')), 120); mine boolean; office boolean;
+begin
+  select x.* into d from public.documents x where x.id = p_doc;
+  if d.id is null then raise exception 'Not found.'; end if;
+  mine := exists (select 1 from public.jobs j where j.id = d.job_id and j.buyer_id = auth.uid());
+  office := not mine and public.can_access_job(d.job_id);
+  if not mine and not office then raise exception 'Not found.'; end if;
+  if d.signature is not null then raise exception 'This is already signed.'; end if;
+  if not ((d.type = 'invoice' and d.status not in ('draft', 'void')) or (d.type = 'estimate' and d.status = 'approved')) then raise exception 'This can’t be signed right now.'; end if;
+  if length(nm) < 3 then raise exception 'Type your full name.'; end if;
+  select name into who from public.profiles where id = auth.uid();
+  update public.documents set signature = jsonb_build_object('name', nm, 'image', p_sig_image, 'at', now(), 'in_person', office, 'witness', case when office then coalesce(who, 'Top Hat') end)
+   where id = p_doc;
+  perform public.log_event(d.job_id, '✍️ ' || d.number || ' signed “' || nm || '”' || case when office then ' in person with ' || coalesce(who, 'Top Hat') else ' in the app' end);
 end $$;
 
 -- Crew: bill Top Hat for a step of the crew pay schedule (amount worked out here), or for extra work/materials.
@@ -1325,7 +1349,7 @@ end $$;
 
 grant select, insert, update, delete on public.job_materials to authenticated;
 grant execute on function public.crew_material_add(uuid, text, text, text), public.crew_material_delivered(uuid),
-  public.office_ask_review(uuid), public.customer_review(uuid, int, text) to authenticated;
+  public.office_ask_review(uuid), public.customer_review(uuid, int, text), public.sign_document(uuid, text, text) to authenticated;
 
 grant execute on function public.is_staff(), public.owns_job(text), public.customer_can_read(text),
   public.create_job(text, text, text, text, text, text, text, text), public.add_customer_file(uuid, text, text, text, bigint),

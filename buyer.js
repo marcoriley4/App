@@ -523,6 +523,18 @@
         } }, 'Decline'));
       }
       if (dc.type === 'invoice' && D.owed(dc) > 0) acts.push(payArea(j, dc, opts.pay));
+      // Not signed yet (an invoice, or an estimate approved by phone): sign it right here.
+      if (needsSig(dc)) acts.push((close) => {
+        const area = el('div', { class: 'stack' });
+        const pad = () => { area.replaceChildren(D.signaturePad({ name: me?.name || '', title: dc.type === 'invoice' ? 'Sign this invoice' : 'Sign your estimate',
+          agree: dc.type === 'invoice' ? `By signing, you confirm invoice ${dc.number}${D.owed(dc) > 0 ? ' and agree to its payment terms' : ' and the payments on it'}.` : `By signing, you approve estimate ${dc.number} and its payment schedule.`,
+          submitLabel: 'Sign', onCancel: () => area.replaceChildren(btn),
+          onSign: async (sig) => { await api.docs.sign(dc.id, sig); close(); route(); } })); setTimeout(() => area.scrollIntoView({ block: 'center' }), 30); };
+        const btn = el('button', { class: (D.owed(dc) > 0 ? 'ghost' : 'gold') + ' block', onclick: pad }, D.owed(dc) > 0 ? '✍️ Paying another way? Just sign it' : `✍️ Sign ${dc.number}`);
+        area.append(btn);
+        if (opts.sign) setTimeout(pad, 0);
+        return area;
+      });
       D.view(dc, { job: j, customer: me, company }, acts);
       if (opts.pay || opts.sign) setTimeout(() => document.querySelector('.doc-actions')?.scrollIntoView({ block: 'start' }), 60);
     };
@@ -555,6 +567,8 @@
             : null,
           ...(paper[j.id] || []).filter((dc) => dc.type === 'estimate' && dc.status === 'sent').map((dc) =>
             el('button', { type: 'button', class: 'gold block', onclick: () => openPaper(j, dc, { sign: true }) }, `✍️ Review & sign estimate · ${D.usd(D.totals(dc).total)}`)),
+          ...(paper[j.id] || []).filter((dc) => needsSig(dc) && D.owed(dc) <= 0).map((dc) =>
+            el('button', { type: 'button', class: 'gold block', onclick: () => openPaper(j, dc, { sign: true }) }, `✍️ Sign ${dc.type === 'invoice' ? 'invoice' : 'estimate'} ${dc.number}`)),
           ...(paper[j.id] || []).filter((dc) => D.owed(dc) > 0).map((dc) =>
             pendingSum(dc) >= D.owed(dc)
               ? el('div', { class: 'callout paid-sent' }, `⏳ ${D.usd(pendingSum(dc))} payment sent for ${dc.number} · waiting for Top Hat to confirm`)
@@ -615,6 +629,10 @@
     return el('section', { class: 'contact-card' }, el('span', { class: 'contact-title' }, 'Questions? We’re one tap away'), ...rows);
   }
 
+  // An invoice (once it's out) or an estimate approved by phone that has no customer signature yet.
+  const needsSig = (dc) => !dc.signature && (dc.type === 'invoice'
+    ? !['draft', 'void'].includes(dc.status) && !(dc.reports || []).some((r) => r.signature && r.status !== 'not_received')
+    : dc.status === 'approved');
   // Finished and the last invoice paid: time to ask how we did.
   const paidUp = (list) => { const inv = list.filter((dc) => dc.type === 'invoice' && !['draft', 'void'].includes(dc.status)); return inv.length > 0 && inv.every((dc) => TH.docs.owed(dc) <= 0.005); };
   // After the job: how did we do? 1-5 stars and a comment, then (if set up) a link to post it on Google.

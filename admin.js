@@ -1313,6 +1313,20 @@
         el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: (e) => busy(e.currentTarget, async () => { if (!confirm('Mark approved without a signature? Use this if the customer said yes by phone.')) return; await api.docs.setStatus(jobId, doc.id, 'approved'); await reopen(doc.id); }) }, '✓ Approved by phone'),
         el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: (e) => busy(e.currentTarget, async () => { if (!confirm('Mark this estimate declined?')) return; await api.docs.setStatus(jobId, doc.id, 'declined'); await reopen(doc.id); }) }, 'Mark declined')));
     }
+    // Not signed yet (an invoice that's out, or an estimate approved by phone): the customer signs on your phone.
+    const unsigned = !doc.signature && (isInv ? !['draft', 'void'].includes(doc.status) && !(doc.reports || []).some((r) => r.signature && r.status !== 'not_received') : doc.status === 'approved');
+    if (unsigned) {
+      const area = el('div', { class: 'stack' });
+      const btn = el('button', { type: 'button', class: 'ghost', onclick: () => {
+        area.replaceChildren(docs.signaturePad({ name: j.buyer.name || '', title: isInv ? 'Customer signs the invoice' : 'Customer signs the estimate', submitLabel: `Sign for ${first === 'there' ? 'the customer' : first}`,
+          agree: isInv ? `By signing, the customer confirms invoice ${doc.number}.` : `By signing, the customer approves estimate ${doc.number} and its payment schedule.`,
+          onCancel: () => area.replaceChildren(btn),
+          onSign: async (sig) => { await api.docs.sign(doc.id, sig, jobId); await reopen(doc.id); } }));
+        area.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      } }, `✍️ Customer signs here (in person)`);
+      area.append(btn);
+      actions.append(el('p', { class: 'muted small' }, `Not signed yet. ${j.hasAccount ? first + ' can sign it in the app, or' : 'They can'} sign on your phone:`), area);
+    }
     if (!isInv && doc.status === 'approved') {
       actions.append(el('button', { type: 'button', class: 'gold', onclick: () => openDoc(jobId, null, 'invoice', doc) }, '🧾 Create invoice from this estimate'));
     }

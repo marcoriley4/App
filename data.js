@@ -663,7 +663,7 @@
   const IMAGE_MODELS = [DEFAULT_IMAGE_MODEL, 'gemini-3.1-flash-image'];
   async function connectAi(key) {
     key = String(key || '').trim();
-    if (key.length < 20) throw new Error('Paste the whole key. It starts with “AIza” and is about 39 characters long.');
+    if (key.length < 20) throw new Error('Paste the whole key from Google AI Studio.');
     let last = '';
     for (const model of IMAGE_MODELS) {
       let res;
@@ -1183,6 +1183,23 @@
         if (!received) j.log.push({ at: Date.now(), text: `💵 ${usd(r.amount)} by ${r.method} on ${rec.number}: not received yet` });
         writeDb(d);
         if (received) await api.docs.addPayment(jobId, docId, { amount: r.amount, method: r.method, date: isoDay(Date.now()), note: `Reported by ${r.by}${r.note ? ': ' + r.note : ''}` });
+      },
+      // Sign a document that's already out: an invoice (any time, paid or not) or an estimate approved by phone.
+      // The customer signs in the app; the office or rep can have them sign in person on their phone.
+      async sign(docId, sig, jobId = null) {
+        const u = await me(); if (!u) throw new Error('Please log in.');
+        const d = await db();
+        let j, inPerson = false;
+        if (u.role === 'buyer') j = d.jobs.find((x) => x.buyerId === u.id && x.docs.some((y) => y.id === docId));
+        else { j = (await officeJob(jobId)).j; j = d.jobs.find((x) => x.id === j.id); inPerson = true; }
+        const rec = j && j.docs.find((x) => x.id === docId);
+        if (!rec) throw new Error('Not found.');
+        if (rec.signature) throw new Error('This is already signed.');
+        if (!(rec.type === 'invoice' ? !['draft', 'void'].includes(rec.status) : rec.status === 'approved')) throw new Error('This can’t be signed right now.');
+        const signature = checkSignature(sig); if (!signature) throw new Error('Please sign first.');
+        rec.signature = { ...signature, inPerson, witness: inPerson ? u.name : undefined };
+        j.log.push({ at: Date.now(), text: `✍️ ${rec.number} signed “${signature.name}”${inPerson ? ` in person with ${u.name}` : ' in the app'}` });
+        writeDb(d);
       },
       async respond(docId, approve, sig) {
         const u = await me();
