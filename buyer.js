@@ -113,7 +113,7 @@
       el('section', { class: 'hero' },
         el('span', { class: 'hero-tag' }, 'Premier residential contracting'),
         el('img', { class: 'hero-logo', src: 'img/logo.jpg', alt: 'Top Hat Contracting Services' }),
-        el('a', { class: 'btn gold block hero-cta', href: '#/request', onclick: () => { if (draft.step > 4) clearDraft(); } },
+        el('a', { class: 'btn gold block hero-cta', href: '#/request', onclick: () => { if (draft.step > 2 && (draft.photos.length || draft.dream)) { draft.step = 2; saveDraft(); } } }, // never wipe their photo or dream: pick up at the design studio
           el('h1', {}, 'Start your project the right way, right now.')),
         el('p', { class: 'cta-note' }, 'Tap to start'),
       ),
