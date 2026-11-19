@@ -313,11 +313,11 @@
         const changed = d.key !== key;
         const again = el('button', { type: 'button', class: changed ? 'dream-btn block' : 'ghost block', onclick: () => make(again, extra.value) },
           changed && what() ? `✨ Make a new one: ${what()}` : '🔁 Make it again');
+        // Owner's order: links, tip, note and "Make it again" ABOVE the dream picture.
         dreamBox.replaceChildren(
           el('h3', {}, `✨ Your dream ${thing()}${TH.styleOf(d.style) ? ' · ' + TH.styleOf(d.style).style.name : ''}`),
-          TH.beforeAfter([{ url: d.photo || draft.photos[0], name: 'Your photo', stage: 'before', group: 'g' }, { url: d.image, name: 'Your dream', stage: 'after', group: 'g' }], { title: 'Before & after: slide to compare' }),
-          el('p', { class: 'muted small' }, 'We’ll see this same before and after when we call you, so we’re talking about the same thing.'),
-          el('div', { class: 'dream-again' }, extra, again), err);
+          TH.beforeAfter([{ url: d.photo || draft.photos[0], name: 'Your photo', stage: 'before', group: 'g' }, { url: d.image, name: 'Your dream', stage: 'after', group: 'g' }], { title: 'Before & after: slide to compare', infoFirst: true,
+            above: [el('p', { class: 'muted small' }, 'We’ll see this same before and after when we call you, so we’re talking about the same thing.'), el('div', { class: 'dream-again' }, extra, again), err] }));
       };
       const drawBtn = () => {
         const loved = !!(draft.dream && draft.dream.image);

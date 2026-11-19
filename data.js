@@ -1877,7 +1877,8 @@
   }));
 
   // Saved designs as Before → After, grouped by the photo they started from. files: [{ url, name, stage, group }]
-  function beforeAfter(files, { title = '🎨 Before & after' } = {}) {
+  // infoFirst: the links, the slide tip and any `above` nodes go ABOVE the picture (used in sign-up), title right over the picture.
+  function beforeAfter(files, { title = '🎨 Before & after', infoFirst = false, above = [] } = {}) {
     const list = (files || []).filter((f) => f.url);
     if (!list.length) return null;
     const groups = [];
@@ -1896,15 +1897,22 @@
         el('span', { class: 'ba-tag', 'aria-hidden': 'true' }, 'Before'), el('span', { class: 'ba-tag after', 'aria-hidden': 'true' }, 'After'),
         el('div', { class: 'ba-handle', 'aria-hidden': 'true' }, el('span', {}, '◀▶')),
         range);
-      return el('div', { class: 'stack', style: 'gap:4px' }, box,
-        el('div', { class: 'ba-links small' }, el('a', { href: before.url, target: '_blank', rel: 'noopener' }, 'Open before'), el('a', { href: after.url, target: '_blank', rel: 'noopener' }, 'Open after')));
+      const links = el('div', { class: 'ba-links small' }, el('a', { href: before.url, target: '_blank', rel: 'noopener' }, 'Open before'), el('a', { href: after.url, target: '_blank', rel: 'noopener' }, 'Open after'));
+      return infoFirst ? { links, box } : el('div', { class: 'stack', style: 'gap:4px' }, box, links);
     };
     const single = (f, label) => el('a', { class: 'ba-pic', href: f.url, target: '_blank', rel: 'noopener' }, el('img', { src: f.url, alt: `${label}: ${f.name}` }), el('span', { class: 'ba-tag ' + label.toLowerCase() }, label));
     let n = 0;
+    const tip = () => el('p', { class: 'muted small' }, '◀▶ Slide right to see the before, left to see the after.');
+    if (infoFirst) {
+      const parts = groups.flatMap((g) => g.before && g.after.length ? g.after.map((a) => slider(g.before, a, ++n)) : []);
+      if (parts.length) return el('div', { class: 'stack', style: 'gap:10px' },
+        ...parts.map((x) => x.links), tip(), ...above, el('b', { class: 'small' }, title), ...parts.map((x) => x.box));
+      n = 0;
+    }
     return el('div', { class: 'stack', style: 'gap:10px' }, el('b', { class: 'small' }, title),
       ...groups.flatMap((g) => g.before && g.after.length ? g.after.map((a) => slider(g.before, a, ++n))
         : [el('div', { class: 'ba-row' }, ...(g.before ? [single(g.before, 'Before')] : []), ...g.after.map((f) => single(f, 'After')))]),
-      n ? el('p', { class: 'muted small' }, '◀▶ Slide right to see the before, left to see the after.') : null);
+      n ? tip() : null);
   }
 
   // Materials list on a job, shared by every screen.
