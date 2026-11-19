@@ -1875,10 +1875,27 @@
     if (!list.length) return null;
     const groups = [];
     list.forEach((f) => { const k = f.group || f.url; let g = groups.find((x) => x.k === k); if (!g) { g = { k, before: null, after: [] }; groups.push(g); } if (f.stage === 'before') g.before = f; else g.after.push(f); });
-    const pic = (f, label) => el('a', { class: 'ba-pic', href: f.url, target: '_blank', rel: 'noopener' }, el('img', { src: f.url, alt: `${label}: ${f.name}` }), el('span', { class: 'ba-tag ' + label.toLowerCase() }, label));
-    return el('div', { class: 'stack', style: 'gap:8px' }, el('b', { class: 'small' }, title),
-      ...groups.map((g) => el('div', { class: 'ba-row' }, g.before ? pic(g.before, 'Before') : null, g.before && g.after.length ? el('span', { class: 'ba-arrow', 'aria-hidden': 'true' }, '→') : null,
-        ...g.after.map((f) => pic(f, 'After')))));
+    // Drag left to right to reveal the before; right to left to reveal the after.
+    const slider = (before, after, n) => {
+      const box = el('div', { class: 'ba-slider', style: '--pos:50%' });
+      const range = el('input', { type: 'range', min: '0', max: '100', value: '50', class: 'ba-range',
+        'aria-label': `Before and after${n ? ' ' + n : ''}: slide right to see the before, left to see the after`,
+        oninput: (e) => box.style.setProperty('--pos', e.target.value + '%') });
+      box.append(
+        el('img', { class: 'ba-after-img', src: after.url, alt: `After: ${after.name}`, draggable: 'false' }),
+        el('div', { class: 'ba-before-clip' }, el('img', { src: before.url, alt: `Before: ${before.name}`, draggable: 'false' })),
+        el('span', { class: 'ba-tag', 'aria-hidden': 'true' }, 'Before'), el('span', { class: 'ba-tag after', 'aria-hidden': 'true' }, 'After'),
+        el('div', { class: 'ba-handle', 'aria-hidden': 'true' }, el('span', {}, '◀▶')),
+        range);
+      return el('div', { class: 'stack', style: 'gap:4px' }, box,
+        el('div', { class: 'ba-links small' }, el('a', { href: before.url, target: '_blank', rel: 'noopener' }, 'Open before'), el('a', { href: after.url, target: '_blank', rel: 'noopener' }, 'Open after')));
+    };
+    const single = (f, label) => el('a', { class: 'ba-pic', href: f.url, target: '_blank', rel: 'noopener' }, el('img', { src: f.url, alt: `${label}: ${f.name}` }), el('span', { class: 'ba-tag ' + label.toLowerCase() }, label));
+    let n = 0;
+    return el('div', { class: 'stack', style: 'gap:10px' }, el('b', { class: 'small' }, title),
+      ...groups.flatMap((g) => g.before && g.after.length ? g.after.map((a) => slider(g.before, a, ++n))
+        : [el('div', { class: 'ba-row' }, ...(g.before ? [single(g.before, 'Before')] : []), ...g.after.map((f) => single(f, 'After')))]),
+      n ? el('p', { class: 'muted small' }, '◀▶ Slide right to see the before, left to see the after.') : null);
   }
 
   // Materials list on a job, shared by every screen.
