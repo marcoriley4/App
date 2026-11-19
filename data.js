@@ -1022,8 +1022,8 @@
         const j = (await db()).jobs.find((x) => x.id === jobId);
         if (!u || !j || j.buyerId !== u.id) return [];
         return Promise.all(j.files.filter((f) => f.shared).map(async (f) => {
-          const { id, name, kind, size, uploaded, url } = await withUrl(f);
-          return { id, name, kind, size, uploaded, url };
+          const { id, name, kind, size, uploaded, url, source, mime } = await withUrl(f);
+          return { id, name, kind, size, uploaded, url, source: source || '', mime };
         }));
       },
     },
@@ -1467,8 +1467,32 @@
         const { j } = await designJob(jobId);
         return Promise.all((j.designs || []).map(async (v) => {
           const blob = await blobs.get('design:' + v.id).catch(() => null);
-          return { ...v, url: blob ? URL.createObjectURL(blob) : null };
+          return { ...v, saved: !!v.savedFileId && j.files.some((f) => f.id === v.savedFileId), url: blob ? URL.createObjectURL(blob) : null };
         }));
+      },
+      // Save a design to the job's Photos & papers, shared with the customer, office, rep and contractor.
+      async save(jobId, id, name = 'Design') {
+        const { d, j, u } = await designJob(jobId);
+        const v = (j.designs || []).find((x) => x.id === id);
+        if (!v) throw new Error('Not found.');
+        if (v.savedFileId && j.files.some((f) => f.id === v.savedFileId)) return;
+        const blob = await blobs.get('design:' + v.id).catch(() => null);
+        if (!blob) throw new Error('That picture is missing.');
+        const meta = { id: uid(), name: `${String(name).slice(0, 80)}.${/png/.test(blob.type) ? 'png' : 'jpg'}`, mime: blob.type || 'image/png', size: blob.size, kind: 'photo', shared: true,
+          uploaded: Date.now(), by: u.name, source: 'design', designId: v.id, note: v.prompt || '' };
+        await blobs.put(meta.id, blob);
+        j.files.push(meta); v.savedFileId = meta.id;
+        j.log.push({ at: Date.now(), text: `💾 ${u.name} saved ${name} from the design studio to Photos & papers` });
+        writeDb(d);
+      },
+      async unsave(jobId, id) {
+        const { d, j, u } = await designJob(jobId);
+        const v = (j.designs || []).find((x) => x.id === id);
+        if (!v || !v.savedFileId) return;
+        j.files = j.files.filter((f) => f.id !== v.savedFileId); await blobs.del(v.savedFileId).catch(() => {});
+        delete v.savedFileId;
+        j.log.push({ at: Date.now(), text: `💾 ${u.name} removed a saved design from Photos & papers` });
+        writeDb(d);
       },
       // Start from a photo: the customer's request photo (data URL) or a new upload (File).
       async addPhoto(jobId, photo) {
@@ -1567,10 +1591,12 @@
           const b = customerOf(d, j);
           // Photos the customer sent with their request, so the crew knows what they're walking into.
           const custFiles = await Promise.all(j.files.filter((f) => f.source === 'customer' && /^image\//.test(f.mime)).map(withUrl));
+          const designFiles = await Promise.all(j.files.filter((f) => f.source === 'design').map(withUrl));
           return {
             crewResponse: j.crewResponse || null, crewResponseNote: j.crewResponseNote || '',
             startedAt: j.startedAt || null, finishedAt: j.finishedAt || null,
             customerPhotos: [...(j.photos || []), ...custFiles.map((f) => f.url).filter(Boolean)],
+            designPhotos: designFiles.map((f) => ({ url: f.url, name: f.name })).filter((f) => f.url),
             id: j.id, number: j.number, trade: j.trade, status: j.status, scheduledFor: j.scheduledFor,
             address: j.address, zip: j.zip, state: j.state || '', description: j.description,
             customerName: b.name || '', customerPhone: b.phone || '',

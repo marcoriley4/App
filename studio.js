@@ -104,7 +104,15 @@
           cur.source === 'ai' && !cur.chosen ? el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: async () => {
             try { await api.designs.choose(opts.jobId, cur.id); await load(cur.id); opts.onChoose && opts.onChoose(); } catch (err) { fail(err); }
           } }, '⭐ This is the one') : null,
-          cur.url ? el('a', { class: 'btn ghost', style: 'flex:1', href: cur.url, download: `${nameOf(cur).replace(/\s+/g, '-')}.png` }, '⬇ Save picture') : null),
+          cur.url ? el('a', { class: 'btn ghost', style: 'flex:1', href: cur.url, download: `${nameOf(cur).replace(/\s+/g, '-')}.png` }, '⬇ Download') : null),
+        // Save it to the job: it goes into Photos & papers for the customer, office, rep and contractor.
+        cur.url ? (cur.saved
+          ? el('div', { class: 'saved-row' }, el('span', { class: 'saved-pill' }, '✓ Saved to the project: everyone on the job can see it'),
+            el('button', { type: 'button', class: 'link small', onclick: async () => { try { await api.designs.unsave(opts.jobId, cur.id); await load(cur.id); } catch (err) { fail(err); } } }, 'Remove'))
+          : el('button', { type: 'button', class: 'gold block', onclick: async (e) => {
+            e.currentTarget.disabled = true;
+            try { await api.designs.save(opts.jobId, cur.id, `${nameOf(cur)}${opts.styleLabel ? ' - ' + opts.styleLabel : ''}`); await load(cur.id); } catch (err) { fail(err); e.currentTarget.disabled = false; }
+          } }, '💾 Save to the project')) : null,
         el('section', { class: 'card stack studio-ask' },
           el('b', {}, cur.source === 'photo' ? 'What do you want done to this space?' : 'Want to change anything?'),
           el('p', { class: 'muted small' }, cur.source === 'photo' ? 'Describe it like you’d tell a contractor: what to remove, the layout, materials and colors.' : 'Each change starts from the picture above. Tap another picture below to change that one instead.'),
@@ -112,7 +120,7 @@
           prompt, go),
         versions.length > 1 ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, `All pictures (${versions.length})`),
           el('div', { class: 'studio-strip' }, ...versions.slice().reverse().map((v) => el('button', { type: 'button', class: v.id === cur.id ? 'on' : '', 'aria-label': nameOf(v), onclick: () => { currentId = v.id; draw(); } },
-            v.url ? el('img', { src: v.url, alt: '' }) : null, el('span', {}, (v.chosen ? '⭐ ' : '') + nameOf(v)))))) : null,
+            v.url ? el('img', { src: v.url, alt: '' }) : null, el('span', {}, (v.chosen ? '⭐ ' : '') + (v.saved ? '💾 ' : '') + nameOf(v)))))) : null,
         uploadBtn('📷 Start from a different photo', 'ghost small'),
         el('p', { class: 'muted small' }, 'Pictures are made by AI to help you picture the idea. Final materials, sizes and layout are confirmed with your Top Hat project manager.'),
       ].filter(Boolean));

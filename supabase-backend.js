@@ -22,7 +22,7 @@
   const mapMaterial = (m) => ({ id: m.id, name: m.name, qty: m.qty || '', note: m.note || '', status: m.status, eta: m.eta || null, by: m.added_by || '', updatedBy: m.updated_by || '' });
   const mapBill = (b) => ({ id: b.id, step: b.step ?? null, label: b.label, amount: Number(b.amount), note: b.note || '', status: b.status, reason: b.reason || '',
     paidDate: b.paid_date || null, paidMethod: b.paid_method || '', by: b.by_name || '', at: Date.parse(b.created_at) || null, photos: Number(b.photos) || 0 });
-  const mapDesign = (v) => v && ({ id: v.id, parentId: v.parent_id || null, source: v.source, prompt: v.prompt || '', by: v.by_name || '', at: Date.parse(v.created_at) || Date.now(), chosen: !!v.chosen, url: v.url || null });
+  const mapDesign = (v) => v && ({ id: v.id, parentId: v.parent_id || null, source: v.source, prompt: v.prompt || '', by: v.by_name || '', at: Date.parse(v.created_at) || Date.now(), chosen: !!v.chosen, saved: !!v.saved, url: v.url || null });
   async function designCall(body) {
     const { data, error } = await sb.functions.invoke('design', { body });
     if (error) {
@@ -347,17 +347,18 @@
       },
       async remove(jobId, fileId) {
         await requireOffice();
-        const row = must(await sb.from('job_files').select('path').eq('id', fileId).maybeSingle());
+        const row = must(await sb.from('job_files').select('path, source').eq('id', fileId).maybeSingle());
         if (!row) return;
         must(await sb.from('job_files').delete().eq('id', fileId));
-        await sb.storage.from(BUCKET).remove([row.path]);
+        // A saved design shares its picture with the design studio: keep the picture, just take it out of Photos & papers.
+        if (row.source !== 'design') await sb.storage.from(BUCKET).remove([row.path]);
       },
       async forCustomer(jobId) {
         const j = mine.get(jobId);
         if (!j) return [];
         const list = j.shared_files || [];
         const urls = await signedUrls(list.map((f) => f.path));
-        return list.map((f) => ({ id: f.id, name: f.name, kind: f.kind, size: Number(f.size) || 0, uploaded: ms(f.uploaded_at), url: urls[f.path] || null }));
+        return list.map((f) => ({ id: f.id, name: f.name, kind: f.kind, size: Number(f.size) || 0, uploaded: ms(f.uploaded_at), url: urls[f.path] || null, source: f.source || '', mime: f.mime || '' }));
       },
     },
 
@@ -553,6 +554,8 @@
         return mapDesign((await designCall({ action: 'generate', job: jobId, from: fromId, prompt })).version);
       },
       async choose(jobId, id) { await designCall({ action: 'choose', job: jobId, id }); },
+      async save(jobId, id, name) { await designCall({ action: 'save', job: jobId, id, name: name || 'Design' }); },
+      async unsave(jobId, id) { await designCall({ action: 'unsave', job: jobId, id }); },
       // Sign-up preview: works before they have an account (the server limits how many per day).
       async dream(photo, styleKey, extra = '') {
         if (!TH.styleOf(styleKey)) throw new Error('Pick a look first.');
@@ -587,11 +590,12 @@
       },
       async jobs() {
         const list = must(await sb.rpc('crew_my_jobs')) || [];
-        const photoUrls = await signedUrls(list.flatMap((j) => [...(j.customer_photos || []), ...(j.uploads || []).map((f) => f.path)]));
+        const photoUrls = await signedUrls(list.flatMap((j) => [...(j.customer_photos || []), ...(j.design_photos || []).map((f) => f.path), ...(j.uploads || []).map((f) => f.path)]));
         return list.map((j) => ({
           crewResponse: j.crew_response || null, crewResponseNote: j.crew_response_note || '',
           startedAt: ms(j.started_at), finishedAt: ms(j.finished_at),
           customerPhotos: (j.customer_photos || []).map((pth) => photoUrls[pth]).filter(Boolean),
+          designPhotos: (j.design_photos || []).map((f) => ({ url: photoUrls[f.path], name: f.name })).filter((f) => f.url),
           id: j.id, number: j.number, trade: j.trade, status: j.status, scheduledFor: local16(j.scheduled_for),
           address: j.address, zip: j.zip, state: j.state || '', description: j.description,
           customerName: j.customer_name || '', customerPhone: j.customer_phone || '',

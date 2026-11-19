@@ -726,6 +726,7 @@
               el('select', { 'aria-label': `Type of ${f.name}`, onchange: (e) => fileUpdate(f.id, { kind: e.target.value }) },
                 ...FILE_KINDS.map((x) => el('option', { value: x.id, selected: x.id === f.kind }, x.label))),
               f.stage ? el('span', { class: 'pill' }, (find(PHOTO_STAGES, f.stage) || {}).label || f.stage) : null,
+              f.source === 'design' ? el('span', { class: 'pill s-scheduled' }, '🎨 Saved design') : null,
               el('span', {}, `${fileSize(f.size)} · ${new Date(f.uploaded).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}${f.source === 'crew' ? ` · from ${f.by}` : f.source === 'customer' ? ` · from customer${f.by ? ` (${f.by})` : ''}` : ''}`)),
             f.note ? el('p', { class: 'small', style: 'font-style:italic' }, `“${f.note}”`) : null,
             el('label', { class: 'share' },
@@ -1074,7 +1075,7 @@
       el('div', { class: 'panel-head' },
         el('button', { class: 'ghost small', onclick: async () => { await load(); openLead(j.id); } }, `← ${jobNo(j)}`),
         el('b', { style: 'flex:1' }, '🎨 Design studio')),
-      el('div', { class: 'panel-body' }, TH.studio({ jobId: j.id, trade: j.trade, photos: j.photos || [], canConnect: isStaff })));
+      el('div', { class: 'panel-body' }, TH.studio({ jobId: j.id, trade: j.trade, photos: j.photos || [], canConnect: isStaff, styleLabel: TH.styleOf(j.style)?.label || '' })));
     drawerRoot.replaceChildren(el('div', { class: 'drawer' }, panel));
     document.body.style.overflow = 'hidden';
   }

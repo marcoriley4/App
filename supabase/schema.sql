@@ -230,7 +230,8 @@ create table public.job_files (
   stage text not null default '' check (stage in ('', 'before', 'during', 'after')),
   note text not null default '',
   shared boolean not null default false,
-  source text not null default 'staff' check (source in ('staff', 'customer', 'crew')),
+  source text not null default 'staff' check (source in ('staff', 'customer', 'crew', 'design')),
+  design_id uuid unique references public.design_versions(id) on delete cascade,   -- a design saved from the studio (shared with everyone on the job)
   by_name text not null default '',
   contractor_id uuid references public.contractors(id) on delete set null,
   uploaded_at timestamptz not null default now()
@@ -555,7 +556,7 @@ language sql stable security definer set search_path = '' as $$
     'pm_phone', case when j.status <> 'lost' and sp.active then sp.phone end,
     'contractor_name', case when j.status in ('scheduled', 'in_progress', 'completed') then c.name end,
     'shared_files', (select coalesce(jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'kind', f.kind, 'size', f.size,
-                       'path', f.path, 'uploaded_at', f.uploaded_at) order by f.uploaded_at), '[]'::jsonb)
+                       'path', f.path, 'uploaded_at', f.uploaded_at, 'source', f.source, 'mime', f.mime) order by f.uploaded_at), '[]'::jsonb)
                      from public.job_files f where f.job_id = j.id and f.shared)
   ) order by j.created_at desc), '[]'::jsonb)
   from public.jobs j left join public.contractors c on c.id = j.contractor_id
@@ -1078,6 +1079,8 @@ begin
       'started_at', j.started_at, 'finished_at', j.finished_at, 'halfway_at', j.halfway_at,
       'customer_photos', (select coalesce(jsonb_agg(f.path order by f.uploaded_at), '[]'::jsonb) from public.job_files f
                            where f.job_id = j.id and f.source = 'customer' and f.mime like 'image/%'),
+      'design_photos', (select coalesce(jsonb_agg(jsonb_build_object('path', f.path, 'name', f.name) order by f.uploaded_at), '[]'::jsonb) from public.job_files f
+                           where f.job_id = j.id and f.source = 'design'),
       'address', j.address, 'zip', j.zip, 'state', j.state, 'description', j.description, 'style', j.style,
       'materials', (select coalesce(jsonb_agg(jsonb_build_object('id', m.id, 'name', m.name, 'qty', m.qty, 'note', m.note, 'status', m.status, 'eta', m.eta) order by m.created_at), '[]'::jsonb)
                     from public.job_materials m where m.job_id = j.id),
@@ -1150,7 +1153,7 @@ end $$;
 create function public.crew_can_read_customer(p text) returns boolean
 language sql stable security definer set search_path = '' as $$
   select exists (select 1 from public.job_files f join public.jobs j on j.id = f.job_id
-                 where f.path = p and f.source = 'customer' and j.contractor_id = public.my_crew()
+                 where f.path = p and f.source in ('customer', 'design') and j.contractor_id = public.my_crew()
                    and j.status in ('scheduled', 'in_progress', 'completed'));
 $$;
 

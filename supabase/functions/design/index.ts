@@ -135,7 +135,9 @@ Deno.serve(async (req) => {
     if (!rows.length) return [];
     const { data: signed } = await admin.storage.from(BUCKET).createSignedUrls(rows.map((r) => r.path as string), 3600);
     const urlBy = Object.fromEntries((signed || []).map((s) => [s.path, s.signedUrl]));
-    return rows.map((r) => ({ id: r.id, parent_id: r.parent_id, source: r.source, prompt: r.prompt, by_name: r.by_name, chosen: r.chosen, created_at: r.created_at, url: urlBy[r.path as string] || null }));
+    const { data: savedRows } = await admin.from('job_files').select('design_id').eq('job_id', job).eq('source', 'design');
+    const savedIds = new Set((savedRows || []).map((x) => x.design_id));
+    return rows.map((r) => ({ id: r.id, parent_id: r.parent_id, source: r.source, prompt: r.prompt, by_name: r.by_name, chosen: r.chosen, created_at: r.created_at, saved: savedIds.has(r.id), url: urlBy[r.path as string] || null }));
   };
   const save = async (bytes: Uint8Array, mime: string, row: Record<string, unknown>) => {
     const id = crypto.randomUUID();
@@ -211,6 +213,28 @@ Deno.serve(async (req) => {
         const v = await save(pic.bytes, pic.mime, { source: 'ai', prompt: String(body.prompt || '').slice(0, 1500), parent_id: ph.id, chosen: true });
         await admin.from('job_events').insert({ job_id: job, text: `🌟 ${byName} designed their dream room while signing up` });
         return reply({ version: v });
+      }
+      case 'save': {
+        // Save a design to the job's Photos & papers, shared with the customer, office, rep and contractor.
+        const id = String(body.id || '');
+        const { data: v } = await admin.from('design_versions').select('id, path, prompt').eq('job_id', job).eq('id', id).maybeSingle();
+        if (!v) return fail('Not found.', 404);
+        const { data: had } = await admin.from('job_files').select('id').eq('design_id', id).maybeSingle();
+        if (!had) {
+          const name = String(body.name || 'Design').replace(/[^\w .&()'-]/g, '').slice(0, 80) || 'Design';
+          const ext = String(v.path).split('.').pop() || 'png';
+          const { error } = await admin.from('job_files').insert({ job_id: job, path: v.path, name: `${name}.${ext}`, mime: ext === 'png' ? 'image/png' : 'image/jpeg', kind: 'photo',
+            shared: true, source: 'design', design_id: id, by_name: byName, note: String(v.prompt || '').slice(0, 500) });
+          if (error) return fail('Couldn’t save it to the project. Try again.');
+          await admin.from('job_events').insert({ job_id: job, text: `💾 ${byName} saved ${name} from the design studio to Photos & papers` });
+        }
+        return reply({ ok: true });
+      }
+      case 'unsave': {
+        const id = String(body.id || '');
+        await admin.from('job_files').delete().eq('job_id', job).eq('design_id', id).eq('source', 'design');
+        await admin.from('job_events').insert({ job_id: job, text: `💾 ${byName} removed a saved design from Photos & papers` });
+        return reply({ ok: true });
       }
       case 'choose': {
         const id = String(body.id || '');

@@ -586,8 +586,10 @@
               el('span', { class: 'body' }, el('b', {}, `${dc.type === 'invoice' ? 'Invoice' : 'Estimate'} ${dc.number}`),
                 el('span', { class: 'muted small' }, dc.type === 'invoice' && D.owed(dc) > 0 ? `${D.usd(D.owed(dc))} due${dc.dueDate ? ' by ' + D.fmtDate(dc.dueDate) : ''}` : D.usd(D.totals(dc).total))),
               el('span', { class: `pill ${D.pillClass(dc)}` }, dc.type === 'estimate' && dc.status === 'sent' ? 'Needs your OK' : D.label(dc)))))) : null,
-          docs[j.id].length ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Documents from Top Hat'),
-            el('ul', { class: 'docs' }, ...docs[j.id].map((f) => el('li', {},
+          docs[j.id].some((f) => f.source === 'design' && f.url) ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, '🎨 Saved designs'),
+            el('div', { class: 'photo-row saved-designs' }, ...docs[j.id].filter((f) => f.source === 'design' && f.url).map((f) => el('a', { href: f.url, target: '_blank', rel: 'noopener' }, el('img', { src: f.url, alt: f.name }))))) : null,
+          docs[j.id].some((f) => f.source !== 'design') ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Documents from Top Hat'),
+            el('ul', { class: 'docs' }, ...docs[j.id].filter((f) => f.source !== 'design').map((f) => el('li', {},
               el('a', { href: f.url, target: '_blank', rel: 'noopener' }, (find(FILE_KINDS, f.kind) || FILE_KINDS.at(-1)).icon + ' ', f.name,
                 el('span', {}, (find(FILE_KINDS, f.kind) || FILE_KINDS.at(-1)).label)))))) : null,
         );
@@ -607,7 +609,7 @@
       el('a', { href: '#/jobs', class: 'small' }, '← My jobs'),
       el('h1', {}, '🎨 Design studio'),
       el('p', { class: 'muted' }, `${trade.icon} ${trade.label} · TH-${j.number} · ${j.address}`),
-      TH.studio({ jobId: j.id, trade: j.trade, photos: j.photos || [] })));
+      TH.studio({ jobId: j.id, trade: j.trade, photos: j.photos || [], styleLabel: TH.styleOf(j.style)?.label || '' })));
   }
 
   // "Questions? Reach us": their project manager (if one's assigned) and the office, one tap each.

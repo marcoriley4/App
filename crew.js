@@ -508,6 +508,8 @@
         el('dt', {}, 'Customer'), el('dd', {}, j.customerName, j.customerPhone ? ' · ' : '', j.customerPhone ? el('a', { href: tel(j.customerPhone) }, j.customerPhone) : ''),
         el('dt', {}, 'What to do'), el('dd', { style: 'white-space:pre-wrap' }, j.description),
         j.crewPay != null ? el('dt', {}, 'Your pay') : null, j.crewPay != null ? el('dd', { style: 'font-weight:700' }, usd(j.crewPay)) : null),
+      (j.designPhotos || []).length ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, '🎨 The design (what it should look like)'),
+        el('div', { class: 'photo-row saved-designs' }, ...j.designPhotos.map((f) => el('a', { href: f.url, target: '_blank' }, el('img', { src: f.url, alt: f.name }))))) : null,
       (j.customerPhotos || []).length ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Photos from the customer'),
         el('div', { class: 'photo-row' }, ...j.customerPhotos.map((src, i) => el('a', { href: src, target: '_blank' }, el('img', { src, alt: `Customer photo ${i + 1}` }))))) : null,
     );
