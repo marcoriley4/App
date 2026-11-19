@@ -557,12 +557,12 @@
       async save(jobId, id, name) { await designCall({ action: 'save', job: jobId, id, name: name || 'Design' }); },
       async unsave(jobId, id) { await designCall({ action: 'unsave', job: jobId, id }); },
       // Sign-up preview: works before they have an account (the server limits how many per day).
-      async dream(photo, styleKey, extra = '') {
-        if (!TH.styleOf(styleKey)) throw new Error('Pick a look first.');
-        const r = await designCall({ action: 'dream', image: photo, style: styleKey, extra: String(extra || '').slice(0, 200) });
+      async dream(photo, styleKey, extra = '', { trade = '' } = {}) {
+        if (!TH.styleOf(styleKey) && String(extra || '').trim().length < 3) throw new Error('Tell us what you want it to look like.');
+        const r = await designCall({ action: 'dream', image: photo, style: TH.styleOf(styleKey) ? styleKey : '', extra: String(extra || '').slice(0, 400), trade });
         return r.image;
       },
-      async adopt(jobId, photo, image, prompt) { await designCall({ action: 'adopt', job: jobId, photo, image, prompt: prompt || '' }); },
+      async adopt(jobId, photo, image, prompt) { const r = await designCall({ action: 'adopt', job: jobId, photo, image, prompt: prompt || '' }); return r.version ? { id: r.version.id } : null; },
     },
 
     crewPortal: {

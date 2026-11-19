@@ -53,7 +53,8 @@ async function callGemini(key: string, mime: string, bytes: Uint8Array, text: st
 }
 const TRADES: Record<string, string> = {
   plumbing: 'Plumbing', electrical: 'Electrical', roofing: 'Roofing', hvac: 'Heating & AC', painting: 'Painting',
-  drywall: 'Drywall', flooring: 'Flooring', remodel: 'Remodel', landscaping: 'Landscaping', other: 'Home project',
+  drywall: 'Drywall', flooring: 'Flooring', remodel: 'Remodel', landscaping: 'Landscaping', concrete: 'Concrete', decks: 'Decks & patios',
+  fencing: 'Fencing', siding: 'Siding', windows: 'Windows & doors', other: 'Home project',
 };
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -103,7 +104,8 @@ Deno.serve(async (req) => {
   if (body.action === 'dream') {
     const key = Deno.env.get('GEMINI_API_KEY');
     if (!key) return fail('Picture previews aren’t turned on yet. We’ll still see the look you picked.', 503);
-    if (!LOOKS[String(body.style || '')]) return fail('Pick a look first.');
+    const style = String(body.style || ''); const words = String(body.extra || '').trim().slice(0, 400);
+    if (!LOOKS[style] && words.length < 3) return fail('Tell us what you want it to look like.');
     let img;
     try { img = parseDataUrl(body.image); } catch (e) { return fail((e as Error).message); }
     const ip = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || 'unknown';
@@ -115,7 +117,9 @@ Deno.serve(async (req) => {
     if ((all || 0) >= DREAMS_PER_DAY) return fail('Picture previews are busy right now. Send your request and we’ll make yours with you.', 429);
     await admin.from('design_dreams').insert({ visitor });
     try {
-      const out = await callGemini(key, img.mime, img.bytes, designPrompt('Remodel', '', [], dreamRequest(String(body.style), String(body.extra || ''))));
+      const tradeLabel = TRADES[String(body.trade || '')] || 'Home project';
+      const request = LOOKS[style] ? dreamRequest(style, words.slice(0, 200)) : `Show this ${tradeLabel.toLowerCase()} project finished the way the customer wants: ${words}.`;
+      const out = await callGemini(key, img.mime, img.bytes, designPrompt(LOOKS[style] ? 'Remodel' : tradeLabel, '', [], request));
       return reply({ image: `data:${out.mime};base64,${out.data}` });
     } catch (e) { return fail((e as Error).message, (e as { status?: number }).status || 500); }
   }

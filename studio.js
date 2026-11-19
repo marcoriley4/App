@@ -13,8 +13,14 @@
     electrical: ['Recessed lights', 'Pendant lights', 'Under-cabinet lighting', 'Ceiling fan'],
     hvac: ['Hide the ductwork', 'Sleek wall vents', 'New thermostat'],
     drywall: ['Smooth ceiling', 'Take out this wall', 'Add an archway', 'Built-in shelves'],
+    concrete: ['New broom-finish driveway', 'Stamped concrete patio', 'New front walkway', 'Wider driveway'],
+    decks: ['Gray composite deck', 'Black metal railings', 'Built-in benches', 'Cedar wood deck'],
+    fencing: ['6 ft white vinyl privacy fence', 'Black aluminum fence', 'Cedar privacy fence', 'Matching gate'],
+    siding: ['Gray vinyl siding', 'White board and batten', 'Navy blue siding', 'Stone accents'],
+    windows: ['Black window frames', 'Bigger picture window', 'New front door', 'French patio doors'],
     other: ['Modern look', 'Farmhouse style', 'Brighter and more open', 'Natural wood accents'],
   };
+  TH.DESIGN_IDEAS = IDEAS;
 
   // Mount the studio for one job. opts: { jobId, trade, photos: [dataUrl], title }
   function studio(opts) {

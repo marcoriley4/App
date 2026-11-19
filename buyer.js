@@ -60,7 +60,7 @@
     return wrap;
   }
 
-  const emptyDraft = () => ({ step: 1, trade: '', description: '', measurements: '', address: '', zip: '', state: '', room: '', style: '', timeframe: '', budget: '', photos: [] });
+  const emptyDraft = () => ({ step: 1, trade: '', description: '', measurements: '', address: '', zip: '', state: '', room: '', style: '', dreamText: '', timeframe: '', budget: '', photos: [] });
   let draft = emptyDraft();
   try { draft = { ...draft, ...JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}') }; } catch (e) { /* ignore */ }
   function saveDraft() { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch (e) { /* photos may not fit; fine */ } }
@@ -152,7 +152,7 @@
     // Room projects (kitchens, baths…) get a "pick a style" screen after they describe it.
     // Room projects (remodel, painting, flooring…) get the design screen: pick one of the 3 looks, add photos, and we design their room in it.
     const roomTrade = TH.STYLE_TRADES.includes(draft.trade);
-    const SCREENS = ['trade', roomTrade ? 'design' : 'photos', 'describe', 'where', 'when', 'budget', ...(me ? [] : ['contact'])];
+    const SCREENS = ['trade', 'design', 'describe', 'where', 'when', 'budget', ...(me ? [] : ['contact'])];
     const total = SCREENS.length;
     const at = (name) => SCREENS.indexOf(name) + 1;
     // Never skip ahead past something we still need.
@@ -220,14 +220,19 @@
       return;
     }
 
-    // Design: 1) add a photo of their space, 2) pick the room, 3) pick one of the three looks, then see their dream room.
+    // Design (every request): 1) the BEFORE photo, 2) the dream (room projects pick one of the three looks; everything else describes it),
+    // then ✨ the AFTER picture: their own photo, finished. Both are saved to the job when they send the request.
     if (screen === 'design') {
-      let room = TH.STYLE_ROOMS.find((r) => r.id === draft.room) || null;
+      const isRoom = roomTrade;
+      let room = isRoom ? TH.STYLE_ROOMS.find((r) => r.id === draft.room) || null : null;
+      const thing = () => (room ? room.label.toLowerCase() : TH.dreamNoun(draft.trade));
       const grid = el('div', { class: 'photos' });
       const btnWrap = el('div', { class: 'wiz-next' });
       const rooms = el('div', { class: 'stage-chips room-chips', role: 'radiogroup', 'aria-label': 'Which room' });
       const looks = el('div', { class: 'look-list', role: 'radiogroup', 'aria-label': 'Pick a look' });
       const lookHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '3'), 'Pick the look you want');
+      // What their dream is right now: a look (rooms) or their own words (everything else). The AFTER picture matches one of these.
+      const dreamKey = () => (room && draft.style ? draft.style : !isRoom && (draft.dreamText || '').trim().length >= 3 ? 'text:' + draft.dreamText.trim() : '');
       const drawRooms = () => rooms.replaceChildren(...TH.STYLE_ROOMS.map((r) => el('button', { type: 'button', role: 'radio', 'aria-checked': String(draft.room === r.id), class: 'chip' + (draft.room === r.id ? ' on' : ''),
         onclick: () => pickRoom(r) }, `${r.icon} ${r.label}`)),
         el('button', { type: 'button', role: 'radio', 'aria-checked': String(draft.room === 'none'), class: 'chip' + (draft.room === 'none' ? ' on' : ''),
@@ -246,41 +251,52 @@
             el('span', { class: 'look-txt' }, el('b', {}, `${i + 1}. ${st.name}`), el('span', {}, st.desc)),
             el('span', { class: 'look-check', 'aria-hidden': 'true' }, on ? '✓' : '')); }) : []));
       };
-      // ✨ Their dream room: their own photo in the look they picked, right here before they send anything.
+      // Not a room project (or "something else"): describe the dream in a few words.
+      const dreamText = el('textarea', { rows: 2, maxlength: '200', value: draft.dreamText || '', 'aria-label': 'Describe your dream',
+        placeholder: draft.trade === 'roofing' ? 'e.g. Charcoal architectural shingles, white gutters' : draft.trade === 'decks' ? 'e.g. Gray composite deck with black railings' : 'e.g. What you want it to look like when it’s done',
+        oninput: () => { draft.dreamText = dreamText.value; saveDraft(); drawDream(); drawBtn(); } });
+      const dreamIdeas = el('div', { class: 'stage-chips' }, ...((TH.DESIGN_IDEAS || {})[draft.trade] || (TH.DESIGN_IDEAS || {}).other || []).map((t) => el('button', { type: 'button', class: 'chip',
+        onclick: () => { dreamText.value = dreamText.value.trim() ? `${dreamText.value.trim()}, ${t.toLowerCase()}` : t; draft.dreamText = dreamText.value; saveDraft(); drawDream(); drawBtn(); } }, `+ ${t}`)));
+      const describeWrap = el('div', { class: 'stack', style: 'gap:8px' }, dreamIdeas, dreamText);
+      // ✨ The AFTER: their own photo, finished, right here before they send anything.
       const dreamBox = el('div', { class: 'dream-box' });
       const drawDream = () => {
+        describeWrap.hidden = isRoom && draft.room !== 'none';
+        const key = dreamKey();
         const look = room && TH.styleOf(draft.style);
-        const d = draft.dream && draft.dream.style === draft.style ? draft.dream : null;
-        if (!look) { dreamBox.replaceChildren(); return; }
-        if (!draft.photos.length) { dreamBox.replaceChildren(el('p', { class: 'muted small' }, `Add a photo above and we’ll show you your ${room.label.toLowerCase()} in the ${look.style.name} look.`)); return; }
+        const d = draft.dream && draft.dream.key === key ? draft.dream : null;
+        if (!key) { dreamBox.replaceChildren(); return; }
+        if (!draft.photos.length) { dreamBox.replaceChildren(el('p', { class: 'muted small' }, `Add your before photo above and we’ll show you your dream ${thing()}.`)); return; }
         const err = el('div', { class: 'error', hidden: true, role: 'alert' });
         const make = async (btn, extra = '') => {
           btn.disabled = true; err.hidden = true;
           dreamBox.classList.add('making');
-          const label = btn.textContent; btn.textContent = `Making your ${room.label.toLowerCase()}… (10 to 30 seconds)`;
+          const label = btn.textContent; btn.textContent = `Making your dream ${thing()}… (10 to 30 seconds)`;
           try {
-            const image = await api.designs.dream(draft.photos[0], draft.style, extra);
-            draft.dream = { style: draft.style, image, prompt: TH.dreamRequest(look, extra) }; saveDraft(); drawDream(); drawBtn();
+            const text = look ? '' : draft.dreamText.trim();
+            const image = await api.designs.dream(draft.photos[0], look ? draft.style : '', look ? extra : [text, extra].filter(Boolean).join('. '), { trade: draft.trade });
+            draft.dream = { key, style: look ? draft.style : '', image, prompt: look ? TH.dreamRequest(look, extra) : TH.dreamRequestText(trade ? trade.label : '', [text, extra].filter(Boolean).join('. ')) };
+            saveDraft(); drawDream(); drawBtn();
             dreamBox.scrollIntoView({ block: 'start', behavior: 'smooth' });
           } catch (e) { err.textContent = e.message; err.hidden = false; btn.disabled = false; btn.textContent = label; }
           finally { dreamBox.classList.remove('making'); }
         };
         if (!d) {
-          const btn = el('button', { type: 'button', class: 'dream-btn block big', onclick: () => make(btn) }, `✨ Show me my dream ${room.label.toLowerCase()}`);
+          const btn = el('button', { type: 'button', class: 'dream-btn block big', onclick: () => make(btn) }, `✨ Show me my dream ${thing()}`);
           dreamBox.replaceChildren(el('div', { class: 'dream-wait' }, el('img', { src: draft.photos[0], alt: 'Your photo' }), el('span', { class: 'spinner', 'aria-hidden': 'true' })), btn, err);
           return;
         }
-        const extra = el('input', { placeholder: 'Change something? e.g. darker floors, no island', 'aria-label': 'Change something', maxlength: '200' });
+        const extra = el('input', { placeholder: 'Change something? e.g. darker colors', 'aria-label': 'Change something', maxlength: '200' });
         const again = el('button', { type: 'button', class: 'ghost block', onclick: () => make(again, extra.value) }, '🔁 Make it again');
         dreamBox.replaceChildren(
-          el('h3', {}, `✨ Your dream ${room.label.toLowerCase()} · ${look.style.name}`),
-          el('img', { class: 'dream-img', src: d.image, alt: `Your ${room.label.toLowerCase()} in the ${look.style.name} look` }),
-          el('p', { class: 'muted small' }, 'We’ll see this same picture when we call you, so we’re talking about the same thing.'),
+          el('h3', {}, `✨ Your dream ${thing()}${look ? ' · ' + look.style.name : ''}`),
+          TH.beforeAfter([{ url: draft.photos[0], name: 'Your photo', stage: 'before', group: 'g' }, { url: d.image, name: 'Your dream', stage: 'after', group: 'g' }], { title: 'Before & after: slide to compare' }),
+          el('p', { class: 'muted small' }, 'We’ll see this same before and after when we call you, so we’re talking about the same thing.'),
           el('div', { class: 'dream-again' }, extra, again), err);
       };
       const drawBtn = () => {
-        const loved = draft.dream && draft.dream.style === draft.style;
-        btnWrap.replaceChildren(draft.photos.length || draft.style
+        const loved = draft.dream && draft.dream.key === dreamKey();
+        btnWrap.replaceChildren(draft.photos.length || dreamKey()
           ? el('button', { type: 'button', class: 'gold block big', onclick: next }, loved ? '❤️ Love it: next' : 'Next')
           : el('button', { type: 'button', class: 'ghost block', onclick: next }, 'Skip for now'));
       };
@@ -291,23 +307,24 @@
         addBtn.hidden = draft.photos.length >= MAX_PHOTOS;
         drawBtn(); drawDream();
       };
-      const addBtn = el('label', { class: 'btn gold block big photo-btn' }, draft.photos.length ? '📷 Add more photos' : '📷 Take or add a photo',
+      const addBtn = el('label', { class: 'btn gold block big photo-btn' }, draft.photos.length ? '📷 Add more photos' : '📷 Take or add your before photo',
         el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async (e) => {
           const files = [...e.target.files].slice(0, MAX_PHOTOS - draft.photos.length);
           for (const f of files) { try { draft.photos.push(await shrinkImage(f)); } catch (err) { showError(err.message); } }
           saveDraft(); draw();
         } }));
-      view.append(shell('Show us your space and pick a style', 'See your dream room before we even talk.', [
-        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Add a photo of your space'),
-        el('p', { class: 'wiz-sub' }, 'Stand back so the whole room is in the picture. Up to 5.'),
+      view.append(shell('Design it: before and after', 'Show us how it looks now, then see your dream before we even talk.', [
+        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Your before photo'),
+        el('p', { class: 'wiz-sub' }, 'Stand back so the whole area is in the picture. Up to 5 photos.'),
         addBtn, grid,
-        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), 'Which room is it?'),
-        rooms,
-        lookHead, looks,
+        ...(isRoom ? [el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), 'Which room is it?'), rooms, lookHead, looks] : []),
+        isRoom ? null : el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), `Your dream: what should it look like?`),
+        describeWrap,
         dreamBox,
       ]));
       view.querySelector('.wiz').append(btnWrap);
-      drawRooms(); drawLooks(); draw();
+      if (isRoom) { drawRooms(); drawLooks(); }
+      draw();
       return;
     }
 
@@ -362,7 +379,7 @@
           onclick: async (e) => {
             draft.budget = bg.id; draft.budgetSet = true; saveDraft();
             if (!last) return next();
-            e.currentTarget.disabled = true; await submitJob(showError); e.currentTarget.disabled = false;
+            const btn = e.currentTarget; btn.disabled = true; await submitJob(showError); btn.disabled = false;
           } }, BUDGET_TEXT[bg.id] || bg.label))),
         last ? el('p', { class: 'wiz-sub' }, 'Tap one to send your request.') : null,
       ]));
@@ -392,14 +409,19 @@
   async function submitJob(showError) {
     try {
       const m = (draft.measurements || '').trim();
-      const job = await api.jobs.create({ ...draft, description: m ? `${draft.description}\n\nMeasurements: ${m}` : draft.description });
+      const dreamWords = !TH.styleOf(draft.style) && (draft.dreamText || '').trim() ? `\n\nTheir dream: ${draft.dreamText.trim()}` : '';
+      const job = await api.jobs.create({ ...draft, description: (m ? `${draft.description}\n\nMeasurements: ${m}` : draft.description) + dreamWords });
       // Their room in the look they picked: made on the next screen.
       try { sessionStorage.removeItem('tophat.makeDesign'); sessionStorage.removeItem('tophat.dreamSaved'); } catch (e) {}
-      if (job && job.id && draft.dream && draft.dream.style === draft.style && draft.photos.length) {
-        // Their dream picture goes on the job, so the office sees the same picture when they call.
-        try { await api.designs.adopt(job.id, draft.photos[0], draft.dream.image, draft.dream.prompt); sessionStorage.setItem('tophat.dreamSaved', JSON.stringify({ jobId: job.id, style: draft.style, image: draft.dream.image })); } catch (e) { console.warn('Saving the dream picture failed:', e); }
+      if (job && job.id && draft.dream && draft.dream.image && draft.photos.length) {
+        // Their before and after go on the job (and into Photos & papers), so everyone sees the same thing when we call.
+        try {
+          const v = await api.designs.adopt(job.id, draft.photos[0], draft.dream.image, draft.dream.prompt);
+          if (v && v.id) await api.designs.save(job.id, v.id, TH.styleOf(draft.dream.style)?.label || 'Dream design').catch(() => {});
+          sessionStorage.setItem('tophat.dreamSaved', JSON.stringify({ jobId: job.id, style: draft.dream.style, image: draft.dream.image, photo: draft.photos[0], what: TH.styleOf(draft.dream.style)?.room.label.toLowerCase() || TH.dreamNoun(draft.trade) }));
+        } catch (e) { console.warn('Saving the dream picture failed:', e); }
       } else {
-        try { if (job && job.id && TH.styleOf(draft.style) && draft.photos.length) sessionStorage.setItem('tophat.makeDesign', JSON.stringify({ jobId: job.id, style: draft.style, photo: draft.photos[0] })); } catch (e) {}
+        try { if (job && job.id && draft.photos.length && (TH.styleOf(draft.style) || (draft.dreamText || '').trim().length >= 3)) sessionStorage.setItem('tophat.makeDesign', JSON.stringify({ jobId: job.id, style: draft.style, text: (draft.dreamText || '').trim(), trade: draft.trade, photo: draft.photos[0] })); } catch (e) {}
       }
       clearDraft();
       go('done');
@@ -420,37 +442,49 @@
   }
 
   // Right after they send it: their photo, redesigned in the look they picked.
+  // The done screen can be drawn more than once; keep the same card so the picture is made (and shown) once.
+  let designCardCache = null;
   function makeDesignCard() {
     let saved = null;
     try { saved = JSON.parse(sessionStorage.getItem('tophat.dreamSaved') || 'null'); sessionStorage.removeItem('tophat.dreamSaved'); } catch (e) {}
-    const sl = saved && TH.styleOf(saved.style);
-    if (sl) return el('section', { class: 'make-design stack' },
-      el('h2', {}, `🌟 Your dream ${sl.room.label.toLowerCase()} is saved`), el('img', { class: 'made', src: saved.image, alt: '' }),
+    if (!saved && designCardCache && Date.now() - designCardCache.at < 600000) return designCardCache.card;
+    const keep = (card) => { if (card) designCardCache = { card, at: Date.now() }; return card; };
+    return keep(buildDesignCard(saved));
+  }
+  function buildDesignCard(saved) {
+    if (saved && saved.image) return el('section', { class: 'make-design stack' },
+      el('h2', {}, `🌟 Your dream ${saved.what || 'project'} is saved`),
+      saved.photo ? TH.beforeAfter([{ url: saved.photo, name: 'Before', stage: 'before', group: 'g' }, { url: saved.image, name: 'After', stage: 'after', group: 'g' }], { title: 'Before & after' }) : el('img', { class: 'made', src: saved.image, alt: '' }),
       el('p', { class: 'muted small' }, 'When we call, we’ll be looking at this same picture.'),
       el('a', { class: 'btn ghost block', href: `#/design?job=${saved.jobId}` }, '🎨 Change it in the Design studio'));
     let job = null;
     try { job = JSON.parse(sessionStorage.getItem('tophat.makeDesign') || 'null'); sessionStorage.removeItem('tophat.makeDesign'); } catch (e) {}
-    const look = job && TH.styleOf(job.style);
-    if (!look) return null;
+    if (!job) return null;
+    const look = TH.styleOf(job.style);
+    const tradeLabel = (find(TRADES, job.trade) || {}).label || 'project';
+    if (!look && !job.text) return null;
+    const what = look ? look.room.label.toLowerCase() : TH.dreamNoun(job.trade);
     const card = el('section', { class: 'make-design stack' });
     const studio = el('a', { class: 'btn ghost block', href: `#/design?job=${job.jobId}` }, '🎨 Change it in the Design studio');
-    card.replaceChildren(el('h2', {}, `🎨 Making your ${look.room.label.toLowerCase()} in the ${look.style.name} look…`),
+    card.replaceChildren(el('h2', {}, `🎨 Making your dream ${what}${look ? ' in the ' + look.style.name + ' look' : ''}…`),
       el('div', { class: 'make-wait' }, el('img', { src: job.photo, alt: 'Your photo' }), el('span', { class: 'spinner', 'aria-hidden': 'true' })),
       el('p', { class: 'muted small' }, 'This takes about 10 to 30 seconds.'));
     (async () => {
       try {
         const photo = await api.designs.addPhoto(job.jobId, job.photo);
-        const v = await api.designs.generate(job.jobId, photo.id,
-          `Redesign this ${look.room.label.toLowerCase()} in the ${look.style.name} style: ${look.style.desc}. Keep the same room, walls, windows and camera angle.`);
+        const v = await api.designs.generate(job.jobId, photo.id, look
+          ? `Redesign this ${look.room.label.toLowerCase()} in the ${look.style.name} style: ${look.style.desc}. Keep the same room, walls, windows and camera angle.`
+          : TH.dreamRequestText(tradeLabel, job.text));
         await api.designs.choose(job.jobId, v.id).catch(() => {});
+        await api.designs.save(job.jobId, v.id, look ? look.label : 'Dream design').catch(() => {});
         const url = (await api.designs.list(job.jobId)).find((x) => x.id === v.id)?.url;
-        card.replaceChildren(el('h2', {}, `🎨 Your ${look.room.label.toLowerCase()}, ${look.style.name} look`),
-          url ? el('img', { class: 'made', src: url, alt: `Your ${look.room.label.toLowerCase()} in the ${look.style.name} look` }) : null,
+        card.replaceChildren(el('h2', {}, `🌟 Your dream ${what}`),
+          url ? TH.beforeAfter([{ url: job.photo, name: 'Before', stage: 'before', group: 'g' }, { url, name: 'After', stage: 'after', group: 'g' }], { title: 'Before & after' }) : null,
           el('p', { class: 'muted small' }, 'Saved to your job. Your project manager will see it too.'), studio);
       } catch (e) {
-        // AI not turned on (or busy): show the look they picked; the office and their rep see it on the job.
-        card.replaceChildren(el('h2', {}, `🎨 You picked: ${look.label}`), el('img', { class: 'made', src: look.img, alt: '' }),
-          el('p', { class: 'muted small' }, 'Your design picture will show up in the Design studio on your job once it’s ready. Your project manager already sees the look you picked.'), studio);
+        // AI not turned on (or busy): show what they picked; the office still sees it on the job.
+        card.replaceChildren(el('h2', {}, look ? `🎨 You picked: ${look.label}` : '🎨 Your dream is saved'), look ? el('img', { class: 'made', src: look.img, alt: '' }) : el('p', {}, `“${job.text}”`),
+          el('p', { class: 'muted small' }, 'Your design picture will show up in the Design studio on your job once it’s ready. Your project manager already sees what you asked for.'), studio);
       }
     })();
     return card;
