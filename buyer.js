@@ -233,7 +233,7 @@
       let room = isRoom ? TH.STYLE_ROOMS.find((r) => r.id === draft.room) || null : null;
       const thing = () => (room ? room.label.toLowerCase() : TH.dreamNoun(draft.trade));
       const grid = el('div', { class: 'photos' });
-      const btnWrap = el('div', { class: 'wiz-next' });
+      const btnWrap = el('div', { class: 'wiz-next stay' }); // stays at the end of the page, doesn't float
       const rooms = el('div', { class: 'stage-chips room-chips', role: 'radiogroup', 'aria-label': 'Which room' });
       const looks = el('div', { class: 'look-list', role: 'radiogroup', 'aria-label': 'Pick a look' });
       const lookHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '↳'), 'Pick the look you want');
@@ -269,12 +269,10 @@
         onclick: () => { dreamText.value = dreamText.value.trim() ? `${dreamText.value.trim()}, ${t.toLowerCase()}` : t; draft.dreamText = dreamText.value; saveDraft(); drawDream(); drawBtn(); } }, `+ ${t}`)));
       const describeWrap = el('div', { class: 'stack', style: 'gap:8px' }, dreamIdeas,
         el('label', { class: 'box-label' }, isRoom ? 'Describe your dream (optional)' : 'Describe your dream', dreamText));
-      // Anything else (optional): notes and measurements. This replaces the old "What would you like done?" step.
-      const notes = el('textarea', { rows: 2, maxlength: '1000', value: draft.description || '', 'aria-label': 'Anything else we should know?', placeholder: 'e.g. Best time to call, pets, gate code',
-        oninput: () => { draft.description = notes.value; saveDraft(); } });
+      // Measurements (optional). The "Anything else" notes box was removed at the owner's request.
       const measure = el('input', { value: draft.measurements || '', placeholder: 'e.g. Kitchen is about 12 x 14 ft', 'aria-label': 'Measurements', oninput: () => { draft.measurements = measure.value; saveDraft(); } });
       const measureWrap = el('div', { hidden: !draft.measurements }, measure);
-      const extrasWrap = el('div', { class: 'stack', style: 'gap:8px' }, el('label', { class: 'box-label' }, 'Anything else we should know? (optional)', notes),
+      const extrasWrap = el('div', { class: 'stack', style: 'gap:8px' },
         draft.measurements ? null : el('button', { type: 'button', class: 'link', onclick: (e) => { measureWrap.hidden = false; e.currentTarget.remove(); measure.focus(); } }, '+ Add measurements (optional)'),
         measureWrap);
       // ✨ The AFTER: their own photo, finished, right here before they send anything.

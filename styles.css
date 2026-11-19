@@ -963,3 +963,4 @@ label.field .hint { font-weight: 500; }
 .ba-slider .ba-tag { transition: opacity .2s; }
 .ba-slider.only-after .ba-tag:not(.after), .ba-slider.only-before .ba-tag.after { opacity: 0; }
 .box-label { display: flex; flex-direction: column; gap: 6px; font-weight: 700; font-size: .95rem; }
+.wiz-next.stay { position: static; background: none; }
