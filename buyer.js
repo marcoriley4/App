@@ -158,8 +158,9 @@
     if (askTrade && find(TRADES, askTrade) && askTrade !== draft.trade) { draft.trade = askTrade; draft.room = ''; draft.style = ''; saveDraft(); }
     if (!find(TRADES, draft.trade)) { draft.trade = 'remodel'; saveDraft(); }
     const roomTrade = TH.STYLE_TRADES.includes(draft.trade);
-    // Owner: 4 steps for everyone (Design · Details · Date · Budget). Contact info and the new account are on Details.
-    const SCREENS = ['design', 'where', 'when', 'budget'];
+    // Owner: 3 steps for everyone (Design · Details · Date). Contact info, budget and the new account are on Details;
+    // picking the date is the last thing, then "Send my request".
+    const SCREENS = ['design', 'where', 'when'];
     const total = SCREENS.length;
     const at = (name) => SCREENS.indexOf(name) + 1;
     // A rough clock so they know how long is left: about how many seconds each step takes.
@@ -386,9 +387,17 @@
         // The password is never saved in the draft; it stays in memory until they send the request.
         password: me ? null : el('input', { type: 'password', value: pendingPassword, autocomplete: 'new-password', placeholder: 'Create a password (8+ characters)', 'aria-label': 'Create a password' }),
       };
+      const budgetChips = el('div', { class: 'stage-chips budget-chips', role: 'radiogroup', 'aria-label': 'Budget' });
+      const drawBudget = () => budgetChips.replaceChildren(...BUDGETS.map((bg) => { const on = draft.budgetSet && draft.budget === bg.id;
+        return el('button', { type: 'button', role: 'radio', 'aria-checked': String(on), class: 'chip' + (on ? ' on' : ''),
+          onclick: () => { draft.budget = bg.id; draft.budgetSet = true; saveDraft(); drawBudget(); } }, BUDGET_TEXT[bg.id] || bg.label); }));
+      drawBudget();
       view.append(shell('Your details', null, [
         el('h2', { class: 'wiz-part' }, 'Where is the project?'), addr, el('div', { class: 'two zip-state' }, zip, stateSel),
         el('h2', { class: 'wiz-part' }, 'How do we reach you?'), f.name, f.phone, f.email, f.password,
+        el('h2', { class: 'wiz-part' }, 'Have you thought about a budget?'),
+        el('p', { class: 'wiz-sub' }, 'It’s OK if you’re not sure.'),
+        budgetChips,
       ], { onNext: () => {
         draft.address = addr.value.trim(); draft.zip = zip.value.trim(); draft.state = stateSel.value;
         draft.phone = f.phone.value.trim(); draft.email = f.email.value.trim(); if (f.name) draft.name = f.name.value.trim();
@@ -407,35 +416,24 @@
     }
 
     if (screen === 'when') {
-      // Tap a day (or "I'm flexible") and you're on to the next question.
-      const cal = calendarPicker(draft.timeframe, (v) => { draft.timeframe = v; saveDraft(); if (v) setTimeout(next, 250); });
-      view.append(shell('When do you need it done?', 'Tap a day, or “I’m flexible”.', [cal]));
+      // Last step: tap a day (or "I'm flexible"), then send. New customers' account is made right here.
+      const send = async (e) => {
+        if (!draft.timeframe) return showError('Tap a day, or “I’m flexible”.');
+        const btn = e.currentTarget; btn.disabled = true;
+        try {
+          if (!me) {
+            if (!pendingPassword) { showError('Please re-enter your password on the Details step.'); setTimeout(() => goTo(at('where')), 1200); return; }
+            await api.auth.signUp({ name: draft.name, phone: draft.phone, email: draft.email, password: pendingPassword });
+            pendingPassword = '';
+          }
+          await submitJob(showError);
+        } catch (err) { showError(err.message); }
+        finally { btn.disabled = false; }
+      };
+      const cal = calendarPicker(draft.timeframe, (v) => { draft.timeframe = v; saveDraft(); });
+      view.append(shell('When do you need it done?', 'Tap a day, or “I’m flexible”. Then send your request.', [cal], { nextLabel: 'Send my request', onNext: send }));
       return;
     }
-
-    if (screen === 'budget') {
-      const last = step === total;
-      view.append(shell('Have you thought about a budget?', 'It’s OK if you’re not sure.', [
-        el('div', { class: 'big-options' }, ...BUDGETS.map((bg) => el('button', { type: 'button', class: 'big-option' + (draft.budget === bg.id && draft.budgetSet ? ' on' : ''),
-          onclick: async (e) => {
-            draft.budget = bg.id; draft.budgetSet = true; saveDraft();
-            if (!last) return next();
-            const btn = e.currentTarget; btn.disabled = true;
-            try {
-              if (!me) {
-                if (!pendingPassword) { showError('Please re-enter your password on the Details step.'); setTimeout(() => goTo(at('where')), 1200); return; }
-                await api.auth.signUp({ name: draft.name, phone: draft.phone, email: draft.email, password: pendingPassword });
-                pendingPassword = '';
-              }
-              await submitJob(showError);
-            } catch (err) { showError(err.message); }
-            finally { btn.disabled = false; }
-          } }, BUDGET_TEXT[bg.id] || bg.label))),
-        last ? el('p', { class: 'wiz-sub' }, 'Tap one to send your request.') : null,
-      ]));
-      return;
-    }
-
   }
 
   async function submitJob(showError) {

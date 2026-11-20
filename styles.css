@@ -845,7 +845,7 @@ label.field .hint { font-weight: 500; }
 .style-chosen img { width: 96px; height: 64px; object-fit: cover; border-radius: 8px; flex: none; }
 .style-chosen > span { display: flex; flex-direction: column; min-width: 0; }
 .style-link { margin-top: 10px; white-space: normal; text-align: center; }
-.room-chips .chip.on { background: var(--gold); color: var(--ink); border-color: var(--gold); }
+.room-chips .chip.on, .budget-chips .chip.on { background: var(--gold); color: var(--ink); border-color: var(--gold); }
 
 /* Materials */
 .mat-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
