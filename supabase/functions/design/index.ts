@@ -55,7 +55,7 @@ async function callGemini(key: string, mime: string, bytes: Uint8Array, text: st
 }
 const TRADES: Record<string, string> = {
   plumbing: 'Plumbing', electrical: 'Electrical', roofing: 'Roofing', hvac: 'Heating & AC', painting: 'Painting',
-  drywall: 'Drywall', flooring: 'Flooring', remodel: 'Remodel', landscaping: 'Landscaping', concrete: 'Concrete', decks: 'Decks & patios',
+  drywall: 'Drywall', flooring: 'Flooring', remodel: 'Remodel', landscaping: 'Landscaping', concrete: 'Concrete', masonry: 'Masonry', decks: 'Decks & patios',
   fencing: 'Fencing', siding: 'Siding', windows: 'Windows & doors', other: 'Home project',
 };
 const cors = {

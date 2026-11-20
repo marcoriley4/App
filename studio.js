@@ -14,6 +14,7 @@
     hvac: ['Hide the ductwork', 'Sleek wall vents', 'New thermostat'],
     drywall: ['Smooth ceiling', 'Take out this wall', 'Add an archway', 'Built-in shelves'],
     concrete: ['New broom-finish driveway', 'Stamped concrete patio', 'New front walkway', 'Wider driveway'],
+    masonry: ['Stone veneer front', 'Brick steps and landing', 'Retaining wall', 'New block foundation wall'],
     decks: ['Gray composite deck', 'Black metal railings', 'Built-in benches', 'Cedar wood deck'],
     fencing: ['6 ft white vinyl privacy fence', 'Black aluminum fence', 'Cedar privacy fence', 'Matching gate'],
     siding: ['Gray vinyl siding', 'White board and batten', 'Navy blue siding', 'Stone accents'],

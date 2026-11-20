@@ -40,6 +40,7 @@
     { id: 'remodel', label: 'Remodel', icon: '🛠️' },
     { id: 'landscaping', label: 'Landscaping', icon: '🌳' },
     { id: 'concrete', label: 'Concrete', icon: '🪨' },
+    { id: 'masonry', label: 'Masonry', icon: '🧱' },
     { id: 'decks', label: 'Decks & patios', icon: '🪚' },
     { id: 'fencing', label: 'Fencing', icon: '🚧' },
     { id: 'siding', label: 'Siding', icon: '🏘️' },
@@ -678,7 +679,7 @@
   // Checks the key with Google first, trying the stable picture model and then the newer one.
   // What a sign-up "dream" picture asks for (kept the same in supabase/functions/design).
   // "Show me my dream roof": the word for what they're picturing, by type of work.
-  const DREAM_NOUNS = { roofing: 'roof', decks: 'deck', fencing: 'fence', siding: 'house', windows: 'windows', concrete: 'driveway or patio', landscaping: 'yard',
+  const DREAM_NOUNS = { roofing: 'roof', decks: 'deck', fencing: 'fence', siding: 'house', windows: 'windows', concrete: 'driveway or patio', masonry: 'stonework', landscaping: 'yard',
     painting: 'room', flooring: 'floors', drywall: 'room', remodel: 'room', plumbing: 'bathroom or kitchen', electrical: 'lighting', hvac: 'space', other: 'project' };
   const dreamNoun = (trade) => DREAM_NOUNS[trade] || 'project';
   const dreamRequestText = (tradeLabel, text) => `Show this ${String(tradeLabel || 'project').toLowerCase()} project finished the way the customer wants: ${String(text || '').trim().slice(0, 400)}.`;
