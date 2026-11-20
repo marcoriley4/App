@@ -54,7 +54,7 @@ Today shows each stage: new leads to call, **🔥 hot leads that need a rep visi
 
 **Customers** (`index.html`)
 1. Answer one simple question per screen (most are a single tap that moves straight on): the first page is the before photo and design (no "type of work" page; a link can add ?trade=roofing, otherwise it's a remodel and the office can change it) → address → when (tap a day) → budget → name, phone, email and password.
-2. Design it, in this order: (1) before photo, (2) which room / look bubbles plus the "Describe your finished project" box and measurements, (3) ✨ Build my dream: the AI after picture as a before/after slider (each corner label hides when its picture is slid away) (there's no separate "What would you like done?" step). Then the address, ZIP, a date on the calendar and an optional budget. The progress bar names every step (Design · Address · Date · Budget · You) and shows about how many minutes are left.
+2. Design it, in this order: (1) before photo, (2) which room / look bubbles plus the "Describe your project" box and measurements, (3) ✨ Build my dream: the AI after picture as a before/after slider (each corner label hides when its picture is slid away) (there's no separate "What would you like done?" step). Then the address, ZIP, a date on the calendar and an optional budget. The progress bar names every step (Design · Address · Date · Budget · You) and shows about how many minutes are left.
 3. Create an account with name, mobile phone, email and password. The request is sent as soon as the account is created.
 4. Check **My jobs** anytime to see the status (Received → Estimate call → Rep visit → Scheduled → Done), the rep visit time once it's booked, and the date and crew lead's name once the work is scheduled.
 

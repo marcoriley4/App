@@ -256,14 +256,14 @@
             el('span', { class: 'look-check', 'aria-hidden': 'true' }, on ? '✓' : '')); }) : []));
       };
       // Not a room project (or "something else"): describe the dream in a few words.
-      const dreamText = el('textarea', { rows: 2, maxlength: '200', value: draft.dreamText || '', 'aria-label': 'Describe your finished project',
+      const dreamText = el('textarea', { rows: 2, maxlength: '200', value: draft.dreamText || '', 'aria-label': 'Describe your project',
         placeholder: draft.trade === 'roofing' ? 'e.g. New roof, charcoal architectural shingles, white gutters' : draft.trade === 'decks' ? 'e.g. Gray composite deck with black railings' : 'e.g. What needs fixing, and what you want it to look like when it’s done',
         oninput: () => { draft.dreamText = dreamText.value; saveDraft(); drawDream(); drawBtn(); } });
       const ideaList = [...(isRoom ? [] : IDEA_CHIPS[draft.trade] || []), ...((TH.DESIGN_IDEAS || {})[draft.trade] || (TH.DESIGN_IDEAS || {}).other || [])].filter((x, i, a) => a.indexOf(x) === i);
       const dreamIdeas = el('div', { class: 'stage-chips' }, ...ideaList.map((t) => el('button', { type: 'button', class: 'chip',
         onclick: () => { dreamText.value = dreamText.value.trim() ? `${dreamText.value.trim()}, ${t.toLowerCase()}` : t; draft.dreamText = dreamText.value; saveDraft(); drawDream(); drawBtn(); } }, `+ ${t}`)));
       const describeWrap = el('div', { class: 'stack', style: 'gap:8px' },
-        el('label', { class: 'box-label' }, isRoom ? 'Describe your finished project (optional)' : 'Describe your finished project', dreamText));
+        el('label', { class: 'box-label' }, isRoom ? 'Describe your project (optional)' : 'Describe your project', dreamText));
       // Measurements (optional). The "Anything else" notes box was removed at the owner's request.
       const measure = el('input', { value: draft.measurements || '', placeholder: 'e.g. Kitchen is about 12 x 14 ft', 'aria-label': 'Measurements', oninput: () => { draft.measurements = measure.value; saveDraft(); } });
       const measureWrap = el('div', { hidden: !draft.measurements }, measure);
