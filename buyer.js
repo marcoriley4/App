@@ -365,7 +365,7 @@
       view.append(shell('', '', screen === 'photos' ? [
         // Step 1, Photos: their before photos and a written description of the project.
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Add your photos'),
-        el('p', { class: 'wiz-sub' }, 'Up to 5 photos. Add every angle: the design studio uses all of them to design the whole room.'),
+        el('p', { class: 'wiz-sub' }, 'Up to 5 photos. Stand back as far as you can and take a picture of the whole project.'),
         addBtn, grid,
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), 'Tell us about it'),
         describeWrap,
