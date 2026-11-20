@@ -62,6 +62,7 @@
 
   const emptyDraft = () => ({ step: 1, trade: '', description: '', measurements: '', address: '', zip: '', state: '', room: '', style: '', dreamText: '', timeframe: '', budget: '', photos: [] });
   let draft = emptyDraft();
+  let pendingPassword = ''; // new customer's password: kept in memory only, never saved
   try { draft = { ...draft, ...JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}') }; } catch (e) { /* ignore */ }
   function saveDraft() { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch (e) { /* photos may not fit; fine */ } }
   function clearDraft() { draft = emptyDraft(); try { localStorage.removeItem(DRAFT_KEY); } catch (e) { /* ignore */ } }
@@ -157,11 +158,12 @@
     if (askTrade && find(TRADES, askTrade) && askTrade !== draft.trade) { draft.trade = askTrade; draft.room = ''; draft.style = ''; saveDraft(); }
     if (!find(TRADES, draft.trade)) { draft.trade = 'remodel'; saveDraft(); }
     const roomTrade = TH.STYLE_TRADES.includes(draft.trade);
-    const SCREENS = ['design', 'where', 'when', 'budget', ...(me ? [] : ['contact'])];
+    // Owner: 4 steps for everyone (Design · Details · Date · Budget). Contact info and the new account are on Details.
+    const SCREENS = ['design', 'where', 'when', 'budget'];
     const total = SCREENS.length;
     const at = (name) => SCREENS.indexOf(name) + 1;
     // A rough clock so they know how long is left: about how many seconds each step takes.
-    const STEP_NAMES = { design: 'Design', where: 'Address', when: 'Date', budget: 'Budget', contact: 'You' };
+    const STEP_NAMES = { design: 'Design', where: 'Details', when: 'Date', budget: 'Budget', contact: 'You' };
     const STEP_SECS = { trade: 10, design: 75, where: 25, when: 10, budget: 10, contact: 45 };
     const timeLeft = () => { const secs = SCREENS.slice(step - 1).reduce((t, sc) => t + (STEP_SECS[sc] || 20), 0);
       return secs < 50 ? '⏱ Less than a minute left' : `⏱ About ${Math.round(secs / 60) || 1} minute${Math.round(secs / 60) > 1 ? 's' : ''} left`; };
@@ -169,6 +171,7 @@
     const missing = () => {
       if (!find(TRADES, draft.trade)) return 1;
       if (!(draft.address || '').trim() || !/^\d{5}$/.test(draft.zip || '') || !draft.state) return at('where');
+      if (!me && (!(draft.name || '').trim() || !(draft.phone || '').trim() || !(draft.email || '').trim())) return at('where');
       if (!draft.timeframe) return at('when');
       return total;
     };
@@ -375,13 +378,31 @@
         el('option', { value: '' }, 'State'), ...TH.US_STATES.map(([c, n]) => el('option', { value: c, selected: c === draft.state }, n)));
       const zip = el('input', { value: draft.zip || '', placeholder: 'ZIP', inputmode: 'numeric', maxlength: '5', autocomplete: 'postal-code', 'aria-label': 'ZIP code',
         oninput: () => { const g = TH.stateFromZip(zip.value); if (g && !stateSel.dataset.picked) stateSel.value = g; } });
-      view.append(shell('Where is the project?', null, [addr, el('div', { class: 'two zip-state' }, zip, stateSel)], { onNext: () => {
-        draft.address = addr.value.trim(); draft.zip = zip.value.trim(); draft.state = stateSel.value; saveDraft();
+      // How we reach them: phone and email (filled in from their account when they're logged in).
+      const f = {
+        name: me ? null : el('input', { value: draft.name || '', autocomplete: 'name', placeholder: 'Full name', 'aria-label': 'Full name' }),
+        phone: el('input', { type: 'tel', value: draft.phone || (me && me.phone) || '', autocomplete: 'tel', inputmode: 'tel', placeholder: 'Mobile phone', 'aria-label': 'Mobile phone' }),
+        email: el('input', { type: 'email', value: draft.email || (me && me.email) || '', autocomplete: 'email', inputmode: 'email', placeholder: 'Email', 'aria-label': 'Email' }),
+        // The password is never saved in the draft; it stays in memory until they send the request.
+        password: me ? null : el('input', { type: 'password', value: pendingPassword, autocomplete: 'new-password', placeholder: 'Create a password (8+ characters)', 'aria-label': 'Create a password' }),
+      };
+      view.append(shell('Your details', null, [
+        el('h2', { class: 'wiz-part' }, 'Where is the project?'), addr, el('div', { class: 'two zip-state' }, zip, stateSel),
+        el('h2', { class: 'wiz-part' }, 'How do we reach you?'), f.name, f.phone, f.email, f.password,
+      ], { onNext: () => {
+        draft.address = addr.value.trim(); draft.zip = zip.value.trim(); draft.state = stateSel.value;
+        draft.phone = f.phone.value.trim(); draft.email = f.email.value.trim(); if (f.name) draft.name = f.name.value.trim();
+        if (f.password) pendingPassword = f.password.value;
+        saveDraft();
         if (!draft.address) return showError('Enter the street address and city.');
         if (!/^\d{5}$/.test(draft.zip)) return showError('Enter the 5-digit ZIP code.');
         if (!draft.state) return showError('Pick the state the project is in.');
+        if (f.name && !draft.name) return showError('Enter your full name.');
+        if (draft.phone.replace(/\D/g, '').length < 10) return showError('Enter your mobile phone number.');
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(draft.email)) return showError('Enter your email address.');
+        if (f.password && pendingPassword.length < 8) return showError('Create a password with at least 8 characters.');
         next();
-      } }));
+      }, extra: me ? null : el('p', { class: 'muted small', style: 'text-align:center;margin-top:12px' }, 'Already have an account? ', el('a', { href: '#/login?next=request' }, 'Log in'), ' and your request will be waiting.') }));
       return;
     }
 
@@ -399,31 +420,22 @@
           onclick: async (e) => {
             draft.budget = bg.id; draft.budgetSet = true; saveDraft();
             if (!last) return next();
-            const btn = e.currentTarget; btn.disabled = true; await submitJob(showError); btn.disabled = false;
+            const btn = e.currentTarget; btn.disabled = true;
+            try {
+              if (!me) {
+                if (!pendingPassword) { showError('Please re-enter your password on the Details step.'); setTimeout(() => goTo(at('where')), 1200); return; }
+                await api.auth.signUp({ name: draft.name, phone: draft.phone, email: draft.email, password: pendingPassword });
+                pendingPassword = '';
+              }
+              await submitJob(showError);
+            } catch (err) { showError(err.message); }
+            finally { btn.disabled = false; }
           } }, BUDGET_TEXT[bg.id] || bg.label))),
         last ? el('p', { class: 'wiz-sub' }, 'Tap one to send your request.') : null,
       ]));
       return;
     }
 
-    // contact: the only typing-heavy screen, kept to four boxes and one button.
-    const f = {
-      name: el('input', { autocomplete: 'name', placeholder: 'Full name', 'aria-label': 'Full name' }),
-      phone: el('input', { type: 'tel', autocomplete: 'tel', inputmode: 'tel', placeholder: 'Mobile phone', 'aria-label': 'Mobile phone' }),
-      email: el('input', { type: 'email', autocomplete: 'email', inputmode: 'email', placeholder: 'Email', 'aria-label': 'Email' }),
-      password: el('input', { type: 'password', autocomplete: 'new-password', placeholder: 'Create a password (8+ characters)', 'aria-label': 'Create a password' }),
-    };
-    const send = async (e) => {
-      const btn = e.currentTarget; btn.disabled = true;
-      try {
-        await api.auth.signUp({ name: f.name.value, phone: f.phone.value, email: f.email.value, password: f.password.value });
-        await submitJob(showError);
-      } catch (err) { showError(err.message); }
-      finally { btn.disabled = false; }
-    };
-    view.append(shell('Last step: how do we reach you?', 'We’ll call you with your estimate.', [f.name, f.phone, f.email, f.password],
-      { nextLabel: 'Send my request', onNext: send,
-        extra: el('p', { class: 'muted small', style: 'text-align:center;margin-top:12px' }, 'Already have an account? ', el('a', { href: '#/login?next=request' }, 'Log in'), ' and your request will be waiting.') }));
   }
 
   async function submitJob(showError) {
@@ -432,7 +444,10 @@
       // The job description, from the design step: the look they picked or what they want done, their notes, and measurements.
       const look = TH.styleOf(draft.style); const tr = find(TRADES, draft.trade);
       const what = [look ? `${look.room.label} remodel, ${look.style.name} look (${look.style.desc.toLowerCase()})` : '', (draft.dreamText || '').trim(), (draft.description || '').trim()].filter(Boolean).join('. ');
-      const description = [what.length >= 10 ? what : `${tr ? tr.label : 'Home'} project${what ? ': ' + what : ''}`, m ? `Measurements: ${m}` : ''].filter(Boolean).join('\n\n');
+      // Logged-in customers can give a different phone or email on Details: the office sees it on the job.
+      const acct = await api.auth.me().catch(() => null);
+      const reach = acct && ((draft.phone && draft.phone !== acct.phone) || (draft.email && draft.email !== acct.email)) ? `Reach me at: ${[draft.phone, draft.email].filter(Boolean).join(' · ')}` : '';
+      const description = [what.length >= 10 ? what : `${tr ? tr.label : 'Home'} project${what ? ': ' + what : ''}`, m ? `Measurements: ${m}` : '', reach].filter(Boolean).join('\n\n');
       const job = await api.jobs.create({ ...draft, description });
       // Their room in the look they picked: made on the next screen.
       try { sessionStorage.removeItem('tophat.makeDesign'); sessionStorage.removeItem('tophat.dreamSaved'); } catch (e) {}
