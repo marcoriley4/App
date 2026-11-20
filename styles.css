@@ -14,8 +14,8 @@
   --border: #d4d4da;
   --brand: #0b0b0c;
   --on-brand: #ffffff;
-  --gold: #ffc400;
-  --gold-soft: #fff3c2;
+  --gold: #c0904a;          /* bronze gold from tophatcontracting.com */
+  --gold-soft: #f4ead9;
   --accent: #1d4ed8;
   --good: #15803d;
   --good-soft: #dcfce7;
@@ -30,7 +30,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #0b0b0c; --surface: #18181b; --surface-2: #232328; --text: #f5f5f6; --muted: #cfcfd6; --border: #34343c;
-    --brand: #fafafa; --on-brand: #0b0b0c; --gold: #ffc400; --gold-soft: #3a2f00; --accent: #7aa7ff;
+    --brand: #fafafa; --on-brand: #0b0b0c; --gold: #c69a55; --gold-soft: #3a2c17; --accent: #7aa7ff;
     --good: #4ade80; --good-soft: #12351f; --warn: #fbbf24; --bad: #f87171; --bad-soft: #3b1414;
     --shadow: none; color-scheme: dark;
   }
@@ -578,7 +578,7 @@ button.ghost, .btn.ghost { border-width: 1.5px; }
 .hero .hero-cta h1 { flex: 1; min-width: 0; white-space: normal; margin: 0; font-size: 1.55rem; line-height: 1.2; color: var(--ink); }
 .hero .hero-cta .arrow { flex: none; width: 42px; height: 42px; border-radius: 99px; background: var(--ink); color: var(--gold); display: grid; place-items: center; font-size: 1.4rem; font-weight: 800; }
 .hero .cta-note { margin: 0 0 14px; }
-.hero-pitch .pitch-close { display: block; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,196,0,.35); color: var(--gold); font-weight: 800; font-size: 1.15rem; }
+.hero-pitch .pitch-close { display: block; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(192,144,74,.45); color: var(--gold); font-weight: 800; font-size: 1.15rem; }
 .hero-pitch .pitch-close small { display: block; margin-top: 4px; color: #fff; font-weight: 600; font-size: 1rem; }
 
 /* Hot leads: phone estimate and rep visit */
@@ -771,7 +771,7 @@ label.field .hint { font-weight: 500; }
 /* Dark mode picked with the 🌙 button (same as the phone's dark mode) */
 :root[data-theme="dark"] {
     --bg: #0b0b0c; --surface: #18181b; --surface-2: #232328; --text: #f5f5f6; --muted: #cfcfd6; --border: #34343c;
-    --brand: #fafafa; --on-brand: #0b0b0c; --gold: #ffc400; --gold-soft: #3a2f00; --accent: #7aa7ff;
+    --brand: #fafafa; --on-brand: #0b0b0c; --gold: #c69a55; --gold-soft: #3a2c17; --accent: #7aa7ff;
     --good: #4ade80; --good-soft: #12351f; --warn: #fbbf24; --bad: #f87171; --bad-soft: #3b1414;
     --shadow: none; color-scheme: dark;
   }
@@ -885,8 +885,8 @@ label.field .hint { font-weight: 500; }
 .mat-actions select, .mat-actions input[type=date] { flex: 1 1 150px; }
 .tiles .tile { white-space: normal; line-height: 1.15; text-align: left; }
 .stars-show { color: #b77800; }
-:root[data-theme="dark"] .stars-show { color: #ffc400; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .stars-show { color: #ffc400; } }
+:root[data-theme="dark"] .stars-show { color: #c69a55; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .stars-show { color: #c69a55; } }
 .next-step .block { white-space: normal; text-align: center; }
 
 /* Sign-up design step: 1) pick a look 2) add photos */
@@ -917,7 +917,7 @@ label.field .hint { font-weight: 500; }
 .ai-on { color: var(--good); font-weight: 700; }
 /* ✨ Dream room during sign-up */
 .dream-box { display: flex; flex-direction: column; gap: 10px; }
-.dream-btn { background: linear-gradient(135deg, #ffc400, #ff9d00); color: #1b1404; border: 0; font-size: 1.1rem; white-space: normal; text-align: center; }
+.dream-btn { background: linear-gradient(135deg, #d2a35c, #a67e49); color: #1b1404; border: 0; font-size: 1.1rem; white-space: normal; text-align: center; }
 .dream-wait { position: relative; display: none; }
 .dream-box.making .dream-wait { display: block; }
 .dream-wait img { width: 100%; border-radius: 12px; display: block; opacity: .55; }
@@ -978,3 +978,14 @@ label.dream-pick { display: flex; align-items: center; justify-content: center; 
 .project-tile:hover, .project-tile:focus-visible { border-color: var(--gold); }
 .project-tile.other { justify-content: center; align-items: center; min-height: 120px; text-align: center; }
 .project-tile.other .ic { font-size: 2rem; padding-bottom: 0; }
+
+/* Look of tophatcontracting.com: the home page opens on the company's own night photo, white type, bronze gold. */
+.hero { position: relative; color: #fff; border-radius: 18px; padding: 26px 18px 20px; margin-top: 12px; overflow: hidden;
+  background: linear-gradient(180deg, rgba(8,8,10,.55) 0%, rgba(8,8,10,.35) 45%, rgba(8,8,10,.85) 100%), url("img/site/hero.jpg") center 40% / cover no-repeat, #0b0b0c; }
+.hero .slogan { color: #fff; text-shadow: 0 2px 10px rgba(0,0,0,.6); }
+.hero .cta-note { color: rgba(255,255,255,.85); }
+.hero .hero-logo { box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+.hero::after { content: ''; display: block; width: 64px; height: 3px; margin: 14px auto 0; background: var(--gold); border-radius: 2px; }
+.project-picks h2, .four-steps h2 { letter-spacing: .01em; }
+.project-tile { box-shadow: 0 6px 18px rgba(0,0,0,.08); }
+.project-tile:hover, .project-tile:focus-visible { border-color: var(--gold); box-shadow: 0 8px 22px rgba(166,126,73,.25); }

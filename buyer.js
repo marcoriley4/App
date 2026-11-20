@@ -111,17 +111,17 @@
         'Grab a cold beverage and sit back while Top Hat handles all the things most people don’t want to do.'],
     ];
     // Pick your project: a picture button for each kind of job. Each one starts the request already set to that job.
-    // (Drawings in img/styles and img/projects; drop in real photos with the same names to replace them.)
+    // (Photos from tophatcontracting.com in img/site; drawings in img/styles and img/projects where there's no photo yet.)
     const PROJECTS = [
-      ['Kitchens', 'img/styles/kitchen-farmhouse.svg', 'trade=remodel&room=kitchen'],
-      ['Bathrooms', 'img/styles/bathroom-spa.svg', 'trade=remodel&room=bathroom'],
+      ['Kitchens', 'img/site/kitchen.jpg', 'trade=remodel&room=kitchen'],
+      ['Bathrooms', 'img/site/bathroom.jpg', 'trade=remodel&room=bathroom'],
       ['Living rooms', 'img/styles/living-modern.svg', 'trade=remodel&room=living'],
       ['Bedrooms', 'img/styles/bedroom-modern.svg', 'trade=remodel&room=bedroom'],
-      ['Basements', 'img/styles/basement-family.svg', 'trade=remodel&room=basement'],
-      ['Garages', 'img/styles/garage-clean.svg', 'trade=remodel&room=garage'],
-      ['Decks', 'img/projects/deck.svg', 'trade=decks'],
-      ['Patios', 'img/projects/patio.svg', 'trade=concrete&what=patio'],
-      ['Concrete', 'img/projects/concrete.svg', 'trade=concrete'],
+      ['Basements', 'img/site/basement.jpg', 'trade=remodel&room=basement'],
+      ['Garages', 'img/site/garage.jpg', 'trade=remodel&room=garage'],
+      ['Decks', 'img/site/deck.jpg', 'trade=decks'],
+      ['Patios', 'img/site/patio.jpg', 'trade=concrete&what=patio'],
+      ['Concrete', 'img/site/concrete.jpg', 'trade=concrete'],
       ['Roofing', 'img/projects/roofing.svg', 'trade=roofing'],
       ['Siding', 'img/projects/siding.svg', 'trade=siding'],
       ['Fencing', 'img/projects/fencing.svg', 'trade=fencing'],
@@ -329,7 +329,7 @@
           const btn = el('button', { type: 'button', class: 'dream-btn block big', onclick: () => make(btn) }, `✨ Build my dream ${thing()}`);
           if (autoBuild) { autoBuild = false; setTimeout(() => make(btn), 0); }
           dreamBox.replaceChildren(el('div', { class: 'dream-wait' }, el('img', { src: draft.photos[0], alt: 'Your photo' }), el('span', { class: 'spinner', 'aria-hidden': 'true' })), btn,
-            el('p', { class: 'muted small' }, what() ? `We’ll use ${what()}.` : `Pick ${isRoom ? 'a room and a look' : 'some ideas'} in step 2 to make it yours, or just tap.`), err);
+            el('p', { class: 'muted small' }, what() ? `We’ll use ${what()}.` : (isRoom ? 'Pick a room and a look above, or describe your design, to make it yours. Or just tap.' : 'Describe your design above to make it yours, or just tap.')), err);
           return;
         }
         const extra = el('input', { placeholder: 'Change something? e.g. darker colors', 'aria-label': 'Change something', maxlength: '200' });
