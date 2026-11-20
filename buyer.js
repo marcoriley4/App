@@ -155,8 +155,8 @@
     // No "what type of work" page any more: the photo page is first. A link can still say ?trade=roofing; otherwise it's a remodel
     // (room bubbles + "Something else"), and the office can change the type on the job.
     const askTrade = new URLSearchParams(location.hash.split('?')[1] || '').get('trade');
-    if (askTrade && find(TRADES, askTrade) && askTrade !== draft.trade) { draft.trade = askTrade; draft.room = ''; draft.style = ''; saveDraft(); }
-    if (!find(TRADES, draft.trade)) { draft.trade = 'remodel'; saveDraft(); }
+    if (askTrade && find(TRADES, askTrade) && askTrade !== draft.trade) { draft.trade = askTrade; draft.tradeFromLink = true; draft.room = ''; draft.style = ''; saveDraft(); }
+    if (!find(TRADES, draft.trade) || (!draft.tradeFromLink && draft.trade !== 'remodel')) { draft.trade = 'remodel'; saveDraft(); } // e.g. an old saved request
     const roomTrade = TH.STYLE_TRADES.includes(draft.trade);
     // Owner: 3 steps for everyone (Design · Details · Date). Contact info, budget and the new account are on Details;
     // picking the date is the last thing, then "Send my request".
@@ -230,7 +230,7 @@
       let autoBuild = false; // set when they add the photo from the ✨ Build box: build the dream as soon as it's in
       const isRoom = roomTrade;
       let room = isRoom ? TH.STYLE_ROOMS.find((r) => r.id === draft.room) || null : null;
-      const thing = () => (room ? room.label.toLowerCase() : TH.dreamNoun(draft.trade));
+      const thing = () => (room ? room.label.toLowerCase() : isRoom && draft.room === 'none' ? 'project' : TH.dreamNoun(draft.trade));
       const grid = el('div', { class: 'photos' });
       const btnWrap = el('div', { class: 'wiz-next stay' }); // stays at the end of the page, doesn't float
       const rooms = el('div', { class: 'stage-chips room-chips', role: 'radiogroup', 'aria-label': 'Which room' });
@@ -298,7 +298,7 @@
           return;
         }
         const err = el('div', { class: 'error', hidden: true, role: 'alert' });
-        const what = () => (look ? `${look.style.name} look` : words().length >= 3 ? 'your words' : '');
+        const what = () => (look ? `the ${look.style.name} look` : words().length >= 3 ? 'your words' : '');
         const make = async (btn, extra = '') => {
           if (made() >= MAX_SIGNUP_DREAMS) { drawDream(); return; }
           btn.disabled = true; err.hidden = true;
@@ -320,13 +320,13 @@
           const btn = el('button', { type: 'button', class: 'dream-btn block big', onclick: () => make(btn) }, `✨ Build my dream ${thing()}`);
           if (autoBuild) { autoBuild = false; setTimeout(() => make(btn), 0); }
           dreamBox.replaceChildren(el('div', { class: 'dream-wait' }, el('img', { src: draft.photos[0], alt: 'Your photo' }), el('span', { class: 'spinner', 'aria-hidden': 'true' })), btn,
-            el('p', { class: 'muted small' }, what() ? `We’ll use the ${what()}.` : `Pick ${isRoom ? 'a room and a look' : 'some ideas'} in step 2 to make it yours, or just tap.`), err);
+            el('p', { class: 'muted small' }, what() ? `We’ll use ${what()}.` : `Pick ${isRoom ? 'a room and a look' : 'some ideas'} in step 2 to make it yours, or just tap.`), err);
           return;
         }
         const extra = el('input', { placeholder: 'Change something? e.g. darker colors', 'aria-label': 'Change something', maxlength: '200' });
         const changed = d.key !== key;
         const again = el('button', { type: 'button', class: changed ? 'dream-btn block' : 'ghost block', onclick: () => make(again, extra.value) },
-          changed && what() ? `✨ Make a new one: ${what()}` : '🔁 Make it again');
+          changed && what() ? `✨ Make a new one: ${what().replace(/^the /, '')}` : '🔁 Make it again');
         // Owner's order: links, tip, note and "Make it again" ABOVE the dream picture.
         dreamBox.replaceChildren(
           el('h3', {}, `✨ Your dream ${thing()}${TH.styleOf(d.style) ? ' · ' + TH.styleOf(d.style).style.name : ''}`),

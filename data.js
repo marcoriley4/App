@@ -1575,7 +1575,7 @@
         if (!look && String(extra || '').trim().length < 3) throw new Error('Tell us what you want it to look like.');
         if (!photos.length) throw new Error('Add a photo of your space first.');
         const ai = aiConfig();
-        if (!ai.key && !window.TH_AI_MOCK) throw new Error('Picture previews aren’t turned on yet. We’ll still see the look you picked.');
+        if (!ai.key && !window.TH_AI_MOCK) throw new Error('Picture previews aren’t turned on in this browser yet. In preview mode the Gemini key is saved per device: log in as the office on this device, open the Design studio and tap Connect Gemini. You can still send your request.');
         // The 3-picture limit is only for sign-up (not logged in). Logged-in customers aren't limited.
         const signedIn = !!(await me());
         let used = { day: '', n: 0 };
