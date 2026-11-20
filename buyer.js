@@ -182,7 +182,7 @@
     const total = SCREENS.length;
     const at = (name) => SCREENS.indexOf(name) + 1;
     // A rough clock so they know how long is left: about how many seconds each step takes.
-    const STEP_NAMES = { photos: 'Photos', design: 'Design', schedule: me ? 'Schedule' : 'Schedule & create account' };
+    const STEP_NAMES = { photos: 'Photos', design: 'Design', schedule: me ? 'Schedule' : 'Schedule & Create Account' };
     const STEP_SECS = { trade: 10, design: 75, where: 25, when: 10, budget: 10, contact: 45 };
     const timeLeft = () => { const secs = SCREENS.slice(step - 1).reduce((t, sc) => t + (STEP_SECS[sc] || 20), 0);
       return secs < 50 ? '⏱ Less than a minute left' : `⏱ About ${Math.round(secs / 60) || 1} minute${Math.round(secs / 60) > 1 ? 's' : ''} left`; };
@@ -427,13 +427,13 @@
         } catch (err) { showError(err.message); }
         finally { btn.disabled = false; }
       };
-      view.append(shell(me ? 'Schedule' : 'Schedule and create account', null, [
+      view.append(shell(me ? 'Schedule' : 'Schedule and Create Account', null, [
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Select your ideal project start date'),
         el('p', { class: 'wiz-sub' }, 'You’ll be contacted by your project manager within 24 hours.'),
         cal,
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), 'Where is the project?'), addr, el('div', { class: 'two zip-state' }, zip, stateSel),
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '3'), me ? 'How do we reach you?' : 'Create your account'), f.name, f.phone, f.email, f.password,
-      ], { nextLabel: me ? 'Send my request' : 'Create account', onNext: send,
+      ], { nextLabel: me ? 'Send my request' : 'Create Account', onNext: send,
         extra: me ? null : el('p', { class: 'muted small', style: 'text-align:center;margin-top:12px' }, 'Already have an account? ', el('a', { href: '#/login?next=request' }, 'Log in'), ' and your request will be waiting.') }));
       return;
     }
