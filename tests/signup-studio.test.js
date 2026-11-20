@@ -8,7 +8,7 @@ const { chromium, devices } = require('playwright');
   const txt = async (s) => ((await p.locator(s).first().textContent().catch(() => '')) || '').replace(/\s+/g, ' ').trim();
   const ok = (cond, msg) => { console.log((cond ? 'PASS ' : 'FAIL ') + msg); if (!cond) process.exitCode = 1; };
   await p.goto('http://localhost:8766/'); await p.evaluate(() => { localStorage.clear(); sessionStorage.clear(); }); await p.goto('http://localhost:8766/');
-  await p.tap('.hero-cta'); await p.tap('.tile:has-text("Remodel")');
+  await p.tap('.hero-cta'); await p.evaluate(() => { location.hash = '#/request?trade=remodel'; }); await p.waitForSelector('.dream-box');
   ok(await p.locator('.dream-box').count() === 1, 'studio is on the sign-up design step: ' + await txt('.wiz-part:has-text("Build my dream")'));
   await p.setInputFiles('.photo-btn input', require('path').join(__dirname, 'fixtures', 'before.jpg')); await p.waitForSelector('.dream-btn');
   await p.tap('.room-chips .chip:has-text("Kitchen")'); await p.tap('.look:has-text("Modern")');

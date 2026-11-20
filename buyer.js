@@ -113,7 +113,7 @@
       el('section', { class: 'hero' },
         el('span', { class: 'hero-tag' }, 'Premier residential contracting'),
         el('img', { class: 'hero-logo', src: 'img/logo.jpg', alt: 'Top Hat Contracting Services' }),
-        el('a', { class: 'btn gold block hero-cta', href: '#/request', onclick: () => { if (draft.step > 2 && (draft.photos.length || draft.dream)) { draft.step = 2; saveDraft(); } } }, // never wipe their photo or dream: pick up at the design studio
+        el('a', { class: 'btn gold block hero-cta', href: '#/request', onclick: () => { if (draft.step > 1 && (draft.photos.length || draft.dream)) { draft.step = 1; saveDraft(); } } }, // never wipe their photo or dream: pick up at the design studio
           el('h1', {}, 'Start your project the right way, right now.')),
         el('p', { class: 'cta-note' }, 'Tap to start'),
       ),
@@ -151,12 +151,17 @@
     if (me && me.role === 'staff') { view.append(el('div', { class: 'card', style: 'margin-top:24px' }, 'You are logged in as staff. ', el('a', { href: 'admin.html' }, 'Go to the staff area'), '.')); return; }
     // Room projects (kitchens, baths…) get a "pick a style" screen after they describe it.
     // Room projects (remodel, painting, flooring…) get the design screen: pick one of the 3 looks, add photos, and we design their room in it.
+    // No "what type of work" page any more: the photo page is first. A link can still say ?trade=roofing; otherwise it's a remodel
+    // (room bubbles + "Something else"), and the office can change the type on the job.
+    const askTrade = new URLSearchParams(location.hash.split('?')[1] || '').get('trade');
+    if (askTrade && find(TRADES, askTrade) && askTrade !== draft.trade) { draft.trade = askTrade; draft.room = ''; draft.style = ''; saveDraft(); }
+    if (!find(TRADES, draft.trade)) { draft.trade = 'remodel'; saveDraft(); }
     const roomTrade = TH.STYLE_TRADES.includes(draft.trade);
-    const SCREENS = ['trade', 'design', 'where', 'when', 'budget', ...(me ? [] : ['contact'])];
+    const SCREENS = ['design', 'where', 'when', 'budget', ...(me ? [] : ['contact'])];
     const total = SCREENS.length;
     const at = (name) => SCREENS.indexOf(name) + 1;
     // A rough clock so they know how long is left: about how many seconds each step takes.
-    const STEP_NAMES = { trade: 'Type', design: 'Design', where: 'Address', when: 'Date', budget: 'Budget', contact: 'You' };
+    const STEP_NAMES = { design: 'Design', where: 'Address', when: 'Date', budget: 'Budget', contact: 'You' };
     const STEP_SECS = { trade: 10, design: 75, where: 25, when: 10, budget: 10, contact: 45 };
     const timeLeft = () => { const secs = SCREENS.slice(step - 1).reduce((t, sc) => t + (STEP_SECS[sc] || 20), 0);
       return secs < 50 ? '⏱ Less than a minute left' : `⏱ About ${Math.round(secs / 60) || 1} minute${Math.round(secs / 60) > 1 ? 's' : ''} left`; };
@@ -183,7 +188,6 @@
       el('div', { class: 'steps' }, ...SCREENS.map((_, i) => el('span', { class: i < step ? 'on' : '' }))),
       el('div', { class: 'step-names', 'aria-hidden': 'true' }, ...SCREENS.map((sc, i) => el('span', { class: i + 1 === step ? 'now' : i + 1 < step ? 'done' : '' }, (STEP_NAMES[sc] || sc)))),
       el('p', { class: 'time-left' }, timeLeft()),
-      step > 1 && trade ? el('p', { class: 'wiz-what' }, `${trade.icon} ${trade.label}`) : null,
       el('h1', { class: 'wiz-q' }, title),
       sub ? el('p', { class: 'wiz-sub' }, sub) : null,
       errorBox,
@@ -191,15 +195,6 @@
       onNext ? el('div', { class: 'wiz-next' }, el('button', { type: 'button', class: 'gold block big', onclick: onNext }, nextLabel || 'Next')) : null,
       extra || null,
     );
-
-    if (screen === 'trade') {
-      view.append(shell('What do you want done?', 'Tap one.', [
-        el('div', { class: 'tiles big-tiles' }, ...TRADES.map((t) => el('button', { type: 'button', class: 'tile' + (draft.trade === t.id ? ' on' : ''),
-          onclick: () => { draft.trade = t.id; next(); } },
-          el('span', { class: 'ic' }, t.icon), t.label))),
-      ]));
-      return;
-    }
 
     if (screen === 'photos') {
       const grid = el('div', { class: 'photos' });
@@ -261,14 +256,14 @@
             el('span', { class: 'look-check', 'aria-hidden': 'true' }, on ? '✓' : '')); }) : []));
       };
       // Not a room project (or "something else"): describe the dream in a few words.
-      const dreamText = el('textarea', { rows: 2, maxlength: '200', value: draft.dreamText || '', 'aria-label': 'Describe your dream',
+      const dreamText = el('textarea', { rows: 2, maxlength: '200', value: draft.dreamText || '', 'aria-label': 'Describe your finished project',
         placeholder: draft.trade === 'roofing' ? 'e.g. New roof, charcoal architectural shingles, white gutters' : draft.trade === 'decks' ? 'e.g. Gray composite deck with black railings' : 'e.g. What needs fixing, and what you want it to look like when it’s done',
         oninput: () => { draft.dreamText = dreamText.value; saveDraft(); drawDream(); drawBtn(); } });
       const ideaList = [...(isRoom ? [] : IDEA_CHIPS[draft.trade] || []), ...((TH.DESIGN_IDEAS || {})[draft.trade] || (TH.DESIGN_IDEAS || {}).other || [])].filter((x, i, a) => a.indexOf(x) === i);
       const dreamIdeas = el('div', { class: 'stage-chips' }, ...ideaList.map((t) => el('button', { type: 'button', class: 'chip',
         onclick: () => { dreamText.value = dreamText.value.trim() ? `${dreamText.value.trim()}, ${t.toLowerCase()}` : t; draft.dreamText = dreamText.value; saveDraft(); drawDream(); drawBtn(); } }, `+ ${t}`)));
       const describeWrap = el('div', { class: 'stack', style: 'gap:8px' }, dreamIdeas,
-        el('label', { class: 'box-label' }, isRoom ? 'Describe your dream (optional)' : 'Describe your dream', dreamText));
+        el('label', { class: 'box-label' }, isRoom ? 'Describe your finished project (optional)' : 'Describe your finished project', dreamText));
       // Measurements (optional). The "Anything else" notes box was removed at the owner's request.
       const measure = el('input', { value: draft.measurements || '', placeholder: 'e.g. Kitchen is about 12 x 14 ft', 'aria-label': 'Measurements', oninput: () => { draft.measurements = measure.value; saveDraft(); } });
       const measureWrap = el('div', { hidden: !draft.measurements }, measure);
@@ -317,7 +312,7 @@
         dreamBox.replaceChildren(
           el('h3', {}, `✨ Your dream ${thing()}${TH.styleOf(d.style) ? ' · ' + TH.styleOf(d.style).style.name : ''}`),
           TH.beforeAfter([{ url: d.photo || draft.photos[0], name: 'Your photo', stage: 'before', group: 'g' }, { url: d.image, name: 'Your dream', stage: 'after', group: 'g' }], { title: 'Before & after: slide to compare', infoFirst: true,
-            above: [el('p', { class: 'muted small' }, 'We’ll see this same before and after when we call you, so we’re talking about the same thing.'), el('div', { class: 'dream-again' }, extra, again), err] }));
+            above: [el('div', { class: 'dream-again' }, extra, again), err] }));
       };
       const drawBtn = () => {
         const loved = !!(draft.dream && draft.dream.image);

@@ -1906,7 +1906,7 @@
     if (infoFirst) {
       const parts = groups.flatMap((g) => g.before && g.after.length ? g.after.map((a) => slider(g.before, a, ++n)) : []);
       if (parts.length) return el('div', { class: 'stack', style: 'gap:10px' },
-        ...parts.map((x) => x.links), tip(), ...above, el('b', { class: 'small' }, title), ...parts.map((x) => x.box));
+        ...parts.map((x) => x.links), ...above, el('b', { class: 'small' }, title), ...parts.map((x) => x.box));
       n = 0;
     }
     return el('div', { class: 'stack', style: 'gap:10px' }, el('b', { class: 'small' }, title),
