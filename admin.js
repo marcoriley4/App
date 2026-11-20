@@ -523,7 +523,12 @@
     const dreamFirst = !!chosen && ['new', 'qualifying', 'hot'].includes(j.status);
     const designCard = el('section', { class: 'card stack' + (dreamFirst ? ' dream-card' : '') },
       el('div', { class: 'row' }, el('h3', {}, dreamFirst ? `🌟 ${first}’s dream ${TH.styleOf(j.style) ? TH.styleOf(j.style).room.label.toLowerCase() + ' · ' + TH.styleOf(j.style).style.name : 'design'}` : '🎨 Design studio'), el('span', { class: 'spacer' }), aiCount ? el('span', { class: 'pill' }, `${aiCount} design${aiCount === 1 ? '' : 's'}`) : null),
-      chosen ? el('figure', { class: 'design-chosen' }, el('a', { href: chosen.url, target: '_blank', rel: 'noopener' }, el('img', { src: chosen.url, alt: 'The customer’s chosen design' })),
+      chosen ? el('figure', { class: 'design-chosen' },
+        // Before and after: the customer's own photo (the start of this design) next to the one they picked, as a slider.
+        (() => { let root = chosen; while (root && root.parentId) root = designs.find((y) => y.id === root.parentId) || null;
+          return root && root !== chosen && root.url
+            ? TH.beforeAfter([{ url: root.url, name: 'Their photo', stage: 'before', group: 'chosen' }, { url: chosen.url, name: 'The one they picked', stage: 'after', group: 'chosen' }], { title: 'Before & after: slide to compare' })
+            : el('a', { href: chosen.url, target: '_blank', rel: 'noopener' }, el('img', { src: chosen.url, alt: 'The customer’s chosen design' })); })(),
         el('figcaption', {}, el('b', {}, '⭐ The one they picked'), el('ol', { class: 'studio-steps' },
           ...(() => { const out = []; for (let x = chosen; x && x.source === 'ai'; x = designs.find((y) => y.id === x.parentId)) out.unshift(x); return out; })().map((v) => el('li', {}, v.prompt)))))
         : el('p', { class: 'muted small' }, designs.length ? `${designs.length} picture${designs.length === 1 ? '' : 's'} so far. They haven’t picked one yet.` : `${j.hasAccount ? first + ' can' : 'You can'} upload a photo of the space and describe the remodel. The AI shows a picture of it, and you keep changing it until it’s right.`),
