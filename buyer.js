@@ -101,8 +101,8 @@
   async function home() {
     // The 4 steps: a short line each, tap one for the full story.
     const STEPS = [
-      ['🎨', 'Design it & agree on a price', 'Share photos or describe it. Pick the design, colors and details.',
-        'Upload pictures of your space or describe the project you’d like done. Finalize the design, colors and details, then agree on an estimated price.'],
+      ['🎨', 'Design it & agree on a budget price', 'Share photos or describe it. Pick the design, colors and details.',
+        'Upload current pictures of the space or structure for your project.'],
       ['📐', 'Meet your project manager', 'We measure, finalize the estimate and put you on the calendar.',
         'Your Top Hat project manager comes out to field-verify measurements, go over the details, finalize the estimate and collect your deposit. Your project goes on the Top Hat calendar and is assigned to a contractor.'],
       ['🏗️', 'Permits, materials & we begin', 'Permits pulled, materials delivered, work starts.',
