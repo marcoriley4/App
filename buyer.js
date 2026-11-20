@@ -126,7 +126,7 @@
       el('section', { class: 'hero' },
         el('span', { class: 'hero-tag' }, 'Premier residential contracting'),
         el('img', { class: 'hero-logo', src: 'img/logo.jpg', alt: 'Top Hat Contracting Services' }),
-        el('p', { class: 'slogan' }, 'We bring the right contractor to the right job.'),
+        el('p', { class: 'slogan' }, 'You need it done… We make it happen.'),
         el('a', { class: 'btn gold block hero-cta', href: '#/request', onclick: () => { if (draft.step > 1 && (draft.photos.length || draft.dream)) { draft.step = 1; saveDraft(); } } }, // never wipe their photo or dream: pick up at the design studio
           el('h1', {}, 'Start your project the right way, right now.')),
       ),
