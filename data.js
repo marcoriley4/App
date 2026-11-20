@@ -1558,15 +1558,17 @@
         if (!photos.length) throw new Error('Add a photo of your space first.');
         const ai = aiConfig();
         if (!ai.key && !window.TH_AI_MOCK) throw new Error('Picture previews aren’t turned on yet. We’ll still see the look you picked.');
+        // The 3-picture limit is only for sign-up (not logged in). Logged-in customers aren't limited.
+        const signedIn = !!(await me());
         let used = { day: '', n: 0 };
         try { used = JSON.parse(localStorage.getItem('tophat.dreams') || '{}'); } catch (e) {}
         const today = isoDay(Date.now());
         if (used.day !== today) used = { day: today, n: 0 };
-        if (used.n >= 3) throw new Error('You’ve made 3 designs, the most for sign-up. You can make more in the Design studio once you’re signed up.');
+        if (!signedIn && used.n >= 3) throw new Error('You’ve made 3 designs, the most for sign-up. You can make more in the Design studio once you’re signed up.');
         const tradeLabel = (TRADES.find((t) => t.id === trade) || {}).label || 'Home project';
         const instruction = manyPhotosNote(photos.length) + designPrompt({ trade: look ? 'Remodel' : tradeLabel, description: '', earlier: [], request: look ? dreamRequest(look, extra) : dreamRequestText(tradeLabel, extra) });
         const out = window.TH_AI_MOCK ? await window.TH_AI_MOCK(photos[0], instruction, photos) : await callImageAI(ai, photos, instruction);
-        used.n++; try { localStorage.setItem('tophat.dreams', JSON.stringify(used)); } catch (e) {}
+        if (!signedIn) { used.n++; try { localStorage.setItem('tophat.dreams', JSON.stringify(used)); } catch (e) {} }
         return shrinkImage(await (await fetch(out)).blob(), 1280, 0.82);
       },
       // After they send the request: save their photo and the dream picture to the job, marked as the one they picked.

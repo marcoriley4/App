@@ -283,7 +283,8 @@
       const dreamBox = el('div', { class: 'dream-box' });
       const studioHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '3'), '✨ Build my dream');
       // Owner's rule: up to 3 pictures during sign-up. More can be made in the app's Design studio after they sign up.
-      const MAX_SIGNUP_DREAMS = 3;
+      // Only for new customers signing up: logged-in customers have no limit here.
+      const MAX_SIGNUP_DREAMS = me ? Infinity : 3;
       const made = () => Number(draft.dreamCount) || 0;
       const limitNote = () => el('p', { class: 'dream-limit' }, `You’ve made ${MAX_SIGNUP_DREAMS} designs, the most for sign-up. This one is saved with your request, and you can make more in the Design studio once you’re signed up.`);
       const drawDream = () => {
@@ -331,7 +332,7 @@
           el('h3', {}, `✨ Your dream ${thing()}${TH.styleOf(d.style) ? ' · ' + TH.styleOf(d.style).style.name : ''}`),
           TH.beforeAfter([{ url: d.photo || draft.photos[0], name: 'Your photo', stage: 'before', group: 'g' }, { url: d.image, name: 'Your dream', stage: 'after', group: 'g' }], { title: 'Before & after: slide to compare', infoFirst: true,
             above: made() >= MAX_SIGNUP_DREAMS ? [limitNote()]
-              : [el('div', { class: 'dream-again' }, extra, again), el('p', { class: 'muted small' }, `Design ${made()} of ${MAX_SIGNUP_DREAMS}`), err] }));
+              : [el('div', { class: 'dream-again' }, extra, again), el('p', { class: 'muted small' }, (me ? `Design ${made()}` : `Design ${made()} of ${MAX_SIGNUP_DREAMS}`)), err] }));
       };
       const drawBtn = () => {
         const loved = !!(draft.dream && draft.dream.image);

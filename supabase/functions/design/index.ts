@@ -117,11 +117,14 @@ Deno.serve(async (req) => {
     const ip = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || 'unknown';
     const visitor = encodeBase64(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ip + (Deno.env.get('SUPABASE_URL') || ''))))).slice(0, 24);
     const since = new Date(Date.now() - 86400e3).toISOString();
-    const { count: mine } = await admin.from('design_dreams').select('id', { count: 'exact', head: true }).eq('visitor', visitor).gte('created_at', since);
+    // The 3-picture limit is only for sign-up: logged-in customers aren't limited per visitor.
+    const { data: who } = await asUser.auth.getUser().catch(() => ({ data: { user: null } }));
+    const signedIn = !!who?.user;
+    const { count: mine } = signedIn ? { count: 0 } : await admin.from('design_dreams').select('id', { count: 'exact', head: true }).eq('visitor', visitor).gte('created_at', since);
     if ((mine || 0) >= DREAMS_PER_VISITOR) return fail('You’ve made 3 designs, the most for sign-up. You can make more in the Design studio once you’re signed up.', 429);
     const { count: all } = await admin.from('design_dreams').select('id', { count: 'exact', head: true }).gte('created_at', since);
     if ((all || 0) >= DREAMS_PER_DAY) return fail('Picture previews are busy right now. Send your request and we’ll make yours with you.', 429);
-    await admin.from('design_dreams').insert({ visitor });
+    await admin.from('design_dreams').insert({ visitor: signedIn ? 'user:' + who!.user!.id.slice(0, 18) : visitor });
     try {
       const tradeLabel = TRADES[String(body.trade || '')] || 'Home project';
       const request = LOOKS[style] ? dreamRequest(style, words.slice(0, 200)) : `Show this ${tradeLabel.toLowerCase()} project finished the way the customer wants: ${words}.`;
