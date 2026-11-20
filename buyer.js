@@ -103,8 +103,8 @@
     const STEPS = [
       ['📷', 'Upload your photo', 'Upload current pictures of the space or structure for your project.', ''],
       ['✨', 'Build my dream', 'Describe your dream. Pick the design, colors, and details.', ''],
-      ['📅', 'Schedule', 'Schedule your project manager to come out.', ''],
-      ['👤', 'Create account', 'Create an account that connects you to every aspect of your project.', ''],
+      ['📅', 'Schedule', 'Pencil in your project date.', ''],
+      ['👤', 'Create account', 'Stay connected to every step. Sign. Confirm. Complete. Let’s get it done!', ''],
     ];
     // Pick your project: a picture button for each kind of job. Each one starts the request already set to that job.
     // (Only jobs with a real photo from tophatcontracting.com, in img/site. Owner: no buttons without a real picture.)
