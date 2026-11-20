@@ -110,13 +110,39 @@
       ['🥤', 'Relax & watch the magic happen', 'Sit back while Top Hat handles the rest.',
         'Grab a cold beverage and sit back while Top Hat handles all the things most people don’t want to do.'],
     ];
+    // Pick your project: a picture button for each kind of job. Each one starts the request already set to that job.
+    // (Drawings in img/styles and img/projects; drop in real photos with the same names to replace them.)
+    const PROJECTS = [
+      ['Kitchens', 'img/styles/kitchen-farmhouse.svg', 'trade=remodel&room=kitchen'],
+      ['Bathrooms', 'img/styles/bathroom-spa.svg', 'trade=remodel&room=bathroom'],
+      ['Living rooms', 'img/styles/living-modern.svg', 'trade=remodel&room=living'],
+      ['Bedrooms', 'img/styles/bedroom-modern.svg', 'trade=remodel&room=bedroom'],
+      ['Basements', 'img/styles/basement-family.svg', 'trade=remodel&room=basement'],
+      ['Garages', 'img/styles/garage-clean.svg', 'trade=remodel&room=garage'],
+      ['Decks', 'img/projects/deck.svg', 'trade=decks'],
+      ['Patios', 'img/projects/patio.svg', 'trade=concrete&what=patio'],
+      ['Concrete', 'img/projects/concrete.svg', 'trade=concrete'],
+      ['Roofing', 'img/projects/roofing.svg', 'trade=roofing'],
+      ['Siding', 'img/projects/siding.svg', 'trade=siding'],
+      ['Fencing', 'img/projects/fencing.svg', 'trade=fencing'],
+      ['Painting', 'img/projects/painting.svg', 'trade=painting'],
+      ['Flooring', 'img/projects/flooring.svg', 'trade=flooring'],
+      ['Windows & doors', 'img/projects/windows.svg', 'trade=windows'],
+    ];
     view.append(el('div', { class: 'stack' },
       el('section', { class: 'hero' },
         el('span', { class: 'hero-tag' }, 'Premier residential contracting'),
         el('img', { class: 'hero-logo', src: 'img/logo.jpg', alt: 'Top Hat Contracting Services' }),
+        el('p', { class: 'slogan' }, 'We bring the right contractor to the right job.'),
         el('a', { class: 'btn gold block hero-cta', href: '#/request', onclick: () => { if (draft.step > 1 && (draft.photos.length || draft.dream)) { draft.step = 1; saveDraft(); } } }, // never wipe their photo or dream: pick up at the design studio
           el('h1', {}, 'Start your project the right way, right now.')),
         el('p', { class: 'cta-note' }, 'Tap to start'),
+      ),
+      el('section', { class: 'project-picks' },
+        el('h2', {}, 'What are we building?'),
+        el('div', { class: 'project-grid' }, ...PROJECTS.map(([label, img, q]) => el('a', { class: 'project-tile', href: '#/request?' + q, onclick: () => { draft.step = 1; saveDraft(); } },
+          el('img', { src: img, alt: '', loading: 'lazy' }), el('span', {}, label))),
+          el('a', { class: 'project-tile other', href: '#/request?trade=remodel&room=none', onclick: () => { draft.step = 1; saveDraft(); } }, el('span', { class: 'ic', 'aria-hidden': 'true' }, '📋'), el('span', {}, 'Something else'))),
       ),
       el('section', { class: 'four-steps' },
         el('h2', {}, 'It’s simple: ', el('span', { class: 'hl' }, '4 steps'), ' and you’re on your way'),
@@ -157,24 +183,26 @@
     const askTrade = new URLSearchParams(location.hash.split('?')[1] || '').get('trade');
     if (askTrade && find(TRADES, askTrade) && askTrade !== draft.trade) { draft.trade = askTrade; draft.tradeFromLink = true; draft.room = ''; draft.style = ''; saveDraft(); }
     if (!find(TRADES, draft.trade) || (!draft.tradeFromLink && draft.trade !== 'remodel')) { draft.trade = 'remodel'; saveDraft(); } // e.g. an old saved request
+    const askQ = new URLSearchParams(location.hash.split('?')[1] || '');
+    const askRoom = askQ.get('room');
+    if (askRoom && (askRoom === 'none' || TH.STYLE_ROOMS.some((x) => x.id === askRoom)) && askRoom !== draft.room) { draft.room = askRoom; if (!(draft.style || '').startsWith(askRoom + '/')) draft.style = ''; saveDraft(); }
+    if (askQ.has('trade')) { const w = askQ.get('what') || ''; if (w !== (draft.what || '')) { draft.what = w; saveDraft(); } }
     const roomTrade = TH.STYLE_TRADES.includes(draft.trade);
     // Owner: 3 steps for everyone (Design · Details · Date). Contact info, budget and the new account are on Details;
     // picking the date is the last thing, then "Send my request".
-    const SCREENS = ['design', 'where', 'when'];
+    // Owner's 3 steps: 1 Photos (+ describe it), 2 Design (studio + budget), 3 Schedule (meet your project manager, address, account).
+    const SCREENS = ['photos', 'design', 'schedule'];
     const total = SCREENS.length;
     const at = (name) => SCREENS.indexOf(name) + 1;
     // A rough clock so they know how long is left: about how many seconds each step takes.
-    const STEP_NAMES = { design: 'Design', where: 'Details', when: 'Date', budget: 'Budget', contact: 'You' };
+    const STEP_NAMES = { photos: 'Photos', design: 'Design', schedule: 'Schedule' };
     const STEP_SECS = { trade: 10, design: 75, where: 25, when: 10, budget: 10, contact: 45 };
     const timeLeft = () => { const secs = SCREENS.slice(step - 1).reduce((t, sc) => t + (STEP_SECS[sc] || 20), 0);
       return secs < 50 ? '⏱ Less than a minute left' : `⏱ About ${Math.round(secs / 60) || 1} minute${Math.round(secs / 60) > 1 ? 's' : ''} left`; };
     // Never skip ahead past something we still need.
     const missing = () => {
       if (!find(TRADES, draft.trade)) return 1;
-      if (!(draft.address || '').trim() || !/^\d{5}$/.test(draft.zip || '') || !draft.state) return at('where');
-      if (!me && (!(draft.name || '').trim() || !(draft.phone || '').trim() || !(draft.email || '').trim())) return at('where');
-      if (!draft.timeframe) return at('when');
-      return total;
+      return total; // the last step (Schedule) checks the address, the day and their contact info
     };
     let step = Math.max(1, Math.min(Number(draft.step) || 1, total, missing()));
     const screen = SCREENS[step - 1];
@@ -199,38 +227,13 @@
       extra || null,
     );
 
-    if (screen === 'photos') {
-      const grid = el('div', { class: 'photos' });
-      const btnWrap = el('div', { class: 'wiz-next' });
-      const draw = () => {
-        grid.replaceChildren(...draft.photos.map((src, i) => el('div', { class: 'photo' },
-          el('img', { src, alt: `Photo ${i + 1}` }),
-          el('button', { type: 'button', 'aria-label': `Remove photo ${i + 1}`, onclick: () => { draft.photos.splice(i, 1); saveDraft(); draw(); } }, '✕'))));
-        btnWrap.replaceChildren(draft.photos.length
-          ? el('button', { type: 'button', class: 'gold block big', onclick: next }, `Next (${draft.photos.length} photo${draft.photos.length === 1 ? '' : 's'})`)
-          : el('button', { type: 'button', class: 'ghost block', onclick: next }, 'Skip for now'));
-        addBtn.hidden = draft.photos.length >= MAX_PHOTOS;
-      };
-      const addBtn = el('label', { class: 'btn gold block big photo-btn' }, '📷 Take or add photos',
-        el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async (e) => {
-          const files = [...e.target.files].slice(0, MAX_PHOTOS - draft.photos.length);
-          for (const f of files) { try { draft.photos.push(await shrinkImage(f)); } catch (err) { showError(err.message); } }
-          saveDraft(); draw();
-        } }));
-      view.append(shell('Show us the space', 'A few phone pictures help us price it right. Up to 5.', [addBtn, grid,
-        ]));
-      view.querySelector('.wiz').append(btnWrap);
-      draw();
-      return;
-    }
-
     // Design (every request): 1) the BEFORE photo, 2) the dream (room projects pick one of the three looks; everything else describes it),
     // then ✨ the AFTER picture: their own photo, finished. Both are saved to the job when they send the request.
-    if (screen === 'design') {
+    if (screen === 'photos' || screen === 'design') {
       let autoBuild = false; // set when they add the photo from the ✨ Build box: build the dream as soon as it's in
       const isRoom = roomTrade;
       let room = isRoom ? TH.STYLE_ROOMS.find((r) => r.id === draft.room) || null : null;
-      const thing = () => (room ? room.label.toLowerCase() : isRoom && draft.room === 'none' ? 'project' : TH.dreamNoun(draft.trade));
+      const thing = () => (room ? room.label.toLowerCase() : draft.what ? draft.what : isRoom && draft.room === 'none' ? 'project' : TH.dreamNoun(draft.trade));
       const grid = el('div', { class: 'photos' });
       const btnWrap = el('div', { class: 'wiz-next stay' }); // stays at the end of the page, doesn't float
       const rooms = el('div', { class: 'stage-chips room-chips', role: 'radiogroup', 'aria-label': 'Which room' });
@@ -249,7 +252,7 @@
         if (!r || !(draft.style || '').startsWith(r.id + '/')) draft.style = '';
         saveDraft(); drawRooms(); drawLooks(); drawDream(); drawBtn();
         if (r) setTimeout(() => lookHead.scrollIntoView({ block: 'start', behavior: 'smooth' }), 30);
-        else setTimeout(() => projectText.focus(), 30);
+        else setTimeout(() => dreamText.focus(), 30);
       };
       const drawLooks = () => {
         lookHead.hidden = !room;
@@ -281,7 +284,13 @@
         measureWrap);
       // ✨ The AFTER: their own photo, finished, right here before they send anything.
       const dreamBox = el('div', { class: 'dream-box' });
-      const studioHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '3'), '✨ Build my dream');
+      const studioHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, isRoom ? '2' : '1'), '✨ Build my dream');
+      // Budget: on the Design step, under the studio.
+      const budgetChips = el('div', { class: 'stage-chips budget-chips', role: 'radiogroup', 'aria-label': 'Budget' });
+      const drawBudget = () => budgetChips.replaceChildren(...BUDGETS.map((bg) => { const on = draft.budgetSet && draft.budget === bg.id;
+        return el('button', { type: 'button', role: 'radio', 'aria-checked': String(on), class: 'chip' + (on ? ' on' : ''),
+          onclick: () => { draft.budget = bg.id; draft.budgetSet = true; saveDraft(); drawBudget(); } }, BUDGET_TEXT[bg.id] || bg.label); }));
+      drawBudget();
       // Owner's rule: up to 3 pictures during sign-up. More can be made in the app's Design studio after they sign up.
       // Only for new customers signing up: logged-in customers have no limit here.
       const MAX_SIGNUP_DREAMS = me ? Infinity : 3;
@@ -335,8 +344,8 @@
               : [el('div', { class: 'dream-again' }, extra, again), el('p', { class: 'muted small' }, (me ? `Design ${made()}` : `Design ${made()} of ${MAX_SIGNUP_DREAMS}`)), err] }));
       };
       const drawBtn = () => {
-        const loved = !!(draft.dream && draft.dream.image);
-        btnWrap.replaceChildren(draft.photos.length || loved
+        const loved = !!(draft.dream && draft.dream.image) && screen === 'design';
+        btnWrap.replaceChildren(draft.photos.length || loved || (screen === 'design')
           ? el('button', { type: 'button', class: 'gold block big', onclick: next }, loved ? '❤️ Love it: next' : 'Next')
           : el('button', { type: 'button', class: 'ghost block', onclick: next }, 'Skip for now'));
       };
@@ -355,17 +364,21 @@
       };
       const addBtn = el('label', { class: 'btn gold block big photo-btn' }, '📷 Add photos',
         el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: addPhotos }));
-      view.append(shell('', '', [
-        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Your before photo'),
+      view.append(shell('', '', screen === 'photos' ? [
+        // Step 1, Photos: their before photos and a written description of the project.
+        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Add your photos'),
         el('p', { class: 'wiz-sub' }, 'Up to 5 photos. Add every angle: the design studio uses all of them to design the whole room.'),
         addBtn, grid,
-        // 2. What they want: room bubbles + looks (room projects), idea bubbles, their words, notes, measurements.
-        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), isRoom ? 'Which room is it?' : 'What do you want done?'),
-        ...(isRoom ? [rooms, lookHead, looks] : []),
+        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), 'Tell us about it'),
         describeWrap,
         extrasWrap,
-        // 3. The design studio: build the dream (AFTER) from their photo. Core screen: never remove (see CLAUDE.md).
+      ] : [
+        // Step 2, Design: which room and look, then the design studio builds the dream (AFTER) from their photos, then the budget.
+        // The design studio here is a core screen: never remove it (see CLAUDE.md).
+        ...(isRoom ? [el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Which room is it?'), rooms, lookHead, looks] : []),
         studioHead, designWrap, dreamBox,
+        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, isRoom ? '3' : '2'), 'Have you thought about a budget?'),
+        budgetChips,
       ]));
       view.querySelector('.wiz').append(btnWrap);
       if (isRoom) { drawRooms(); drawLooks(); }
@@ -373,14 +386,16 @@
       return;
     }
 
-    if (screen === 'where') {
+    // Step 3, Schedule: the day to meet their project manager, the project address, and their account (or contact info).
+    if (screen === 'schedule') {
+      const cal = calendarPicker(draft.timeframe, (v) => { draft.timeframe = v; saveDraft(); });
       const addr = el('input', { value: draft.address || '', placeholder: 'Street address, city', autocomplete: 'street-address', 'aria-label': 'Street address and city' });
       // State: picked for them from the ZIP code (they can change it).
       const stateSel = el('select', { 'aria-label': 'State', autocomplete: 'address-level1', onchange: () => { stateSel.dataset.picked = '1'; } },
         el('option', { value: '' }, 'State'), ...TH.US_STATES.map(([c, n]) => el('option', { value: c, selected: c === draft.state }, n)));
       const zip = el('input', { value: draft.zip || '', placeholder: 'ZIP', inputmode: 'numeric', maxlength: '5', autocomplete: 'postal-code', 'aria-label': 'ZIP code',
         oninput: () => { const g = TH.stateFromZip(zip.value); if (g && !stateSel.dataset.picked) stateSel.value = g; } });
-      // How we reach them: phone and email (filled in from their account when they're logged in).
+      // Their account: name, number, email (filled in from their account when they're logged in).
       const f = {
         name: me ? null : el('input', { value: draft.name || '', autocomplete: 'name', placeholder: 'Full name', 'aria-label': 'Full name' }),
         phone: el('input', { type: 'tel', value: draft.phone || (me && me.phone) || '', autocomplete: 'tel', inputmode: 'tel', placeholder: 'Mobile phone', 'aria-label': 'Mobile phone' }),
@@ -388,21 +403,17 @@
         // The password is never saved in the draft; it stays in memory until they send the request.
         password: me ? null : el('input', { type: 'password', value: pendingPassword, autocomplete: 'new-password', placeholder: 'Create a password (8+ characters)', 'aria-label': 'Create a password' }),
       };
-      const budgetChips = el('div', { class: 'stage-chips budget-chips', role: 'radiogroup', 'aria-label': 'Budget' });
-      const drawBudget = () => budgetChips.replaceChildren(...BUDGETS.map((bg) => { const on = draft.budgetSet && draft.budget === bg.id;
-        return el('button', { type: 'button', role: 'radio', 'aria-checked': String(on), class: 'chip' + (on ? ' on' : ''),
-          onclick: () => { draft.budget = bg.id; draft.budgetSet = true; saveDraft(); drawBudget(); } }, BUDGET_TEXT[bg.id] || bg.label); }));
-      drawBudget();
-      view.append(shell('Your details', null, [
-        el('h2', { class: 'wiz-part' }, 'Where is the project?'), addr, el('div', { class: 'two zip-state' }, zip, stateSel),
-        el('h2', { class: 'wiz-part' }, 'How do we reach you?'), f.name, f.phone, f.email, f.password,
-        el('h2', { class: 'wiz-part' }, 'Have you thought about a budget?'),
-        budgetChips,
-      ], { onNext: () => {
+      const keep = () => {
         draft.address = addr.value.trim(); draft.zip = zip.value.trim(); draft.state = stateSel.value;
         draft.phone = f.phone.value.trim(); draft.email = f.email.value.trim(); if (f.name) draft.name = f.name.value.trim();
         if (f.password) pendingPassword = f.password.value;
         saveDraft();
+      };
+      for (const x of [addr, zip, f.name, f.phone, f.email, f.password]) if (x) x.addEventListener('input', keep);
+      stateSel.addEventListener('change', keep);
+      const send = async (e) => {
+        keep();
+        if (!draft.timeframe) return showError('Pick a day to meet your project manager, or “I’m flexible”.');
         if (!draft.address) return showError('Enter the street address and city.');
         if (!/^\d{5}$/.test(draft.zip)) return showError('Enter the 5-digit ZIP code.');
         if (!draft.state) return showError('Pick the state the project is in.');
@@ -410,19 +421,9 @@
         if (draft.phone.replace(/\D/g, '').length < 10) return showError('Enter your mobile phone number.');
         if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(draft.email)) return showError('Enter your email address.');
         if (f.password && pendingPassword.length < 8) return showError('Create a password with at least 8 characters.');
-        next();
-      }, extra: me ? null : el('p', { class: 'muted small', style: 'text-align:center;margin-top:12px' }, 'Already have an account? ', el('a', { href: '#/login?next=request' }, 'Log in'), ' and your request will be waiting.') }));
-      return;
-    }
-
-    if (screen === 'when') {
-      // Last step: tap a day (or "I'm flexible"), then send. New customers' account is made right here.
-      const send = async (e) => {
-        if (!draft.timeframe) return showError('Tap a day, or “I’m flexible”.');
         const btn = e.currentTarget; btn.disabled = true;
         try {
           if (!me) {
-            if (!pendingPassword) { showError('Please re-enter your password on the Details step.'); setTimeout(() => goTo(at('where')), 1200); return; }
             await api.auth.signUp({ name: draft.name, phone: draft.phone, email: draft.email, password: pendingPassword });
             pendingPassword = '';
           }
@@ -430,8 +431,14 @@
         } catch (err) { showError(err.message); }
         finally { btn.disabled = false; }
       };
-      const cal = calendarPicker(draft.timeframe, (v) => { draft.timeframe = v; saveDraft(); });
-      view.append(shell('When do you need it done?', 'Tap a day, or “I’m flexible”. Then send your request.', [cal], { nextLabel: 'Send my request', onNext: send }));
+      view.append(shell('Schedule', null, [
+        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Meet your project manager'),
+        el('p', { class: 'wiz-sub' }, 'Pick a day for your project manager to come out. After the visit, we schedule your contractor.'),
+        cal,
+        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), 'Where is the project?'), addr, el('div', { class: 'two zip-state' }, zip, stateSel),
+        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '3'), me ? 'How do we reach you?' : 'Create your account'), f.name, f.phone, f.email, f.password,
+      ], { nextLabel: 'Send my request', onNext: send,
+        extra: me ? null : el('p', { class: 'muted small', style: 'text-align:center;margin-top:12px' }, 'Already have an account? ', el('a', { href: '#/login?next=request' }, 'Log in'), ' and your request will be waiting.') }));
       return;
     }
   }

@@ -50,11 +50,16 @@ Reps and crews only go out to customers who have already agreed to the price, so
 
 Today shows each stage: new leads to call, **🔥 hot leads that need a rep visit**, **🤝 rep visits today and tomorrow**, **🤔 customers thinking it over**, and **visits done that need a crew**.
 
+
+**Home page:** the slogan "We bring the right contractor to the right job.", the big start button, and **What are we building?**: picture buttons for Kitchens, Bathrooms, Living rooms, Bedrooms, Basements, Garages, Decks, Patios, Concrete, Roofing, Siding, Fencing, Painting, Flooring, Windows & doors and Something else. Each one starts the request already set to that job (`#/request?trade=decks`, `?trade=remodel&room=kitchen`). Pictures are drawings in `img/styles/` and `img/projects/`; replace them with real photos using the same file names.
+
+**The request (3 steps):** **1 Photos**: add up to 5 photos and the "Describe your project" box (+ measurements). **2 Design**: which room and look, the ✨ design studio (Describe your design, Build my dream, before/after slider) and the budget. **3 Schedule**: pick a day to meet your project manager, the project address, and create the account (name, phone, email, password), then **Send my request**.
+
 ## How it works
 
 **Customers** (`index.html`)
 1. Answer one simple question per screen (most are a single tap that moves straight on): the first page is the before photo and design (no "type of work" page; a link can add ?trade=roofing, otherwise it's a remodel and the office can change it) → Details (address, ZIP and state, phone and email, and an optional budget; new customers also give their name and make a password here) → Date (tap a day, then **Send my request**, which also makes the new customer's account).
-2. Design it, in this order: (1) before photo, (2) which room / look bubbles plus the "Describe your project" box (for the team) and measurements, (3) ✨ Build my dream with its own "Describe your design" box that the design studio uses: the AI after picture as a before/after slider (each corner label hides when its picture is slid away) (there's no separate "What would you like done?" step). Then the address, ZIP, a date on the calendar and an optional budget. The progress bar names every step (Design · Details · Date, 3 steps for everyone) and shows about how many minutes are left.
+2. Design it, in this order: (1) before photo, (2) which room / look bubbles plus the "Describe your project" box (for the team) and measurements, (3) ✨ Build my dream with its own "Describe your design" box that the design studio uses: the AI after picture as a before/after slider (each corner label hides when its picture is slid away) (there's no separate "What would you like done?" step). Then the address, ZIP, a date on the calendar and an optional budget. The progress bar names every step (Photos · Design · Schedule, 3 steps for everyone) and shows about how many minutes are left.
 3. Create an account with name, mobile phone, email and password. The request is sent as soon as the account is created.
 4. Check **My jobs** anytime to see the status (Received → Estimate call → Rep visit → Scheduled → Done), the rep visit time once it's booked, and the date and crew lead's name once the work is scheduled.
 

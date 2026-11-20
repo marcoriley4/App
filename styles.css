@@ -966,3 +966,15 @@ label.field .hint { font-weight: 500; }
 .wiz-next.stay { position: static; background: none; }
 label.dream-pick { display: flex; align-items: center; justify-content: center; text-align: center; cursor: pointer; }
 .dream-limit { margin: 0; padding: 12px 14px; border-radius: 12px; background: var(--gold-soft); color: var(--text); font-weight: 700; }
+/* Landing page: slogan and "What are we building?" picture buttons */
+.slogan { margin: 4px auto 10px; max-width: 30ch; font-size: 1.35rem; font-weight: 800; line-height: 1.25; color: var(--text); text-align: center; }
+.project-picks h2 { margin: 6px 0 10px; font-size: 1.3rem; }
+.project-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 640px) { .project-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 960px) { .project-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.project-tile { display: flex; flex-direction: column; border: 2px solid var(--border); border-radius: 14px; overflow: hidden; background: var(--surface); color: var(--text); text-decoration: none; font-weight: 800; }
+.project-tile img { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; display: block; background: var(--surface-2); }
+.project-tile span { padding: 10px 12px; font-size: 1.02rem; }
+.project-tile:hover, .project-tile:focus-visible { border-color: var(--gold); }
+.project-tile.other { justify-content: center; align-items: center; min-height: 120px; text-align: center; }
+.project-tile.other .ic { font-size: 2rem; padding-bottom: 0; }

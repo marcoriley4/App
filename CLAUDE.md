@@ -4,8 +4,8 @@
    4 roles (customer, sales, contractor/crew, office) intact. Don't shorten, skip or delete working code
    when editing something else. Only remove a feature when the owner asks for that exact feature to go.
 2. **The AI Design Studio inside customer sign-up is a permanent core screen.** It is step 2
-   ("Design it: before and after") of the request wizard in `buyer.js` (`screen === 'design'`), which is
-   also how new customers sign up. It must always let a new customer upload a before photo, pick a
+   ("Design") of the request wizard in `buyer.js` (`screen === 'design'`; step 1 is Photos, step 3 is Schedule),
+   which is also how new customers sign up. It must always let a new customer use their before photos, pick a
    room/look or type their own words, and generate the AI (Gemini) dream picture right there,
    shown as the before/after slider. Never remove or hide it when editing other dashboards.
 3. **Keep it connected to their new account.** When a new customer sends the request and makes their

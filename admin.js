@@ -573,7 +573,7 @@
       ['new', 'qualifying', 'hot'].includes(j.status) && j.buyer.phone ? el('a', { class: 'btn ghost small', style: 'align-self:flex-start',
         href: smsHref(j.buyer.phone, `Hi ${first}, here are some style ideas from ${settings.name || 'Top Hat Contracting'}. Pick the look you like best and tell us: ${new URL('index.html#/styles' + (TH.styleOf(j.style) ? '?room=' + TH.styleOf(j.style).room.id : ''), location.href).href}`) }, '🖼️ Text them style ideas') : null,
       el('dl', { class: 'dl' },
-        el('dt', {}, 'Needed'), el('dd', {}, find(TIMEFRAMES, j.timeframe)?.label || '—'),
+        el('dt', {}, 'Visit day they asked for'), el('dd', {}, find(TIMEFRAMES, j.timeframe)?.label || '—'),
         el('dt', {}, 'Budget'), el('dd', {}, find(BUDGETS, j.budget)?.label || 'Not sure yet'),
         el('dt', {}, 'Requested'), el('dd', {}, `${new Date(j.created).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })} (${ago(j.created)})`)),
     );
