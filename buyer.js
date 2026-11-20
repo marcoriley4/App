@@ -245,7 +245,7 @@
         if (!r || !(draft.style || '').startsWith(r.id + '/')) draft.style = '';
         saveDraft(); drawRooms(); drawLooks(); drawDream(); drawBtn();
         if (r) setTimeout(() => lookHead.scrollIntoView({ block: 'start', behavior: 'smooth' }), 30);
-        else setTimeout(() => dreamText.focus(), 30);
+        else setTimeout(() => projectText.focus(), 30);
       };
       const drawLooks = () => {
         lookHead.hidden = !room;
@@ -255,15 +255,20 @@
             el('span', { class: 'look-txt' }, el('b', {}, `${i + 1}. ${st.name}`), el('span', {}, st.desc)),
             el('span', { class: 'look-check', 'aria-hidden': 'true' }, on ? '✓' : '')); }) : []));
       };
-      // Not a room project (or "something else"): describe the dream in a few words.
-      const dreamText = el('textarea', { rows: 2, maxlength: '200', value: draft.dreamText || '', 'aria-label': 'Describe your project',
-        placeholder: draft.trade === 'roofing' ? 'e.g. New roof, charcoal architectural shingles, white gutters' : draft.trade === 'decks' ? 'e.g. Gray composite deck with black railings' : 'e.g. What needs fixing, and what you want it to look like when it’s done',
+      // Step 2: "Describe your project" is for the Top Hat team only (job description). It does NOT go to the design studio.
+      const projectText = el('textarea', { rows: 3, maxlength: '1000', value: draft.description || '', 'aria-label': 'Describe your project',
+        placeholder: 'e.g. What needs fixing, and what you want done',
+        oninput: () => { draft.description = projectText.value; saveDraft(); } });
+      // Step 3: its own box, linked to the design studio: what the AI after picture should look like.
+      const dreamText = el('textarea', { rows: 2, maxlength: '200', value: draft.dreamText || '', 'aria-label': 'Describe your design',
+        placeholder: draft.trade === 'roofing' ? 'e.g. New roof, charcoal architectural shingles, white gutters' : draft.trade === 'decks' ? 'e.g. Gray composite deck with black railings' : 'e.g. Screened-in porch, white cabinets, darker floors',
         oninput: () => { draft.dreamText = dreamText.value; saveDraft(); drawDream(); drawBtn(); } });
       const ideaList = [...(isRoom ? [] : IDEA_CHIPS[draft.trade] || []), ...((TH.DESIGN_IDEAS || {})[draft.trade] || (TH.DESIGN_IDEAS || {}).other || [])].filter((x, i, a) => a.indexOf(x) === i);
       const dreamIdeas = el('div', { class: 'stage-chips' }, ...ideaList.map((t) => el('button', { type: 'button', class: 'chip',
         onclick: () => { dreamText.value = dreamText.value.trim() ? `${dreamText.value.trim()}, ${t.toLowerCase()}` : t; draft.dreamText = dreamText.value; saveDraft(); drawDream(); drawBtn(); } }, `+ ${t}`)));
       const describeWrap = el('div', { class: 'stack', style: 'gap:8px' },
-        el('label', { class: 'box-label' }, isRoom ? 'Describe your project (optional)' : 'Describe your project', dreamText));
+        el('label', { class: 'box-label' }, 'Describe your project (optional)', projectText));
+      const designWrap = el('label', { class: 'box-label' }, 'Describe your design (optional)', dreamText);
       // Measurements (optional). The "Anything else" notes box was removed at the owner's request.
       const measure = el('input', { value: draft.measurements || '', placeholder: 'e.g. Kitchen is about 12 x 14 ft', 'aria-label': 'Measurements', oninput: () => { draft.measurements = measure.value; saveDraft(); } });
       const measureWrap = el('div', { hidden: !draft.measurements }, measure);
@@ -274,7 +279,6 @@
       const dreamBox = el('div', { class: 'dream-box' });
       const studioHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '3'), '✨ Build my dream');
       const drawDream = () => {
-        dreamText.placeholder = isRoom && room ? 'Your own words (optional), e.g. darker floors, bigger window' : dreamText.placeholder;
         const key = dreamKey();
         const look = room && TH.styleOf(draft.style);
         const d = draft.dream && draft.dream.image ? draft.dream : null; // the last picture stays until they make a new one
@@ -348,7 +352,7 @@
         describeWrap,
         extrasWrap,
         // 3. The design studio: build the dream (AFTER) from their photo. Core screen: never remove (see CLAUDE.md).
-        studioHead, dreamBox,
+        studioHead, designWrap, dreamBox,
       ]));
       view.querySelector('.wiz').append(btnWrap);
       if (isRoom) { drawRooms(); drawLooks(); }
