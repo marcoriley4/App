@@ -965,3 +965,4 @@ label.field .hint { font-weight: 500; }
 .box-label { display: flex; flex-direction: column; gap: 6px; font-weight: 700; font-size: .95rem; }
 .wiz-next.stay { position: static; background: none; }
 label.dream-pick { display: flex; align-items: center; justify-content: center; text-align: center; cursor: pointer; }
+.dream-limit { margin: 0; padding: 12px 14px; border-radius: 12px; background: var(--gold-soft); color: var(--text); font-weight: 700; }

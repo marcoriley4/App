@@ -1558,7 +1558,7 @@
         try { used = JSON.parse(localStorage.getItem('tophat.dreams') || '{}'); } catch (e) {}
         const today = isoDay(Date.now());
         if (used.day !== today) used = { day: today, n: 0 };
-        if (used.n >= 8) throw new Error('That’s all the previews for today. Send your request and your project manager will make more with you.');
+        if (used.n >= 3) throw new Error('You’ve made 3 designs, the most for sign-up. You can make more in the Design studio once you’re signed up.');
         const tradeLabel = (TRADES.find((t) => t.id === trade) || {}).label || 'Home project';
         const instruction = designPrompt({ trade: look ? 'Remodel' : tradeLabel, description: '', earlier: [], request: look ? dreamRequest(look, extra) : dreamRequestText(tradeLabel, extra) });
         const out = window.TH_AI_MOCK ? await window.TH_AI_MOCK(photo, instruction) : await callImageAI(ai, photo, instruction);

@@ -13,7 +13,7 @@ const MODEL = Deno.env.get('DESIGN_MODEL') || 'gemini-2.5-flash-image';
 const DAILY_LIMIT = Number(Deno.env.get('DESIGN_DAILY_LIMIT') || 40); // AI pictures per job per day: caps the bill
 const MAX_BYTES = 8 * 1024 * 1024;
 // Sign-up "dream" previews happen before the customer has an account, so they're capped per visitor and per day overall.
-const DREAMS_PER_VISITOR = Number(Deno.env.get('DREAMS_PER_VISITOR') || 8);
+const DREAMS_PER_VISITOR = Number(Deno.env.get('DREAMS_PER_VISITOR') || 3); // owner: 3 pictures during sign-up
 const DREAMS_PER_DAY = Number(Deno.env.get('DREAMS_PER_DAY') || 300);
 // Same looks as data.js STYLE_ROOMS: the server builds the request, so a visitor can't ask for anything else.
 const LOOKS: Record<string, [string, string, string]> = {
@@ -112,7 +112,7 @@ Deno.serve(async (req) => {
     const visitor = encodeBase64(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ip + (Deno.env.get('SUPABASE_URL') || ''))))).slice(0, 24);
     const since = new Date(Date.now() - 86400e3).toISOString();
     const { count: mine } = await admin.from('design_dreams').select('id', { count: 'exact', head: true }).eq('visitor', visitor).gte('created_at', since);
-    if ((mine || 0) >= DREAMS_PER_VISITOR) return fail('That’s all the previews for today. Send your request and your project manager will make more with you.', 429);
+    if ((mine || 0) >= DREAMS_PER_VISITOR) return fail('You’ve made 3 designs, the most for sign-up. You can make more in the Design studio once you’re signed up.', 429);
     const { count: all } = await admin.from('design_dreams').select('id', { count: 'exact', head: true }).gte('created_at', since);
     if ((all || 0) >= DREAMS_PER_DAY) return fail('Picture previews are busy right now. Send your request and we’ll make yours with you.', 429);
     await admin.from('design_dreams').insert({ visitor });

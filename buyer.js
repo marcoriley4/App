@@ -278,6 +278,10 @@
       // ✨ The AFTER: their own photo, finished, right here before they send anything.
       const dreamBox = el('div', { class: 'dream-box' });
       const studioHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '3'), '✨ Build my dream');
+      // Owner's rule: up to 3 pictures during sign-up. More can be made in the app's Design studio after they sign up.
+      const MAX_SIGNUP_DREAMS = 3;
+      const made = () => Number(draft.dreamCount) || 0;
+      const limitNote = () => el('p', { class: 'dream-limit' }, `You’ve made ${MAX_SIGNUP_DREAMS} designs, the most for sign-up. This one is saved with your request, and you can make more in the Design studio once you’re signed up.`);
       const drawDream = () => {
         const key = dreamKey();
         const look = room && TH.styleOf(draft.style);
@@ -291,6 +295,7 @@
         const err = el('div', { class: 'error', hidden: true, role: 'alert' });
         const what = () => (look ? `${look.style.name} look` : words().length >= 3 ? 'your words' : '');
         const make = async (btn, extra = '') => {
+          if (made() >= MAX_SIGNUP_DREAMS) { drawDream(); return; }
           btn.disabled = true; err.hidden = true;
           dreamBox.classList.add('making');
           const label = btn.textContent; btn.textContent = `Making your dream ${thing()}… (10 to 30 seconds)`;
@@ -298,12 +303,14 @@
             const text = [words(), extra].filter((x) => x && x.trim()).join('. ');
             const asked = look ? text : (text.length >= 3 ? text : 'finished, updated and looking its best, done right by a pro');
             const image = await api.designs.dream(draft.photos[0], look ? draft.style : '', asked, { trade: draft.trade });
+            draft.dreamCount = made() + 1;
             draft.dream = { key, style: look ? draft.style : '', image, photo: draft.photos[0], prompt: look ? TH.dreamRequest(look, text) : TH.dreamRequestText(trade ? trade.label : '', asked) };
             saveDraft(); drawDream(); drawBtn();
             dreamBox.scrollIntoView({ block: 'start', behavior: 'smooth' });
           } catch (e) { err.textContent = e.message; err.hidden = false; btn.disabled = false; btn.textContent = label; }
           finally { dreamBox.classList.remove('making'); }
         };
+        if (!d && made() >= MAX_SIGNUP_DREAMS) { dreamBox.replaceChildren(limitNote()); return; }
         if (!d) {
           const btn = el('button', { type: 'button', class: 'dream-btn block big', onclick: () => make(btn) }, `✨ Build my dream ${thing()}`);
           if (autoBuild) { autoBuild = false; setTimeout(() => make(btn), 0); }
@@ -319,7 +326,8 @@
         dreamBox.replaceChildren(
           el('h3', {}, `✨ Your dream ${thing()}${TH.styleOf(d.style) ? ' · ' + TH.styleOf(d.style).style.name : ''}`),
           TH.beforeAfter([{ url: d.photo || draft.photos[0], name: 'Your photo', stage: 'before', group: 'g' }, { url: d.image, name: 'Your dream', stage: 'after', group: 'g' }], { title: 'Before & after: slide to compare', infoFirst: true,
-            above: [el('div', { class: 'dream-again' }, extra, again), err] }));
+            above: made() >= MAX_SIGNUP_DREAMS ? [limitNote()]
+              : [el('div', { class: 'dream-again' }, extra, again), el('p', { class: 'muted small' }, `Design ${made()} of ${MAX_SIGNUP_DREAMS}`), err] }));
       };
       const drawBtn = () => {
         const loved = !!(draft.dream && draft.dream.image);
