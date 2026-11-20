@@ -21,7 +21,7 @@
   /* ---------- helpers ---------- */
   const mapMaterial = (m) => ({ id: m.id, name: m.name, qty: m.qty || '', note: m.note || '', status: m.status, eta: m.eta || null, by: m.added_by || '', updatedBy: m.updated_by || '' });
   const mapBill = (b) => ({ id: b.id, step: b.step ?? null, label: b.label, amount: Number(b.amount), note: b.note || '', status: b.status, reason: b.reason || '',
-    paidDate: b.paid_date || null, paidMethod: b.paid_method || '', by: b.by_name || '', at: Date.parse(b.created_at) || null, photos: Number(b.photos) || 0 });
+    paidDate: b.paid_date || null, paidMethod: b.paid_method || '', by: b.by_name || '', at: Date.parse(b.created_at) || null, photos: Number(b.photos) || 0, invoice: !!b.invoice });
   const mapDesign = (v) => v && ({ id: v.id, parentId: v.parent_id || null, source: v.source, prompt: v.prompt || '', by: v.by_name || '', at: Date.parse(v.created_at) || Date.now(), chosen: !!v.chosen, saved: !!v.saved, url: v.url || null });
   async function designCall(body) {
     const { data, error } = await sb.functions.invoke('design', { body });
@@ -513,9 +513,11 @@
         const rows = await fetchAll(() => sb.from('contractors').select('*').order('name'));
         const ids = rows.map((c) => c.user_id).filter(Boolean);
         const emails = ids.length ? Object.fromEntries(must(await sb.from('profiles').select('id, email').in('id', ids)).map((p) => [p.id, p.email])) : {};
+        const insUrls = await signedUrls(rows.map((c) => c.insurance_path).filter(Boolean));
         return rows.map((c) => ({
           id: c.id, name: c.name, phone: c.phone, trades: c.trades || [], active: c.active, state: c.state || '',
           login: c.user_id ? 'active' : c.invite_code ? 'invited' : 'none', inviteCode: c.invite_code || null, loginEmail: emails[c.user_id] || '',
+          insurance: c.insurance_path ? { name: c.insurance_name, expires: c.insurance_expires, at: ms(c.insurance_at), url: insUrls[c.insurance_path] || null } : null,
         }));
       },
       async save(c) {
@@ -609,8 +611,11 @@
         }));
       },
       async halfway(jobId) { must(await sb.rpc('crew_halfway', { p_job: jobId })); },
-      async bill(jobId, { step = null, amount = null, note = '', photos = [], token = '' } = {}) {
+      async bill(jobId, { step = null, amount = null, note = '', photos = [], token = '', invoice = null } = {}) {
         photos = [...(photos || [])];
+        if (!invoice) throw new Error('Attach your invoice to Top Hat.');
+        if (!/^image\//.test(invoice.type || '') && invoice.type !== 'application/pdf') throw new Error('Your invoice has to be a PDF or a photo.');
+        tooBig(invoice);
         if (!photos.length) throw new Error('Add at least one photo of the work so the office can see what you did.');
         if (photos.length > 12) throw new Error('Send up to 12 photos with a bill.');
         if (!token) throw new Error('Ask the office to reassign this job to you, then try again.');
@@ -623,8 +628,32 @@
           must(await sb.rpc('crew_add_file', { p_token: token, p_path: path, p_name: f.name || 'photo.jpg', p_mime: f.type || 'image/jpeg', p_size: f.size, p_stage: '', p_note: 'Bill photo' }));
           paths.push(path);
         }
-        const r = must(await sb.rpc('crew_bill', { p_job: jobId, p_step: step, p_amount: amount == null || amount === '' ? null : Number(amount), p_note: note || '', p_paths: paths }));
+        // Their own invoice to Top Hat goes up the same way; the bill claims it too.
+        const invPath = `crew/${token}/${rid()}-invoice-${safeName(invoice.name || 'invoice.pdf')}`;
+        await upload(invPath, invoice);
+        must(await sb.rpc('crew_add_file', { p_token: token, p_path: invPath, p_name: invoice.name || 'invoice.pdf', p_mime: invoice.type || 'application/pdf', p_size: invoice.size, p_stage: '', p_note: 'Contractor invoice' }));
+        const r = must(await sb.rpc('crew_bill', { p_job: jobId, p_step: step, p_amount: amount == null || amount === '' ? null : Number(amount), p_note: note || '', p_paths: paths, p_invoice: invPath }));
         return { ...r, amount: Number(r.amount) };
+      },
+      // Proof of insurance: one per contractor (stored under insurance/<contractor id>/), needed before billing.
+      async insurance() {
+        const r = must(await sb.rpc('crew_my_insurance'));
+        if (!r || !r.path) return null;
+        const urls = await signedUrls([r.path]);
+        const problem = r.expires && r.expires < new Date().toISOString().slice(0, 10) ? `Your proof of insurance ran out on ${r.expires}. Upload the new one first.` : '';
+        return { name: r.name, expires: r.expires, at: ms(r.at), url: urls[r.path] || null, problem };
+      },
+      async setInsurance(file, expires) {
+        if (!file) throw new Error('Attach your proof of insurance.');
+        if (!/^image\//.test(file.type || '') && file.type !== 'application/pdf') throw new Error('Your proof of insurance has to be a PDF or a photo.');
+        tooBig(file);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(expires || '')) throw new Error('Enter the date your insurance runs out.');
+        const cid = must(await sb.rpc('crew_my_insurance'))?.contractor;
+        if (!cid) throw new Error('Your crew login is turned off. Ask the Top Hat office if this is a mistake.');
+        const path = `insurance/${cid}/${rid()}-${safeName(file.name || 'insurance.pdf')}`;
+        await upload(path, file);
+        must(await sb.rpc('crew_set_insurance', { p_path: path, p_name: file.name || 'insurance.pdf', p_expires: expires }));
+        return { name: file.name, expires };
       },
       async addNote(jobId, text) {
         must(await sb.rpc('crew_add_note', { p_token: null, p_job: jobId, p_text: text }));

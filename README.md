@@ -55,6 +55,9 @@ Today shows each stage: new leads to call, **🔥 hot leads that need a rep visi
 
 **The request (3 steps):** **1 Photos**: add up to 5 photos and the "Describe your project" box (+ measurements). **2 Design**: which room and look, the ✨ design studio (Describe your design, Build my dream, before/after slider) and the budget. **3 Schedule**: pick a day to meet your project manager, the project address, and create the account (name, phone, email, password), then **Send my request**.
 
+
+**Contractors: insurance, invoices and photos.** The office or the salesperson assigns the contractor on the job (**👷 Contractor & schedule**, or "Assign a contractor & date now"). Before their first bill the contractor uploads **proof of insurance** once (PDF or photo, with the date it runs out; they're asked again when it runs out). **Every bill** on the crew pay schedule (and every extra-work bill) needs **photos of the work** and **their own invoice to Top Hat** (PDF or photo). The office sees each bill's invoice and photos on the job's Payments tab, and each contractor's insurance (with a link, and a warning when it's missing or ran out) on the Contractors page. Live: `contractors.insurance_*` columns, `crew_set_insurance` / `crew_my_insurance`, files under `insurance/<contractor id>/`, and `crew_bill(..., p_invoice)`.
+
 ## How it works
 
 **Customers** (`index.html`)

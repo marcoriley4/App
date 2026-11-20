@@ -182,6 +182,43 @@
     }
   }
 
+  // Proof of insurance: on file (with the date it runs out), or a form to upload it. Top Hat needs it before the first bill.
+  function insuranceCard(onSaved) {
+    const box = el('section', { class: 'card stack insurance-card' }, el('p', { class: 'muted small' }, 'Checking your proof of insurance…'));
+    const fmt = (d) => (d ? new Date(d + 'T12:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '');
+    const form = (ins) => {
+      const err = el('div', { class: 'error', hidden: true, role: 'alert' });
+      const file = el('input', { type: 'file', accept: 'application/pdf,image/*', 'aria-label': 'Proof of insurance file' });
+      const exp = el('input', { type: 'date', 'aria-label': 'Insurance runs out on', min: todayKey() });
+      return el('div', { class: 'stack', style: 'gap:8px' },
+        el('label', { class: 'field' }, 'Your insurance certificate (PDF or photo)', file),
+        el('label', { class: 'field' }, 'It runs out on', exp), err,
+        el('button', { type: 'button', class: 'gold block', onclick: async (e) => {
+          const btn = e.currentTarget; btn.disabled = true; err.hidden = true;
+          try { await api.crewPortal.setInsurance(file.files[0], exp.value); draw(); if (onSaved) onSaved(); }
+          catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
+        } }, '🛡 Save proof of insurance'),
+        ins ? el('button', { type: 'button', class: 'link', onclick: () => draw() }, 'Cancel') : null);
+    };
+    const draw = async () => {
+      let ins = null; try { ins = await api.crewPortal.insurance(); } catch (e) { /* show the form */ }
+      box.classList.toggle('needs', !ins || !!ins.problem);
+      if (!ins || ins.problem) {
+        box.replaceChildren(el('h3', {}, '🛡 Proof of insurance'),
+          el('p', { class: 'small' }, ins && ins.problem ? ins.problem : 'Top Hat needs your proof of insurance before your first bill. Upload it once; we’ll ask again when it runs out.'),
+          form(ins));
+        return;
+      }
+      box.replaceChildren(el('div', { class: 'row' }, el('h3', {}, '🛡 Insurance on file'), el('span', { class: 'spacer' }), el('span', { class: 'pill s-completed' }, '✓ On file')),
+        el('p', { class: 'muted small' }, `${ins.name}${ins.expires ? ` · runs out ${fmt(ins.expires)}` : ''}`),
+        el('div', { class: 'row', style: 'gap:12px' },
+          ins.url ? el('a', { href: ins.url, target: '_blank', rel: 'noopener' }, 'View') : null,
+          el('button', { type: 'button', class: 'link', onclick: () => box.replaceChildren(el('h3', {}, '🛡 New proof of insurance'), form(ins)) }, 'Replace')));
+    };
+    draw();
+    return box;
+  }
+
   async function renderPortal(message, which = 'active') {
     const { me, jobs, company = {}, error } = await loadCrew();
     if (!me) return renderLogin(error);
@@ -356,6 +393,7 @@
         el('div', { class: 'kpi' }, el('b', {}, usd(pay(finished))), el('span', {}, `Earned · ${finished.length} completed`))) : null,
       message ? el('div', { class: 'callout' }, message) : null,
       toConfirm ? el('div', { class: 'callout stage' }, `👋 ${toConfirm} new job${toConfirm === 1 ? '' : 's'} to confirm. Tap to open.`) : null,
+      insuranceCard(),
       ...section('Today', today, 'Nothing scheduled for today.'),
       ...section('Upcoming', upcoming, 'No upcoming jobs. The office will text you when you’re assigned one.'),
       finished.length ? el('a', { class: 'btn ghost block', href: '#/done' }, `✓ See all ${finished.length} completed job${finished.length === 1 ? '' : 's'} →`) : null,
@@ -547,16 +585,24 @@
         const pick = el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, 'aria-label': 'Photos of the work', onchange: (e) => {
           photos = [...photos, ...[...e.target.files].filter((f) => /^image\//.test(f.type))].slice(0, 12); e.target.value = ''; err.hidden = true; drawThumbs(); } });
         const addLbl = el('label', { class: 'btn ghost block' }, el('span', {}, '📷 Take or add photos of the work'), pick);
+        // Their own invoice to Top Hat (PDF or a photo of it), required with every bill.
+        let invoice = null;
+        const invName = el('span', { class: 'muted small' }, 'No invoice attached yet');
+        const invPick = el('input', { type: 'file', accept: 'application/pdf,image/*', hidden: true, 'aria-label': 'Your invoice', onchange: (e) => {
+          invoice = e.target.files[0] || null; invName.textContent = invoice ? `📄 ${invoice.name}` : 'No invoice attached yet'; invName.classList.toggle('muted', !invoice); err.hidden = true; } });
+        const invLbl = el('label', { class: 'btn ghost block' }, el('span', {}, '📄 Attach your invoice (PDF or photo)'), invPick);
         formWrap.replaceChildren(el('div', { class: 'bill-form stack' },
           el('b', {}, step == null ? 'Bill for extra work or materials' : `Bill for “${label}”: ${usd(amount)}`),
           amt, note,
           el('div', { class: 'stack', style: 'gap:6px' }, el('span', { class: 'small', style: 'font-weight:700' }, 'Photos of what you did (required)'), thumbs, addLbl),
+          el('div', { class: 'stack', style: 'gap:6px' }, el('span', { class: 'small', style: 'font-weight:700' }, 'Your invoice to Top Hat (required)'), invName, invLbl),
           err,
           el('button', { type: 'button', class: 'gold block', onclick: async (e) => {
             const btn = e.currentTarget;
             if (!photos.length) { err.textContent = 'Add at least one photo of the work so the office can see what you did.'; err.hidden = false; return; }
+            if (!invoice) { err.textContent = 'Attach your invoice to Top Hat (a PDF or a photo of it).'; err.hidden = false; return; }
             btn.disabled = true; btn.textContent = `Sending ${photos.length} ${photos.length === 1 ? 'photo' : 'photos'}…`;
-            try { const b = await api.crewPortal.bill(j.id, { step, amount: amt ? amt.value : null, note: note.value, photos, token: j.crewToken }); renderJob(j.id, `🧾 Bill sent: ${usd(b.amount)} for “${b.label}” with ${photos.length} ${photos.length === 1 ? 'photo' : 'photos'}. The office will approve it and pay you.`); }
+            try { const b = await api.crewPortal.bill(j.id, { step, amount: amt ? amt.value : null, note: note.value, photos, invoice, token: j.crewToken }); renderJob(j.id, `🧾 Bill sent: ${usd(b.amount)} for “${b.label}” with your invoice and ${photos.length} ${photos.length === 1 ? 'photo' : 'photos'}. The office will approve it and pay you.`); }
             catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; btn.textContent = '🧾 Send bill to Top Hat'; }
           } }, '🧾 Send bill to Top Hat'),
           el('button', { type: 'button', class: 'link', onclick: () => formWrap.replaceChildren() }, 'Cancel')));
@@ -565,13 +611,14 @@
       const row = (num, label, sub, amount, b, action) => el('li', { class: b?.status === 'paid' ? 'paid' : action?.tagName === 'BUTTON' ? 'due' : action ? 'locked' : '' },
         el('span', { class: 'n' }, b?.status === 'paid' ? '✓' : num),
         el('span', { class: 'body' }, el('b', {}, label), el('span', { class: 'amt' }, usd(amount)), el('span', { class: 'muted small' }, sub),
-          b?.photos ? el('span', { class: 'muted small' }, `📷 ${b.photos} ${b.photos === 1 ? 'photo' : 'photos'} sent`) : null,
+          b?.photos ? el('span', { class: 'muted small' }, `📷 ${b.photos} ${b.photos === 1 ? 'photo' : 'photos'} sent${b.invoice ? ' · 📄 invoice sent' : ''}`) : null,
           b?.status === 'declined' && b.reason ? el('span', { class: 'small bad-text' }, `Declined: ${b.reason}`) : null),
         b && (b.status !== 'declined' || !action) ? el('span', { class: `pill ${PILL[b.status][1]}` }, b.status === 'paid' && b.paidDate ? `Paid ${b.paidDate.slice(5).replace('-', '/')}` : PILL[b.status][0]) : action || el('span', { class: 'muted small' }, 'Not yet'));
       const paidSoFar = paidOf(j);
       return el('section', { class: 'card stack' },
         el('div', { class: 'row' }, el('h3', {}, '💵 Bill Top Hat'), el('span', { class: 'spacer' }), el('span', { class: 'muted small' }, `${usd(paidSoFar)} of ${usd(earnedOf(j))} paid`)),
-        el('p', { class: 'muted small' }, 'Bill for each part as you finish it, with photos of the work. The office approves it and pays you.'),
+        el('p', { class: 'muted small' }, 'Bill for each part as you finish it, with your invoice and photos of the work. The office approves it and pays you.'),
+        insuranceCard(),
         el('ol', { class: 'sched-list' },
           ...steps.map((p) => { const b = billOf(p.index); const open = !b || b.status === 'declined';
             const can = open && p.reached && prevHandled(j, p.index);

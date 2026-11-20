@@ -620,10 +620,10 @@
       if (patch.contractorId && patch.scheduledFor && ['new', 'qualifying', 'hot'].includes(j.status)) patch.status = 'scheduled';
       update(patch);
     } },
-      el('h3', {}, '👷 Crew & schedule'),
-      el('label', { class: 'field' }, 'Crew', el('span', { class: 'hint' }, `★ = does this kind of work${j.state ? ` · crews in ${TH.stateName(j.state)} first` : ''}`), crewSel),
+      el('h3', {}, '👷 Contractor & schedule'),
+      el('label', { class: 'field' }, 'Contractor', el('span', { class: 'hint' }, `★ = does this kind of work${j.state ? ` · contractors in ${TH.stateName(j.state)} first` : ''}`), crewSel),
       el('label', { class: 'field' }, 'Date & time', whenInput),
-      el('button', { type: 'submit' }, 'Save crew & date'),
+      el('button', { type: 'submit' }, 'Save contractor & date'),
       ['scheduled', 'in_progress'].includes(j.status) ? null : el('p', { class: 'muted small' }, 'Picking a crew and a date moves the job to “Scheduled”.'),
       assigned?.phone ? el('a', { class: 'btn ghost', href: smsHref(assigned.phone, dispatchText) }, `💬 Text job details to ${assigned.name.split(' ')[0]}`) : null,
       crewLink ? el('div', { class: 'crew-link' },
@@ -776,7 +776,9 @@
             el('div', { class: 'row' }, el('b', { style: 'flex:1' }, `${b.label} · ${docs.usd(b.amount)}`), el('span', { class: `pill ${PILL[b.status][1]}` }, PILL[b.status][0])),
             el('div', { class: 'muted small' }, `Billed by ${b.by} · ${ago(b.at)}${b.paidDate ? ` · paid ${docs.fmtDate(b.paidDate)} (${b.paidMethod})` : ''}`),
             b.note ? el('div', { class: 'small' }, `“${b.note}”`) : null,
-            (() => { const pics = files.filter((f) => f.billId === b.id);
+            (() => { const inv = files.find((f) => f.billId === b.id && f.kind === 'invoice');
+              return inv ? el('div', { class: 'small' }, '📄 Their invoice: ', inv.url ? el('a', { href: inv.url, target: '_blank', rel: 'noopener' }, inv.name) : inv.name) : null; })(),
+            (() => { const pics = files.filter((f) => f.billId === b.id && f.kind !== 'invoice');
               return pics.length ? el('div', { class: 'photo-row bill-photos', style: 'flex-wrap:wrap' }, ...pics.map((f, i) => f.url && /^image\//.test(f.mime)
                 ? el('a', { href: f.url, target: '_blank', rel: 'noopener' }, el('img', { src: f.url, alt: `${b.label} photo ${i + 1}` }))
                 : el('span', { class: 'pill' }, '📎 ' + f.name)))
@@ -947,7 +949,7 @@
         el('span', { class: 'tab-ic', 'aria-hidden': 'true' }, icon), el('span', { class: 'tab-txt' }, el('b', {}, label), el('span', {}, sub)))));
       const content = {
         overview: [dreamFirst ? designCard : null, nextCard, reviewCard, progress, materialsCard, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, dreamFirst ? null : designCard, details, permitCard,
-          !setupWanted && ['new', 'qualifying', 'hot'].includes(j.status) ? el('button', { type: 'button', class: 'link small', style: 'align-self:flex-start', onclick: focusSetup }, '👷 Assign a crew & date now (skip the visit)') : null],
+          !setupWanted && ['new', 'qualifying', 'hot'].includes(j.status) ? el('button', { type: 'button', class: 'link small', style: 'align-self:flex-start', onclick: focusSetup }, '👷 Assign a contractor & date now (skip the visit)') : null],
         money: [scheduleCard, crewBillsCard, docsCard, moneyCard],
         files: [filesCard],
         history: [notesCard, crewNotesCard(), log],
@@ -1647,6 +1649,16 @@
     const skillSel = el('select', { 'aria-label': 'Skill', onchange: (e) => { skillFilter = e.target.value; render(); } },
       el('option', { value: '' }, '🧰 All skills'),
       ...TH.SKILLS.filter((x) => skillCount(x.id)).map((x) => el('option', { value: x.id, selected: skillFilter === x.id }, `${x.icon} ${x.label} (${skillCount(x.id)})`)));
+    // Proof of insurance the contractor uploaded (they can't bill without it).
+    const insuranceLine = (c) => {
+      if (!('insurance' in c)) return null; // salespeople don't see it
+      const ins = c.insurance; const today = docs.todayKey();
+      if (!ins) return el('p', { class: 'small bad-text' }, '🛡 No proof of insurance yet');
+      const out = ins.expires && ins.expires < today;
+      const soon = !out && ins.expires && ins.expires <= new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
+      return el('p', { class: 'small' + (out ? ' bad-text' : '') }, `🛡 Insurance ${out ? 'ran out' : 'on file, runs out'} ${docs.fmtDate(ins.expires)}${soon ? ' (soon)' : ''} · `,
+        ins.url ? el('a', { href: ins.url, target: '_blank', rel: 'noopener' }, 'View') : el('span', { class: 'muted' }, ins.name));
+    };
     const crewItem = (c) =>
         el('div', { class: 'crew-item' + (c.active ? '' : ' inactive') },
           el('span', { class: 'avatar' }, initials(c.name)),
@@ -1654,7 +1666,8 @@
             el('b', {}, c.name), c.active ? null : el('span', { class: 'muted small' }, ' (inactive)'),
             el('p', { class: 'skill-line' + ((c.trades || []).includes('allround') ? ' all' : '') }, skillLine(c)),
             el('p', { class: 'small' }, c.state ? `${c.state} · ` : '', c.phone ? el('a', { href: telHref(c.phone) }, c.phone) : null, ` · ${activeJobs(c.id)} open job${activeJobs(c.id) === 1 ? '' : 's'}`,
-              c.login === 'active' ? el('span', { class: 'pill s-completed', style: 'margin-left:6px' }, '🔑 Login') : c.login === 'invited' ? el('span', { class: 'pill s-qualifying', style: 'margin-left:6px' }, 'Invited') : null)),
+              c.login === 'active' ? el('span', { class: 'pill s-completed', style: 'margin-left:6px' }, '🔑 Login') : c.login === 'invited' ? el('span', { class: 'pill s-qualifying', style: 'margin-left:6px' }, 'Invited') : null),
+            insuranceLine(c)),
           el('button', { class: 'ghost small', onclick: () => crewForm(c) }, 'Edit'));
     const sortC = (l) => l.slice().sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name));
     const section = (title, list, sub) => list.length ? el('section', { class: 'stack', style: 'gap:6px' },

@@ -313,39 +313,68 @@ declare tok text := (select crew_token from public.job_private where job_id = cu
 begin p := 'crew/' || tok || '/' || gen_random_uuid() || '.jpg';
   perform public.crew_add_file(tok, p, 'work.jpg', 'image/jpeg', 1000, '', ''); return p; end $$;
 grant execute on function t.pic() to authenticated;
+-- Their invoice to Top Hat (a PDF the crew just uploaded for the job; every bill needs one).
+create function t.inv() returns text language plpgsql security definer as $$
+declare tok text := (select crew_token from public.job_private where job_id = current_setting('t.job')::uuid); p text;
+begin p := 'crew/' || tok || '/' || gen_random_uuid() || '-invoice.pdf';
+  perform public.crew_add_file(tok, p, 'invoice.pdf', 'application/pdf', 1000, '', 'Contractor invoice'); return p; end $$;
+grant execute on function t.inv() to authenticated;
 select set_config('request.jwt.claim.sub', :'C', false);
 set role authenticated;
+-- Proof of insurance: needed before any bill, only their own folder, not run out.
 do $$ begin
-  begin perform public.crew_bill(current_setting('t.job')::uuid, 2, null, '', array[t.pic()]); perform t.ok(false, 'x');
+  begin perform public.crew_bill(current_setting('t.job')::uuid, 0, null, '', array[t.pic()], t.inv()); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'crew cannot bill before uploading proof of insurance'); end;
+  begin perform public.crew_set_insurance('insurance/' || gen_random_uuid() || '/x.pdf', 'x.pdf', current_date + 30); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'crew cannot save insurance under another contractor''s folder'); end;
+  begin perform public.crew_set_insurance('crew/x/x.pdf', 'x.pdf', current_date + 30); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'insurance must live in the insurance folder'); end;
+  begin perform public.crew_set_insurance('insurance/' || (public.crew_my_insurance()->>'contractor') || '/old.pdf', 'old.pdf', current_date - 1); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'insurance that already ran out is refused'); end;
+end $$;
+select public.crew_set_insurance('insurance/' || (public.crew_my_insurance()->>'contractor') || '/ins.pdf', 'ins.pdf', current_date + 365);
+select t.ok((public.crew_my_insurance()->>'name') = 'ins.pdf', 'crew saves their proof of insurance');
+do $$ begin
+  begin perform public.crew_bill(current_setting('t.job')::uuid, 0, null, '', array[t.pic()], ''); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'crew bill needs their invoice'); end;
+  begin perform public.crew_bill(current_setting('t.job')::uuid, 0, null, '', array[t.pic()], 'crew/x/never-uploaded.pdf'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'crew bill cannot point at an invoice that was never uploaded'); end;
+end $$;
+do $$ begin
+  begin perform public.crew_bill(current_setting('t.job')::uuid, 2, null, '', array[t.pic()], t.inv()); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'crew cannot bill the finish step before finishing'); end;
 end $$;
 do $$ begin
-  begin perform public.crew_bill(current_setting('t.job')::uuid, 0, null, '', array[]::text[]); perform t.ok(false, 'x');
+  begin perform public.crew_bill(current_setting('t.job')::uuid, 0, null, '', array[]::text[], t.inv()); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'crew bill needs at least one photo'); end;
-  begin perform public.crew_bill(current_setting('t.job')::uuid, 0, null, '', null); perform t.ok(false, 'x');
+  begin perform public.crew_bill(current_setting('t.job')::uuid, 0, null, '', null, t.inv()); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'crew bill with no photo list is refused'); end;
-  begin perform public.crew_bill(current_setting('t.job')::uuid, 0, null, '', array['crew/x/not-uploaded.jpg']); perform t.ok(false, 'x');
+  begin perform public.crew_bill(current_setting('t.job')::uuid, 0, null, '', array['crew/x/not-uploaded.jpg'], t.inv()); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'crew bill cannot point at a photo that was never uploaded'); end;
 end $$;
-select t.ok((public.crew_bill(current_setting('t.job')::uuid, 0, 99999, 'Started', array[t.pic()])->>'amount')::numeric = 345.15, 'crew bill amount comes from the schedule, not what they type');
+select t.ok((public.crew_bill(current_setting('t.job')::uuid, 0, 99999, 'Started', array[t.pic()], t.inv())->>'amount')::numeric = 345.15, 'crew bill amount comes from the schedule, not what they type');
 select t.ok((public.crew_my_jobs()->0->'bills'->0->>'photos')::int = 1, 'crew sees how many photos went with a bill');
+reset role;
+select t.ok((select count(*) from public.job_files where kind = 'invoice' and bill_id is not null and source = 'crew') = 1, 'the bill claims their invoice as an invoice file');
+select set_config('request.jwt.claim.sub', :'C', false);
+set role authenticated;
 do $$ begin
-  begin perform public.crew_bill(current_setting('t.job')::uuid, 0, null, '', array[t.pic()]); perform t.ok(false, 'x');
+  begin perform public.crew_bill(current_setting('t.job')::uuid, 0, null, '', array[t.pic()], t.inv()); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'crew cannot bill the same step twice'); end;
-  begin perform public.crew_bill(current_setting('t.job')::uuid, null, 0, 'x', array[t.pic()]); perform t.ok(false, 'x');
+  begin perform public.crew_bill(current_setting('t.job')::uuid, null, 0, 'x', array[t.pic()], t.inv()); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'extra bill needs an amount'); end;
 end $$;
 do $$ begin
-  begin perform public.crew_bill(current_setting('t.job')::uuid, 1, null, '', array[t.pic()]); perform t.ok(false, 'x');
+  begin perform public.crew_bill(current_setting('t.job')::uuid, 1, null, '', array[t.pic()], t.inv()); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'halfway bill locked until they tap halfway done'); end;
 end $$;
 select public.crew_halfway(current_setting('t.job')::uuid);
 select t.ok((public.crew_my_jobs()->0->>'halfway_at') is not null, 'crew marks halfway done');
 do $$ begin
-  begin perform public.crew_bill(current_setting('t.job')::uuid, 1, null, '', array[t.pic()]); perform t.ok(false, 'x');
+  begin perform public.crew_bill(current_setting('t.job')::uuid, 1, null, '', array[t.pic()], t.inv()); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'halfway bill locked until the first bill is approved'); end;
 end $$;
-select public.crew_bill(current_setting('t.job')::uuid, null, 120, 'Two extra bundles of shingles', array[t.pic()]);
+select public.crew_bill(current_setting('t.job')::uuid, null, 120, 'Two extra bundles of shingles', array[t.pic()], t.inv());
 select t.ok(jsonb_array_length(public.crew_my_jobs()->0->'bills') = 2, 'crew sees their bills');
 select t.ok((select count(*) from public.crew_bills) = 0, 'crew cannot read the bills table directly');
 do $$ begin
@@ -356,7 +385,9 @@ reset role;
 select set_config('request.jwt.claim.sub', :'S', false);
 set role authenticated;
 select t.ok((select count(*) from public.crew_bills where status = 'submitted') = 2, 'office sees new crew bills');
-select t.ok((select count(*) from public.job_files f join public.crew_bills b on b.id = f.bill_id where b.status = 'submitted') = 2, 'office sees the photos sent with each bill');
+select t.ok((select count(*) from public.job_files f join public.crew_bills b on b.id = f.bill_id where b.status = 'submitted' and f.kind <> 'invoice') = 2, 'office sees the photos sent with each bill');
+select t.ok((select count(*) from public.job_files f join public.crew_bills b on b.id = f.bill_id where b.status = 'submitted' and f.kind = 'invoice') = 2, 'office sees the contractor''s invoice with each bill');
+select t.ok((select insurance_name from public.contractors where insurance_path is not null limit 1) = 'ins.pdf', 'office sees the contractor''s proof of insurance');
 select public.staff_crew_bill((select id from public.crew_bills where step = 0), 'approve', '', null, '');
 select public.staff_crew_bill((select id from public.crew_bills where step = 0), 'paid', '', '2026-11-12', 'Zelle');
 select t.ok((select status from public.crew_bills where step = 0) = 'paid', 'office approves and pays a crew bill');
@@ -367,9 +398,9 @@ reset role;
 select set_config('request.jwt.claim.sub', :'C', false);
 set role authenticated;
 select t.ok((select x->>'reason' from jsonb_array_elements(public.crew_my_jobs()->0->'bills') x where x->>'step' is null) = 'Not approved ahead of time', 'crew sees why a bill was declined');
-select t.ok((public.crew_bill(current_setting('t.job')::uuid, 1, null, 'Halfway', array[t.pic()])->>'amount')::numeric = 345.15, 'halfway bill opens once the first is paid');
+select t.ok((public.crew_bill(current_setting('t.job')::uuid, 1, null, 'Halfway', array[t.pic()], t.inv())->>'amount')::numeric = 345.15, 'halfway bill opens once the first is paid');
 do $$ begin
-  begin perform public.crew_bill(current_setting('t.job')::uuid, 2, null, '', array[t.pic()]); perform t.ok(false, 'x');
+  begin perform public.crew_bill(current_setting('t.job')::uuid, 2, null, '', array[t.pic()], t.inv()); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'finish bill still locked while working'); end;
 end $$;
 reset role;

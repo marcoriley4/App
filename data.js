@@ -634,6 +634,14 @@
     return u;
   }
   // Logged-in crew member and their contractor record.
+  // Proof of insurance: one per contractor, with the date it runs out. Needed before they can bill Top Hat.
+  const insuranceProblem = (ins) => !ins ? 'Upload your proof of insurance first (on your home screen or right here). Top Hat needs it before your first bill.'
+    : ins.expires && ins.expires < isoDay(Date.now()) ? `Your proof of insurance ran out on ${ins.expires}. Upload the new one first.` : '';
+  const checkDocFile = (f, what) => {
+    if (!f) throw new Error(`Attach ${what}.`);
+    if (!/^image\//.test(f.type || '') && f.type !== 'application/pdf') throw new Error(`${what[0].toUpperCase() + what.slice(1)} has to be a PDF or a photo.`);
+    if (f.size > MAX_FILE_MB * 1024 * 1024) throw new Error(`"${f.name}" is over ${MAX_FILE_MB} MB.`);
+  };
   async function requireCrew() {
     const d = await db();
     const u = d.users.find((x) => x.id === getSession());
@@ -1358,10 +1366,12 @@
         // Salespeople pick crews too, but only see names, phones and trades (no logins or invite links).
         if (!ctx.isStaff) return ctx.d.contractors.map(({ id, name, phone, trades, active, state }) => ({ id, name, phone, trades, active, state: state || '' }));
         const d = await db();
-        return d.contractors.map((c) => {
+        return Promise.all(d.contractors.map(async (c) => {
           const u = c.userId && d.users.find((x) => x.id === c.userId);
-          return { ...c, login: u ? 'active' : c.inviteCode ? 'invited' : 'none', loginEmail: u ? u.email : '' };
-        });
+          const blob = c.insurance && await blobs.get('insurance:' + c.id).catch(() => null);
+          return { ...c, insurance: c.insurance ? { ...c.insurance, url: blob ? URL.createObjectURL(blob) : null } : null,
+            login: u ? 'active' : c.inviteCode ? 'invited' : 'none', loginEmail: u ? u.email : '' };
+        }));
       },
       async save(c) {
         await requireStaff();
@@ -1632,6 +1642,22 @@
         writeDb(d); setSession(user.id);
         return clean(user);
       },
+      async insurance() {
+        const { c } = await requireCrew();
+        if (!c.insurance) return null;
+        const blob = await blobs.get('insurance:' + c.id).catch(() => null);
+        return { ...c.insurance, url: blob ? URL.createObjectURL(blob) : null, problem: insuranceProblem(c.insurance) };
+      },
+      async setInsurance(file, expires) {
+        const { d, c, u } = await requireCrew();
+        checkDocFile(file, 'your proof of insurance');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(expires || '')) throw new Error('Enter the date your insurance runs out.');
+        if (expires < isoDay(Date.now())) throw new Error('That insurance has already run out. Upload your current one.');
+        await blobs.put('insurance:' + c.id, file);
+        c.insurance = { name: file.name || 'insurance.pdf', mime: file.type, size: file.size, expires, at: Date.now(), by: u.name };
+        writeDb(d);
+        return { ...c.insurance };
+      },
       async jobs() {
         const { d, c } = await requireCrew();
         const showPay = d.settings.showCrewPay !== false;
@@ -1670,8 +1696,10 @@
         if (!j.halfwayAt) { j.halfwayAt = Date.now(); j.log.push({ at: Date.now(), text: `½ Halfway done (by ${u.name}, crew)` }); writeDb(d); }
       },
       // Crew bills Top Hat for a step on the crew pay schedule, or for extra work/materials.
-      async bill(jobId, { step = null, amount, note = '', photos = [] } = {}) {
+      async bill(jobId, { step = null, amount, note = '', photos = [], invoice = null } = {}) {
         const { d, c, u } = await requireCrew();
+        const insWhy = insuranceProblem(c.insurance); if (insWhy) throw new Error(insWhy);
+        checkDocFile(invoice, 'your invoice to Top Hat');
         photos = [...(photos || [])];
         if (!photos.length) throw new Error('Add at least one photo of the work so the office can see what you did.');
         if (photos.length > 12) throw new Error('Send up to 12 photos with a bill.');
@@ -1712,8 +1740,12 @@
           await blobs.put(meta.id, f);
           j.files.push(meta);
         }
+        // Their own invoice to Top Hat, tied to this bill.
+        const inv = { id: uid(), name: invoice.name || 'invoice.pdf', mime: invoice.type, size: invoice.size, kind: 'invoice', shared: false, uploaded: Date.now(),
+          source: 'crew', contractorId: c.id, by: u.name, stage: '', note: `Contractor invoice: ${bill.label}`, billId: bill.id };
+        await blobs.put(inv.id, invoice); j.files.push(inv); bill.invoice = true;
         bills.push(bill);
-        j.log.push({ at: Date.now(), text: `🧾 ${u.name} billed ${usd(bill.amount)} for “${bill.label}” with ${photos.length} ${photos.length === 1 ? 'photo' : 'photos'}${note ? `: ${note}` : ''}` });
+        j.log.push({ at: Date.now(), text: `🧾 ${u.name} billed ${usd(bill.amount)} for “${bill.label}” with their invoice and ${photos.length} ${photos.length === 1 ? 'photo' : 'photos'}${note ? `: ${note}` : ''}` });
         writeDb(d);
         return { ...bill };
       },

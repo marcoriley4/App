@@ -989,3 +989,5 @@ label.dream-pick { display: flex; align-items: center; justify-content: center; 
 .project-picks h2, .four-steps h2 { letter-spacing: .01em; }
 .project-tile { box-shadow: 0 6px 18px rgba(0,0,0,.08); }
 .project-tile:hover, .project-tile:focus-visible { border-color: var(--gold); box-shadow: 0 8px 22px rgba(166,126,73,.25); }
+.insurance-card.needs { border: 2px solid var(--gold); background: var(--gold-soft); }
+.insurance-card h3 { margin: 0; }

@@ -41,7 +41,8 @@ drop function if exists public.handle_new_user, public.is_staff, public.new_crew
   public.private_guard, public.costs_after_update, public.log_call, public.staff_invite_sales, public.staff_revoke_sales,
   public.sales_invite_info, public.claim_sales_invite, public.office_crew_list,
   public.authorize_permit, public.can_design, public.permit_label, public.report_payment, public.resolve_payment_report, public.crew_bill, public.staff_crew_bill, public.crew_halfway,
-  public.crew_material_add, public.crew_material_delivered, public.job_materials_log, public.sign_document, public.office_ask_review, public.customer_review cascade;
+  public.crew_material_add, public.crew_material_delivered, public.job_materials_log, public.sign_document, public.office_ask_review, public.customer_review,
+  public.crew_my_insurance, public.crew_set_insurance, public.crew_owns_insurance_path cascade;
 
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
@@ -100,6 +101,11 @@ create table public.contractors (
   state text not null default '' check (state = '' or state ~ '^[A-Z]{2}$'),   -- state they work in
   user_id uuid unique references public.profiles(id) on delete set null,   -- their crew login, if any
   invite_code text unique,                                                 -- one-time crew login invite
+  -- Proof of insurance (uploaded by the contractor, needed before they can bill Top Hat).
+  insurance_path text check (insurance_path is null or insurance_path like 'insurance/%'),
+  insurance_name text not null default '' check (length(insurance_name) <= 200),
+  insurance_expires date,
+  insurance_at timestamptz,
   created_at timestamptz not null default now()
 );
 alter table public.profiles add column contractor_id uuid references public.contractors(id) on delete set null;
@@ -890,12 +896,19 @@ begin
 end $$;
 
 -- Crew: bill Top Hat for a step of the crew pay schedule (amount worked out here), or for extra work/materials.
-create function public.crew_bill(p_job uuid, p_step int, p_amount numeric, p_note text, p_paths text[]) returns jsonb
+create function public.crew_bill(p_job uuid, p_step int, p_amount numeric, p_note text, p_paths text[], p_invoice text) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare cid uuid := public.my_crew(); j record; pay numeric; steps jsonb; n int; s jsonb; i int := 0; amt numeric; left_amt numeric; show_pay boolean;
-  who text; lbl text; nt text := left(trim(coalesce(p_note, '')), 500); rec public.crew_bills; linked int;
+  who text; lbl text; nt text := left(trim(coalesce(p_note, '')), 500); rec public.crew_bills; linked int; ins record;
 begin
   if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
+  -- Proof of insurance on file (and not run out) before any bill.
+  select insurance_path, insurance_expires into ins from public.contractors where id = cid;
+  if ins.insurance_path is null then raise exception 'Upload your proof of insurance first. Top Hat needs it before your first bill.'; end if;
+  if ins.insurance_expires is not null and ins.insurance_expires < current_date then
+    raise exception 'Your proof of insurance ran out on %. Upload the new one first.', ins.insurance_expires; end if;
+  -- Their own invoice to Top Hat is required with every bill.
+  if coalesce(p_invoice, '') = '' then raise exception 'Attach your invoice to Top Hat.'; end if;
   if coalesce(cardinality(p_paths), 0) = 0 then raise exception 'Add at least one photo of the work so the office can see what you did.'; end if;
   if cardinality(p_paths) > 12 then raise exception 'Send up to 12 photos with a bill.'; end if;
   select x.id, x.status, x.halfway_at into j from public.jobs x where x.id = p_job and x.contractor_id = cid and x.status in ('scheduled', 'in_progress', 'completed');
@@ -942,9 +955,40 @@ begin
    where job_id = p_job and contractor_id = cid and source = 'crew' and kind = 'photo' and bill_id is null and path = any(p_paths);
   get diagnostics linked = row_count;
   if linked = 0 then raise exception 'Add at least one photo of the work so the office can see what you did.'; end if;
-  perform public.log_event(p_job, '🧾 ' || coalesce(who, 'Crew') || ' billed ' || public.usd(amt) || ' for “' || lbl || '” with ' || linked || case when linked = 1 then ' photo' else ' photos' end
+  -- Claim their invoice (uploaded for this job, not on another bill).
+  update public.job_files set bill_id = rec.id, kind = 'invoice', note = left('Contractor invoice: ' || lbl, 500)
+   where job_id = p_job and contractor_id = cid and source = 'crew' and bill_id is null and path = p_invoice and not (path = any(p_paths));
+  if not found then raise exception 'Attach your invoice to Top Hat.'; end if;
+  perform public.log_event(p_job, '🧾 ' || coalesce(who, 'Crew') || ' billed ' || public.usd(amt) || ' for “' || lbl || '” with their invoice and ' || linked || case when linked = 1 then ' photo' else ' photos' end
     || case when nt <> '' then ': ' || nt else '' end);
   return jsonb_build_object('id', rec.id, 'label', rec.label, 'amount', rec.amount, 'step', rec.step, 'status', rec.status, 'photos', linked);
+end $$;
+
+-- Crew: their proof of insurance (one per contractor). The file goes in storage under insurance/<contractor id>/.
+create function public.crew_my_insurance() returns jsonb
+language plpgsql stable security definer set search_path = '' as $$
+declare r jsonb;
+begin
+  select jsonb_build_object('contractor', c.id, 'path', c.insurance_path, 'name', c.insurance_name, 'expires', c.insurance_expires, 'at', c.insurance_at) into r
+    from public.contractors c where c.id = public.my_crew();
+  return r;
+end $$;
+-- Storage check: is this file in the signed-in crew member's own insurance folder?
+create function public.crew_owns_insurance_path(p_name text) returns boolean
+language plpgsql stable security definer set search_path = '' as $$
+declare cid uuid := public.my_crew();
+begin
+  return cid is not null and p_name like 'insurance/' || cid || '/%' and p_name not like '%..%';
+end $$;
+create function public.crew_set_insurance(p_path text, p_name text, p_expires date) returns void
+language plpgsql security definer set search_path = '' as $$
+declare cid uuid := public.my_crew();
+begin
+  if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
+  if p_path is null or p_path not like 'insurance/' || cid || '/%' or p_path like '%..%' then raise exception 'Bad file path.'; end if;
+  if p_expires is null then raise exception 'Enter the date your insurance runs out.'; end if;
+  if p_expires < current_date then raise exception 'That insurance has already run out. Upload your current one.'; end if;
+  update public.contractors set insurance_path = p_path, insurance_name = left(coalesce(p_name, ''), 200), insurance_expires = p_expires, insurance_at = now() where id = cid;
 end $$;
 
 -- Crew: "I'm halfway done." Unlocks the halfway bill and tells the office.
@@ -1093,7 +1137,8 @@ begin
       'crew_paid_date', case when coalesce(show_pay, true) then (select k.crew_paid_date from public.job_costs k where k.job_id = j.id) end,
       'bills', case when coalesce(show_pay, true) then (select coalesce(jsonb_agg(jsonb_build_object('id', cb.id, 'step', cb.step, 'label', cb.label, 'amount', cb.amount, 'note', cb.note,
                   'status', cb.status, 'reason', cb.reason, 'paid_date', cb.paid_date, 'paid_method', cb.paid_method, 'created_at', cb.created_at,
-                  'photos', (select count(*) from public.job_files f where f.bill_id = cb.id)) order by cb.created_at), '[]'::jsonb)
+                  'photos', (select count(*) from public.job_files f where f.bill_id = cb.id and f.kind <> 'invoice'),
+                  'invoice', exists (select 1 from public.job_files f where f.bill_id = cb.id and f.kind = 'invoice')) order by cb.created_at), '[]'::jsonb)
                   from public.crew_bills cb where cb.job_id = j.id and cb.contractor_id = cid) else '[]'::jsonb end,
       'crew_paid_method', case when coalesce(show_pay, true) then (select k.crew_paid_method from public.job_costs k where k.job_id = j.id) end,
       'notes', (select coalesce(jsonb_agg(jsonb_build_object('id', n.id, 'text', n.text, 'created_at', n.created_at) order by n.created_at), '[]'::jsonb)
@@ -1364,7 +1409,7 @@ grant execute on function public.is_staff(), public.owns_job(text), public.custo
   public.office_can_access_path(text), public.log_call(uuid, text, text), public.staff_invite_sales(uuid), public.staff_revoke_sales(uuid),
   public.claim_sales_invite(text), public.office_crew_list(), public.authorize_permit(uuid, text), public.can_design(uuid),
   public.report_payment(uuid, numeric, text, text, text, text), public.resolve_payment_report(uuid, boolean),
-  public.crew_bill(uuid, int, numeric, text, text[]), public.staff_crew_bill(uuid, text, text, date, text), public.crew_halfway(uuid) to authenticated;
+  public.crew_bill(uuid, int, numeric, text, text[], text), public.crew_my_insurance(), public.crew_set_insurance(text, text, date), public.crew_owns_insurance_path(text), public.staff_crew_bill(uuid, text, text, date, text), public.crew_halfway(uuid) to authenticated;
 grant execute on function public.sales_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_add_note(text, uuid, text) to anon, authenticated;
@@ -1406,5 +1451,12 @@ create policy "th crew upload" on storage.objects for insert to anon, authentica
   with check (bucket_id = 'job-files' and (storage.foldername(name))[1] = 'crew' and public.crew_token_active((storage.foldername(name))[2]));
 create policy "th crew read own" on storage.objects for select to anon, authenticated
   using (bucket_id = 'job-files' and (storage.foldername(name))[1] = 'crew' and public.crew_token_active((storage.foldername(name))[2]));
+-- Crew: their own proof of insurance, under insurance/<their contractor id>/ (the office reads it through "th staff all files").
+drop policy if exists "th crew insurance upload" on storage.objects;
+drop policy if exists "th crew insurance read" on storage.objects;
+create policy "th crew insurance upload" on storage.objects for insert to authenticated
+  with check (bucket_id = 'job-files' and public.crew_owns_insurance_path(name));
+create policy "th crew insurance read" on storage.objects for select to authenticated
+  using (bucket_id = 'job-files' and public.crew_owns_insurance_path(name));
 create policy "th crew read customer photos" on storage.objects for select to authenticated
   using (bucket_id = 'job-files' and public.crew_can_read_customer(name));
