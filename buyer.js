@@ -433,7 +433,7 @@
         cal,
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), 'Where is the project?'), addr, el('div', { class: 'two zip-state' }, zip, stateSel),
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '3'), me ? 'How do we reach you?' : 'Create your account'), f.name, f.phone, f.email, f.password,
-      ], { nextLabel: me ? 'Send my request' : 'Create Account', onNext: send,
+      ], { nextLabel: me ? 'Send my request' : 'Next', onNext: send,
         extra: me ? null : el('p', { class: 'muted small', style: 'text-align:center;margin-top:12px' }, 'Already have an account? ', el('a', { href: '#/login?next=request' }, 'Log in'), ' and your request will be waiting.') }));
       return;
     }
