@@ -409,7 +409,7 @@
       stateSel.addEventListener('change', keep);
       const send = async (e) => {
         keep();
-        if (!draft.timeframe) return showError('Pick a day to meet your project manager, or “I’m flexible”.');
+        if (!draft.timeframe) return showError('Select your ideal project start date, or “I’m flexible”.');
         if (!draft.address) return showError('Enter the street address and city.');
         if (!/^\d{5}$/.test(draft.zip)) return showError('Enter the 5-digit ZIP code.');
         if (!draft.state) return showError('Pick the state the project is in.');
@@ -428,8 +428,8 @@
         finally { btn.disabled = false; }
       };
       view.append(shell(me ? 'Schedule' : 'Create account', null, [
-        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Meet your project manager'),
-        el('p', { class: 'wiz-sub' }, 'Pick a day for your project manager to come out. After the visit, we schedule your contractor.'),
+        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Select your ideal project start date'),
+        el('p', { class: 'wiz-sub' }, 'You’ll be contacted by your project manager.'),
         cal,
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), 'Where is the project?'), addr, el('div', { class: 'two zip-state' }, zip, stateSel),
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '3'), me ? 'How do we reach you?' : 'Create your account'), f.name, f.phone, f.email, f.password,
