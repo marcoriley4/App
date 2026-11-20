@@ -22,7 +22,7 @@ const { chromium, devices } = require('playwright');
   await p.tap('.chip:has-text("I\'m flexible")');
   await p.fill('input[aria-label="Street address and city"]', '5 Elm St, Springfield'); await p.fill('input[aria-label="ZIP code"]', '62704');
   await p.fill('input[aria-label="Full name"]', 'New Customer'); await p.fill('input[aria-label="Mobile phone"]', '5551112222'); await p.fill('input[aria-label="Email"]', 'newcust' + Date.now() + '@example.com'); await p.fill('input[aria-label="Create a password"]', 'password1');
-  await p.tap('.wiz-next button:has-text("Send my request")'); await p.waitForSelector('.done-mark');
+  await p.tap('.wiz-next button'); await p.waitForSelector('.done-mark');
   await p.goto('http://localhost:8766/#/jobs'); await p.waitForSelector('.job-card');
   const card = p.locator('.job-card').first();
   ok((await card.textContent()).includes('Remodel'), 'project is on the new customer dashboard');

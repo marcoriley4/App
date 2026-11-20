@@ -994,3 +994,4 @@ label.dream-pick { display: flex; align-items: center; justify-content: center; 
 .summary .asked-for { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 4px; }
 .summary .asked-for h3 { margin: 0; font-size: 1.05rem; }
 .four-steps .step-row { cursor: default; }
+.step-names span { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.2; }
