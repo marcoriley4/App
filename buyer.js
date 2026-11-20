@@ -225,13 +225,17 @@
     if (screen === 'photos' || screen === 'design') {
       let autoBuild = false; // set when they add the photo from the ✨ Build box: build the dream as soon as it's in
       const isRoom = roomTrade;
+      // No "Which room is it?" (owner): the room comes from the home-page button they tapped, or from what they wrote in step 1.
+      // If we still don't know, every room's looks are shown and the look they pick sets the room.
+      if (isRoom && (!draft.room || draft.room === 'none')) { const g = TH.roomFromText(draft.description); if (g) { draft.room = g; saveDraft(); } }
       let room = isRoom ? TH.STYLE_ROOMS.find((r) => r.id === draft.room) || null : null;
+      let allLooks = !room;
       const thing = () => (room ? room.label.toLowerCase() : draft.what ? draft.what : isRoom && draft.room === 'none' ? 'project' : TH.dreamNoun(draft.trade));
       const grid = el('div', { class: 'photos' });
       const btnWrap = el('div', { class: 'wiz-next stay' }); // stays at the end of the page, doesn't float
       const rooms = el('div', { class: 'stage-chips room-chips', role: 'radiogroup', 'aria-label': 'Which room' });
       const looks = el('div', { class: 'look-list', role: 'radiogroup', 'aria-label': 'Pick a look' });
-      const lookHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '↳'), 'Pick the look you want');
+      const lookHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Pick the look you want');
       // What their dream is right now: a look (rooms) or their own words (everything else). The AFTER picture matches one of these.
       // Never empty: with nothing picked the studio still makes a finished, updated version of their photo.
       const words = () => (draft.dreamText || '').trim();
@@ -248,12 +252,17 @@
         else setTimeout(() => dreamText.focus(), 30);
       };
       const drawLooks = () => {
-        lookHead.hidden = !room;
-        looks.replaceChildren(...(room ? room.styles.map((st, i) => { const key = `${room.id}/${st.id}`; const on = draft.style === key;
-          return el('button', { type: 'button', role: 'radio', 'aria-checked': String(on), class: 'look' + (on ? ' on' : ''), onclick: () => { draft.style = on ? '' : key; saveDraft(); drawLooks(); drawBtn(); drawDream(); } },
-            el('img', { src: `img/styles/${room.id}-${st.id}.svg`, alt: '' }),
-            el('span', { class: 'look-txt' }, el('b', {}, `${i + 1}. ${st.name}`), el('span', {}, st.desc)),
-            el('span', { class: 'look-check', 'aria-hidden': 'true' }, on ? '✓' : '')); }) : []));
+        const lookBtn = (rm, st, label) => { const key = `${rm.id}/${st.id}`; const on = draft.style === key;
+          return el('button', { type: 'button', role: 'radio', 'aria-checked': String(on), class: 'look' + (on ? ' on' : ''), onclick: () => {
+            draft.style = on ? '' : key; if (!on) { draft.room = rm.id; room = rm; } saveDraft(); drawLooks(); drawBtn(); drawDream(); } },
+            el('img', { src: `img/styles/${rm.id}-${st.id}.svg`, alt: '' }),
+            el('span', { class: 'look-txt' }, el('b', {}, label), el('span', {}, st.desc)),
+            el('span', { class: 'look-check', 'aria-hidden': 'true' }, on ? '✓' : '')); };
+        const list = allLooks || !room
+          ? TH.STYLE_ROOMS.flatMap((rm) => rm.styles.map((st) => lookBtn(rm, st, `${rm.label}: ${st.name}`)))
+          : room.styles.map((st, i) => lookBtn(room, st, `${i + 1}. ${st.name}`));
+        looks.replaceChildren(...list,
+          room && !allLooks ? el('button', { type: 'button', class: 'link', onclick: () => { allLooks = true; drawLooks(); } }, 'Show looks for other rooms') : null);
       };
       // Step 2: "Describe your project" is for the Top Hat team only (job description). It does NOT go to the design studio.
       const projectText = el('textarea', { rows: 3, maxlength: '1000', value: draft.description || '', 'aria-label': 'Describe your project',
@@ -322,7 +331,7 @@
           const btn = el('button', { type: 'button', class: 'dream-btn block big', onclick: () => make(btn) }, `✨ Build my dream ${thing()}`);
           if (autoBuild) { autoBuild = false; setTimeout(() => make(btn), 0); }
           dreamBox.replaceChildren(el('div', { class: 'dream-wait' }, el('img', { src: draft.photos[0], alt: 'Your photo' }), el('span', { class: 'spinner', 'aria-hidden': 'true' })), btn,
-            el('p', { class: 'muted small' }, what() ? `We’ll use ${what()}.` : (isRoom ? 'Pick a room and a look above, or describe your design, to make it yours. Or just tap.' : 'Describe your design above to make it yours, or just tap.')), err);
+            el('p', { class: 'muted small' }, what() ? `We’ll use ${what()}.` : (isRoom ? 'Pick a look above, or describe your design, to make it yours. Or just tap.' : 'Describe your design above to make it yours, or just tap.')), err);
           return;
         }
         const extra = el('input', { placeholder: 'Change something? e.g. darker colors', 'aria-label': 'Change something', maxlength: '200' });
@@ -368,13 +377,13 @@
       ] : [
         // Step 2, Design: which room and look, then the design studio builds the dream (AFTER) from their photos, then the budget.
         // The design studio here is a core screen: never remove it (see CLAUDE.md).
-        ...(isRoom ? [el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Which room is it?'), rooms, lookHead, looks] : []),
+        ...(isRoom ? [lookHead, looks] : []),
         studioHead, designWrap, dreamBox,
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, isRoom ? '3' : '2'), 'Have you thought about a budget?'),
         budgetChips,
       ]));
       view.querySelector('.wiz').append(btnWrap);
-      if (isRoom) { drawRooms(); drawLooks(); }
+      if (isRoom) drawLooks();
       draw();
       return;
     }

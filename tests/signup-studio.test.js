@@ -12,7 +12,7 @@ const { chromium, devices } = require('playwright');
   await p.setInputFiles('.photo-btn input', require('path').join(__dirname, 'fixtures', 'before.jpg')); await p.waitForSelector('.photo img');
   await p.tap('.wiz-next button'); await p.waitForSelector('.dream-box');
   ok(await p.locator('.dream-box').count() === 1, 'studio is on the sign-up Design step: ' + await txt('.wiz-part:has-text("Build my dream")'));
-  await p.tap('.room-chips .chip:has-text("Kitchen")'); await p.tap('.look:has-text("Modern")');
+  await p.tap('.look:has-text("Modern")');
   await p.tap('.dream-btn'); await p.waitForSelector('.dream-box .ba-slider');
   ok(true, 'dream made inside sign-up: ' + await txt('.dream-box h3'));
   // leave to the home page and come back: nothing lost
