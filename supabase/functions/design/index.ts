@@ -38,10 +38,12 @@ const LOOKS: Record<string, [string, string, string]> = {
 };
 const dreamRequest = (key: string, extra: string) => { const [room, name, desc] = LOOKS[key];
   return `Redesign this ${room} in the ${name} style: ${desc}.${extra.trim() ? ' Also: ' + extra.trim().slice(0, 200) + '.' : ''}`; };
-async function callGemini(key: string, mime: string, bytes: Uint8Array, text: string) {
+// Several photos of the same space go in together: photo 1 is the main view, the rest show the whole room.
+const manyPhotosNote = (n: number) => n > 1 ? `You are given ${n} photos of the same space from different angles. Photo 1 is the main view: draw the finished result from photo 1’s exact viewpoint and framing. Use the other photos to understand the whole room (layout, walls, windows, doors, fixtures and what’s out of frame) so the whole space is designed consistently.\n\n` : '';
+async function callGemini(key: string, mime: string, bytes: Uint8Array, text: string, more: { mime: string; bytes: Uint8Array }[] = []) {
   const ai = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(MODEL)}:generateContent`, {
     method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
-    body: JSON.stringify({ contents: [{ role: 'user', parts: [{ inline_data: { mime_type: mime, data: encodeBase64(bytes) } }, { text }] }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } }),
+    body: JSON.stringify({ contents: [{ role: 'user', parts: [{ inline_data: { mime_type: mime, data: encodeBase64(bytes) } }, ...more.map((m) => ({ inline_data: { mime_type: m.mime, data: encodeBase64(m.bytes) } })), { text }] }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } }),
   });
   const out = await ai.json().catch(() => ({}));
   if (!ai.ok) { console.error('Gemini error', ai.status, JSON.stringify(out).slice(0, 500)); throw Object.assign(new Error('The AI service had a problem. Please try again in a minute.'), { status: 502 }); }
@@ -106,8 +108,12 @@ Deno.serve(async (req) => {
     if (!key) return fail('Picture previews aren’t turned on yet. We’ll still see the look you picked.', 503);
     const style = String(body.style || ''); const words = String(body.extra || '').trim().slice(0, 400);
     if (!LOOKS[style] && words.length < 3) return fail('Tell us what you want it to look like.');
-    let img;
-    try { img = parseDataUrl(body.image); } catch (e) { return fail((e as Error).message); }
+    let img; let more: { mime: string; bytes: Uint8Array }[] = [];
+    try {
+      img = parseDataUrl(body.image);
+      const extra = (body as unknown as { more?: unknown }).more;
+      more = (Array.isArray(extra) ? extra : []).slice(0, 4).map((u) => parseDataUrl(String(u)));
+    } catch (e) { return fail((e as Error).message); }
     const ip = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || 'unknown';
     const visitor = encodeBase64(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ip + (Deno.env.get('SUPABASE_URL') || ''))))).slice(0, 24);
     const since = new Date(Date.now() - 86400e3).toISOString();
@@ -119,7 +125,7 @@ Deno.serve(async (req) => {
     try {
       const tradeLabel = TRADES[String(body.trade || '')] || 'Home project';
       const request = LOOKS[style] ? dreamRequest(style, words.slice(0, 200)) : `Show this ${tradeLabel.toLowerCase()} project finished the way the customer wants: ${words}.`;
-      const out = await callGemini(key, img.mime, img.bytes, designPrompt(LOOKS[style] ? 'Remodel' : tradeLabel, '', [], request));
+      const out = await callGemini(key, img.mime, img.bytes, manyPhotosNote(1 + more.length) + designPrompt(LOOKS[style] ? 'Remodel' : tradeLabel, '', [], request), more);
       return reply({ image: `data:${out.mime};base64,${out.data}` });
     } catch (e) { return fail((e as Error).message, (e as { status?: number }).status || 500); }
   }

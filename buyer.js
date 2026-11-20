@@ -306,7 +306,7 @@
           try {
             const text = [words(), extra].filter((x) => x && x.trim()).join('. ');
             const asked = look ? text : (text.length >= 3 ? text : 'finished, updated and looking its best, done right by a pro');
-            const image = await api.designs.dream(draft.photos[0], look ? draft.style : '', asked, { trade: draft.trade });
+            const image = await api.designs.dream(draft.photos.slice(0, MAX_PHOTOS), look ? draft.style : '', asked, { trade: draft.trade }); // all their photos: the whole room
             draft.dreamCount = made() + 1;
             draft.dream = { key, style: look ? draft.style : '', image, photo: draft.photos[0], prompt: look ? TH.dreamRequest(look, text) : TH.dreamRequestText(trade ? trade.label : '', asked) };
             saveDraft(); drawDream(); drawBtn();
@@ -356,7 +356,7 @@
         el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: addPhotos }));
       view.append(shell('', '', [
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Your before photo'),
-        el('p', { class: 'wiz-sub' }, 'Up to 5 photos.'),
+        el('p', { class: 'wiz-sub' }, 'Up to 5 photos. Add every angle: the design studio uses all of them to design the whole room.'),
         addBtn, grid,
         // 2. What they want: room bubbles + looks (room projects), idea bubbles, their words, notes, measurements.
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), isRoom ? 'Which room is it?' : 'What do you want done?'),

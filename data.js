@@ -695,14 +695,16 @@
       `Now make this change: ${request}`,
     ].filter(Boolean).join('\n');
   }
+  // Several photos of the same space go in together (photo 1 is the main view); the AI sends back one picture.
+  const manyPhotosNote = (n) => n > 1 ? `You are given ${n} photos of the same space from different angles. Photo 1 is the main view: draw the finished result from photo 1’s exact viewpoint and framing. Use the other photos to understand the whole room (layout, walls, windows, doors, fixtures and what’s out of frame) so the whole space is designed consistently.\n\n` : '';
   async function callImageAI(ai, dataUrl, text) {
-    const [, mime, b64] = String(dataUrl).match(/^data:([^;]+);base64,(.*)$/) || [];
-    if (!b64) throw new Error('That picture couldn’t be read.');
+    const pics = [].concat(dataUrl).filter(Boolean).slice(0, 5).map((u) => { const [, mime, b64] = String(u).match(/^data:([^;]+);base64,(.*)$/) || []; return { mime, b64 }; });
+    if (!pics.length || pics.some((x) => !x.b64)) throw new Error('That picture couldn’t be read.');
     let res;
     try {
       res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(ai.model || DEFAULT_IMAGE_MODEL)}:generateContent`, {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': ai.key },
-        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ inline_data: { mime_type: mime, data: b64 } }, { text }] }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } }),
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [...pics.map((x) => ({ inline_data: { mime_type: x.mime, data: x.b64 } })), { text }] }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'] } }),
       });
     } catch (e) { throw new Error('Couldn’t reach the AI service. Check your internet connection and try again.'); }
     const out = await res.json().catch(() => ({}));
@@ -1548,10 +1550,12 @@
         return v;
       },
       // Sign-up: their photo in the look they picked, before they've even sent the request (nothing saved yet).
+      // photo: one photo or all of them (array). Photo 1 is the main view; the rest show the AI the whole room.
       async dream(photo, styleKey, extra = '', { trade = '' } = {}) {
+        const photos = [].concat(photo).filter(Boolean).slice(0, 5);
         const look = styleOf(styleKey);
         if (!look && String(extra || '').trim().length < 3) throw new Error('Tell us what you want it to look like.');
-        if (!photo) throw new Error('Add a photo of your space first.');
+        if (!photos.length) throw new Error('Add a photo of your space first.');
         const ai = aiConfig();
         if (!ai.key && !window.TH_AI_MOCK) throw new Error('Picture previews aren’t turned on yet. We’ll still see the look you picked.');
         let used = { day: '', n: 0 };
@@ -1560,8 +1564,8 @@
         if (used.day !== today) used = { day: today, n: 0 };
         if (used.n >= 3) throw new Error('You’ve made 3 designs, the most for sign-up. You can make more in the Design studio once you’re signed up.');
         const tradeLabel = (TRADES.find((t) => t.id === trade) || {}).label || 'Home project';
-        const instruction = designPrompt({ trade: look ? 'Remodel' : tradeLabel, description: '', earlier: [], request: look ? dreamRequest(look, extra) : dreamRequestText(tradeLabel, extra) });
-        const out = window.TH_AI_MOCK ? await window.TH_AI_MOCK(photo, instruction) : await callImageAI(ai, photo, instruction);
+        const instruction = manyPhotosNote(photos.length) + designPrompt({ trade: look ? 'Remodel' : tradeLabel, description: '', earlier: [], request: look ? dreamRequest(look, extra) : dreamRequestText(tradeLabel, extra) });
+        const out = window.TH_AI_MOCK ? await window.TH_AI_MOCK(photos[0], instruction, photos) : await callImageAI(ai, photos, instruction);
         used.n++; try { localStorage.setItem('tophat.dreams', JSON.stringify(used)); } catch (e) {}
         return shrinkImage(await (await fetch(out)).blob(), 1280, 0.82);
       },
