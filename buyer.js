@@ -429,7 +429,7 @@
       };
       view.append(shell(me ? 'Schedule' : 'Create account', null, [
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Select your ideal project start date'),
-        el('p', { class: 'wiz-sub' }, 'You’ll be contacted by your project manager.'),
+        el('p', { class: 'wiz-sub' }, 'You’ll be contacted by your project manager within 24 hours.'),
         cal,
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), 'Where is the project?'), addr, el('div', { class: 'two zip-state' }, zip, stateSel),
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '3'), me ? 'How do we reach you?' : 'Create your account'), f.name, f.phone, f.email, f.password,
