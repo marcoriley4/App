@@ -132,7 +132,7 @@
         el('p', { class: 'cta-note' }, 'Tap to start'),
       ),
       el('section', { class: 'project-picks' },
-        el('h2', {}, 'What are we building?'),
+        el('h2', {}, 'What are we building together?'),
         el('div', { class: 'project-grid' }, ...PROJECTS.map(([label, img, q]) => el('a', { class: 'project-tile', href: '#/request?' + q, onclick: () => { draft.step = 1; saveDraft(); } },
           el('img', { src: img, alt: '', loading: 'lazy' }), el('span', {}, label))),
           el('a', { class: 'project-tile other', href: '#/request?trade=remodel&room=none', onclick: () => { draft.step = 1; saveDraft(); } }, el('span', { class: 'ic', 'aria-hidden': 'true' }, '📋'), el('span', {}, 'Something else'))),
