@@ -677,7 +677,7 @@ button.ghost, .btn.ghost { border-width: 1.5px; }
 .wiz-sub { margin: 0; color: var(--muted); font-size: 1.02rem; }
 .wiz input, .wiz textarea { font-size: 1.1rem; min-height: 56px; }
 .wiz textarea { min-height: 130px; }
-.wiz-next { position: sticky; bottom: 0; margin-top: auto; padding: 14px 0 calc(14px + env(safe-area-inset-bottom)); background: linear-gradient(to bottom, transparent, var(--bg) 35%); }
+.wiz-next { position: static; margin-top: auto; padding: 14px 0 calc(14px + env(safe-area-inset-bottom)); background: linear-gradient(to bottom, transparent, var(--bg) 35%); }
 .btn.big, button.big { font-size: 1.2rem; min-height: 62px; }
 .big-tiles { gap: 10px; }
 .big-tiles .tile { min-height: 72px; font-size: 1.05rem; font-weight: 700; text-align: left; color: var(--text); box-shadow: none; }
