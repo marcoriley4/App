@@ -129,7 +129,6 @@
         el('p', { class: 'slogan' }, 'We bring the right contractor to the right job.'),
         el('a', { class: 'btn gold block hero-cta', href: '#/request', onclick: () => { if (draft.step > 1 && (draft.photos.length || draft.dream)) { draft.step = 1; saveDraft(); } } }, // never wipe their photo or dream: pick up at the design studio
           el('h1', {}, 'Start your project the right way, right now.')),
-        el('p', { class: 'cta-note' }, 'Tap to start'),
       ),
       el('section', { class: 'project-picks' },
         el('h2', {}, 'What are we building together?'),
