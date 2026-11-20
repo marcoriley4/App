@@ -187,8 +187,7 @@
         el('span', { class: 'wiz-count' }, `${step} of ${total}`)),
       el('div', { class: 'steps' }, ...SCREENS.map((_, i) => el('span', { class: i < step ? 'on' : '' }))),
       el('div', { class: 'step-names', 'aria-hidden': 'true' }, ...SCREENS.map((sc, i) => el('span', { class: i + 1 === step ? 'now' : i + 1 < step ? 'done' : '' }, (STEP_NAMES[sc] || sc)))),
-      el('p', { class: 'time-left' }, timeLeft()),
-      el('h1', { class: 'wiz-q' }, title),
+      title ? el('h1', { class: 'wiz-q' }, title) : null,
       sub ? el('p', { class: 'wiz-sub' }, sub) : null,
       errorBox,
       ...body,
@@ -224,6 +223,7 @@
     // Design (every request): 1) the BEFORE photo, 2) the dream (room projects pick one of the three looks; everything else describes it),
     // then ✨ the AFTER picture: their own photo, finished. Both are saved to the job when they send the request.
     if (screen === 'design') {
+      let autoBuild = false; // set when they add the photo from the ✨ Build box: build the dream as soon as it's in
       const isRoom = roomTrade;
       let room = isRoom ? TH.STYLE_ROOMS.find((r) => r.id === draft.room) || null : null;
       const thing = () => (room ? room.label.toLowerCase() : TH.dreamNoun(draft.trade));
@@ -262,7 +262,7 @@
       const ideaList = [...(isRoom ? [] : IDEA_CHIPS[draft.trade] || []), ...((TH.DESIGN_IDEAS || {})[draft.trade] || (TH.DESIGN_IDEAS || {}).other || [])].filter((x, i, a) => a.indexOf(x) === i);
       const dreamIdeas = el('div', { class: 'stage-chips' }, ...ideaList.map((t) => el('button', { type: 'button', class: 'chip',
         onclick: () => { dreamText.value = dreamText.value.trim() ? `${dreamText.value.trim()}, ${t.toLowerCase()}` : t; draft.dreamText = dreamText.value; saveDraft(); drawDream(); drawBtn(); } }, `+ ${t}`)));
-      const describeWrap = el('div', { class: 'stack', style: 'gap:8px' }, dreamIdeas,
+      const describeWrap = el('div', { class: 'stack', style: 'gap:8px' },
         el('label', { class: 'box-label' }, isRoom ? 'Describe your finished project (optional)' : 'Describe your finished project', dreamText));
       // Measurements (optional). The "Anything else" notes box was removed at the owner's request.
       const measure = el('input', { value: draft.measurements || '', placeholder: 'e.g. Kitchen is about 12 x 14 ft', 'aria-label': 'Measurements', oninput: () => { draft.measurements = measure.value; saveDraft(); } });
@@ -279,7 +279,9 @@
         const look = room && TH.styleOf(draft.style);
         const d = draft.dream && draft.dream.image ? draft.dream : null; // the last picture stays until they make a new one
         if (!draft.photos.length) {
-          dreamBox.replaceChildren(el('p', { class: 'dream-empty' }, `📷 Add your before photo in step 1, then tap here to build your dream ${thing()}.`));
+          dreamBox.replaceChildren(el('label', { class: 'btn dream-btn block big dream-pick' }, `✨ Build my dream ${thing()}`,
+            el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: (e) => { autoBuild = true; addPhotos(e); } })),
+            el('p', { class: 'muted small' }, 'Tap to add your before photo. We’ll build your dream from it right away.'));
           return;
         }
         const err = el('div', { class: 'error', hidden: true, role: 'alert' });
@@ -300,6 +302,7 @@
         };
         if (!d) {
           const btn = el('button', { type: 'button', class: 'dream-btn block big', onclick: () => make(btn) }, `✨ Build my dream ${thing()}`);
+          if (autoBuild) { autoBuild = false; setTimeout(() => make(btn), 0); }
           dreamBox.replaceChildren(el('div', { class: 'dream-wait' }, el('img', { src: draft.photos[0], alt: 'Your photo' }), el('span', { class: 'spinner', 'aria-hidden': 'true' })), btn,
             el('p', { class: 'muted small' }, what() ? `We’ll use the ${what()}.` : `Pick ${isRoom ? 'a room and a look' : 'some ideas'} in step 2 to make it yours, or just tap.`), err);
           return;
@@ -327,15 +330,17 @@
         addBtn.hidden = draft.photos.length >= MAX_PHOTOS;
         drawBtn(); drawDream();
       };
-      const addBtn = el('label', { class: 'btn gold block big photo-btn' }, draft.photos.length ? '📷 Add more photos' : '📷 Take or add your before photo',
-        el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: async (e) => {
-          const files = [...e.target.files].slice(0, MAX_PHOTOS - draft.photos.length);
-          for (const f of files) { try { draft.photos.push(await shrinkImage(f)); } catch (err) { showError(err.message); } }
-          saveDraft(); draw();
-        } }));
-      view.append(shell('Design it: before and after', 'Show us how it looks now, then see your dream before we even talk.', [
+      const addPhotos = async (e) => {
+        const files = [...e.target.files].slice(0, MAX_PHOTOS - draft.photos.length);
+        for (const f of files) { try { draft.photos.push(await shrinkImage(f)); } catch (err) { autoBuild = false; showError(err.message); } }
+        if (!draft.photos.length) autoBuild = false;
+        e.target.value = ''; saveDraft(); draw();
+      };
+      const addBtn = el('label', { class: 'btn gold block big photo-btn' }, '📷 Add photos',
+        el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: addPhotos }));
+      view.append(shell('', '', [
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Your before photo'),
-        el('p', { class: 'wiz-sub' }, 'Stand back so the whole area is in the picture. Up to 5 photos.'),
+        el('p', { class: 'wiz-sub' }, 'Up to 5 photos.'),
         addBtn, grid,
         // 2. What they want: room bubbles + looks (room projects), idea bubbles, their words, notes, measurements.
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '2'), isRoom ? 'Which room is it?' : 'What do you want done?'),
