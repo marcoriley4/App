@@ -498,21 +498,31 @@
           ? el('select', { class: 'inline-select', 'aria-label': 'Salesperson', onchange: (e) => update({ salesId: e.target.value || null }) },
             el('option', { value: '' }, 'No salesperson'), ...team.map((x) => el('option', { value: x.id, selected: x.id === j.salesId }, x.name)))
           : el('span', { class: 'muted' }, 'No sales team yet')) : null,
+        // Contractor: pick right here (office and sales). Saved as soon as it changes.
+        el('li', {}, el('span', { class: 'fi' }, '👷'), el('span', { class: 'stack', style: 'gap:2px;min-width:0' },
+          el('select', { class: 'inline-select', 'aria-label': 'Contractor', onchange: (e) => {
+            const patch = { contractorId: e.target.value || null };
+            if (patch.contractorId && j.scheduledFor && ['new', 'qualifying', 'hot'].includes(j.status)) patch.status = 'scheduled';
+            update(patch);
+          } },
+            el('option', { value: '' }, 'Assign a contractor'),
+            ...crew.filter((c) => c.active || c.id === j.contractorId)
+              .sort((a, c) => ((!!j.state && c.state === j.state) - (!!j.state && a.state === j.state)) || (TH.doesTrade(c, j.trade) - TH.doesTrade(a, j.trade)) || a.name.localeCompare(c.name))
+              .map((c) => el('option', { value: c.id, selected: c.id === j.contractorId }, `${TH.doesTrade(c, j.trade) ? '★ ' : ''}${c.name}${c.state ? ` · ${c.state}` : ''}`))),
+          assigned && j.status === 'scheduled' ? el('span', { class: 'small ' + (j.crewResponse === 'declined' ? 'bad-text' : 'muted') },
+            j.crewResponse === 'confirmed' ? '✓ confirmed' : j.crewResponse === 'declined' ? `can’t make it: “${j.crewResponseNote}”` : 'not confirmed yet') : null)),
         lastCall ? el('li', {}, el('span', { class: 'fi' }, '📞'), el('span', { class: 'muted' }, `${lastCall.text.replace(/^📞 Call /, 'Last call ')} · ${ago(lastCall.at)}`)) : null,
         el('li', {}, el('span', { class: 'fi' }, '📍'), el('a', { href: 'https://maps.google.com/?q=' + encodeURIComponent(addrOf(j)), target: '_blank', rel: 'noopener' }, addrOf(j))),
         el('li', {}, el('span', { class: 'fi' }, '🗺'), el('select', { class: 'inline-select' + (j.state ? '' : ' warn'), 'aria-label': 'State', onchange: (e) => update({ state: e.target.value }) }, ...stateOptions(j.state, 'No state set'))),
         j.visitAt ? el('li', {}, el('span', { class: 'fi' }, '🤝'), el('span', {}, `Rep visit ${fmtWhen(j.visitAt)}${salesName(j.salesId) ? ' · ' + salesName(j.salesId) : ''}`)) : null,
         el('li', {}, el('span', { class: 'fi' }, '📅'), j.scheduledFor ? el('span', {}, fmtWhen(j.scheduledFor)) : el('span', { class: 'muted' }, 'Crew not scheduled yet')),
-        el('li', {}, el('span', { class: 'fi' }, '👷'), assigned ? el('span', {}, assigned.name,
-          j.status === 'scheduled' ? el('span', { class: j.crewResponse === 'declined' ? 'bad-text' : 'muted' },
-            j.crewResponse === 'confirmed' ? ' · ✓ confirmed' : j.crewResponse === 'declined' ? ` · can’t make it: “${j.crewResponseNote}”` : ' · not confirmed yet') : null)
-          : el('span', { class: 'muted' }, 'No crew yet')),
         j.startedAt ? el('li', {}, el('span', { class: 'fi' }, '⏱'), el('span', {},
           `Started ${new Date(j.startedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
           j.finishedAt ? ` · finished after ${(() => { const m = Math.round((j.finishedAt - j.startedAt) / 60000); return m < 60 ? m + ' min' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm'; })()}` : '')) : null,
         el('li', {}, el('span', { class: 'fi' }, '💲'), j.price != null
           ? el('span', {}, `${money(j.price)} ${['new', 'qualifying'].includes(j.status) ? 'phone estimate' : j.status === 'hot' ? 'agreed price' : 'customer price'}`, j.crewPay != null ? el('span', { class: 'muted' }, ` · ${money(j.price - j.crewPay)} profit`) : null)
           : el('span', { class: 'muted' }, 'No price yet'))),
+      askedFor(),
     );
 
     // What the customer asked for
@@ -565,7 +575,8 @@
       el('p', { class: 'muted small' }, 'Every town has its own permit website and account, so the application is submitted there. The packet has everything it asks for, and the customer sees the status and permit number in the app.'),
     );
 
-    const details = el('section', { class: 'card stack' },
+    // What the customer asked for: shown inside the summary box at the top (owner's request), not as its own card.
+    function askedFor() { return el('div', { class: 'stack asked-for', style: 'gap:8px' },
       el('h3', {}, 'What the customer asked for'),
       el('p', { style: 'white-space:pre-wrap' }, j.description),
       TH.styleOf(j.style) ? el('div', { class: 'style-chosen' }, el('img', { src: TH.styleOf(j.style).img, alt: '' }),
@@ -576,7 +587,7 @@
         el('dt', {}, 'Visit day they asked for'), el('dd', {}, find(TIMEFRAMES, j.timeframe)?.label || '—'),
         el('dt', {}, 'Budget'), el('dd', {}, find(BUDGETS, j.budget)?.label || 'Not sure yet'),
         el('dt', {}, 'Requested'), el('dd', {}, `${new Date(j.created).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })} (${ago(j.created)})`)),
-    );
+    ); }
 
     // Progress: tap a step to change it.
     const FLOW = [['new', 'New'], ['qualifying', 'Estimate'], ['hot', 'Hot'], ['scheduled', 'Booked'], ['in_progress', 'Working'], ['completed', 'Done']];
@@ -948,7 +959,7 @@
       tabsBar.replaceChildren(...TABS.map(([id, icon, label, sub]) => el('button', { type: 'button', role: 'tab', 'data-tab': id, 'aria-selected': String(leadTab === id), 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } },
         el('span', { class: 'tab-ic', 'aria-hidden': 'true' }, icon), el('span', { class: 'tab-txt' }, el('b', {}, label), el('span', {}, sub)))));
       const content = {
-        overview: [dreamFirst ? designCard : null, nextCard, reviewCard, progress, materialsCard, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, dreamFirst ? null : designCard, details, permitCard,
+        overview: [dreamFirst ? designCard : null, nextCard, reviewCard, progress, materialsCard, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, dreamFirst ? null : designCard, permitCard,
           !setupWanted && ['new', 'qualifying', 'hot'].includes(j.status) ? el('button', { type: 'button', class: 'link small', style: 'align-self:flex-start', onclick: focusSetup }, '👷 Assign a contractor & date now (skip the visit)') : null],
         money: [scheduleCard, crewBillsCard, docsCard, moneyCard],
         files: [filesCard],
