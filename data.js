@@ -1,4 +1,22 @@
 'use strict';
+// Auto-update: phones (iPhone Safari especially) can keep an old copy of the page. When the app opens, check the live
+// page's version and reload once if a newer one is out, so everyone always runs the latest app.
+(function () {
+  try {
+    const me = document.currentScript && document.currentScript.src.match(/data\.js\?v=(\d+)/);
+    if (!me || !/^https?:$/.test(location.protocol)) return;
+    const KEY = 'tophat.updatedTo';
+    setTimeout(() => {
+      fetch(location.pathname + '?fresh=' + Date.now(), { cache: 'no-store' }).then((r) => (r.ok ? r.text() : '')).then((html) => {
+        const live = (html.match(/data\.js\?v=(\d+)/) || [])[1];
+        if (!live || live <= me[1]) return;
+        if (sessionStorage.getItem(KEY) === live) return; // tried once already: don't loop
+        sessionStorage.setItem(KEY, live);
+        location.replace(location.pathname + '?u=' + live + location.hash); // a new address, so the phone can't reuse the old copy
+      }).catch(() => {});
+    }, 1500);
+  } catch (e) { /* never block the app */ }
+})();
 /*
  * Data layer for Top Hat Contracting.
  *
