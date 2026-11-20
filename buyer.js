@@ -104,7 +104,7 @@
       ['📷', 'Upload your photo', 'Upload current pictures of the space or structure for your project.', ''],
       ['✨', 'Build my dream', 'Describe your dream. Pick the design, colors, and details.', ''],
       ['📅', 'Schedule', 'Pencil in your project date.', ''],
-      ['👤', 'Create account', 'Stay connected to every step. Sign. Confirm. Complete. Let’s get it done!', ''],
+      ['👤', 'Create account', 'Stay connected to every step. Sign. Confirm. Complete. Let’s get it Done!', ''],
     ];
     // Pick your project: a picture button for each kind of job. Each one starts the request already set to that job.
     // (Only jobs with a real photo from tophatcontracting.com, in img/site. Owner: no buttons without a real picture.)
