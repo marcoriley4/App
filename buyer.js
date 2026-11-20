@@ -396,7 +396,6 @@
         el('h2', { class: 'wiz-part' }, 'Where is the project?'), addr, el('div', { class: 'two zip-state' }, zip, stateSel),
         el('h2', { class: 'wiz-part' }, 'How do we reach you?'), f.name, f.phone, f.email, f.password,
         el('h2', { class: 'wiz-part' }, 'Have you thought about a budget?'),
-        el('p', { class: 'wiz-sub' }, 'It’s OK if you’re not sure.'),
         budgetChips,
       ], { onNext: () => {
         draft.address = addr.value.trim(); draft.zip = zip.value.trim(); draft.state = stateSel.value;
