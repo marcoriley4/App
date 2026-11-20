@@ -184,7 +184,7 @@
     const total = SCREENS.length;
     const at = (name) => SCREENS.indexOf(name) + 1;
     // A rough clock so they know how long is left: about how many seconds each step takes.
-    const STEP_NAMES = { photos: 'Photos', design: 'Design', schedule: 'Schedule' };
+    const STEP_NAMES = { photos: 'Photos', design: 'Design', schedule: me ? 'Schedule' : 'Create account' };
     const STEP_SECS = { trade: 10, design: 75, where: 25, when: 10, budget: 10, contact: 45 };
     const timeLeft = () => { const secs = SCREENS.slice(step - 1).reduce((t, sc) => t + (STEP_SECS[sc] || 20), 0);
       return secs < 50 ? '⏱ Less than a minute left' : `⏱ About ${Math.round(secs / 60) || 1} minute${Math.round(secs / 60) > 1 ? 's' : ''} left`; };
@@ -429,7 +429,7 @@
         } catch (err) { showError(err.message); }
         finally { btn.disabled = false; }
       };
-      view.append(shell('Schedule', null, [
+      view.append(shell(me ? 'Schedule' : 'Create account', null, [
         el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, '1'), 'Meet your project manager'),
         el('p', { class: 'wiz-sub' }, 'Pick a day for your project manager to come out. After the visit, we schedule your contractor.'),
         cal,
