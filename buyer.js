@@ -111,25 +111,16 @@
         'Grab a cold beverage and sit back while Top Hat handles all the things most people don’t want to do.'],
     ];
     // Pick your project: a picture button for each kind of job. Each one starts the request already set to that job.
-    // (Photos from tophatcontracting.com in img/site; drawings in img/styles and img/projects where there's no photo yet.)
+    // (Only jobs with a real photo from tophatcontracting.com, in img/site. Owner: no buttons without a real picture.)
     const PROJECTS = [
       ['Kitchens', 'img/site/kitchen.jpg', 'trade=remodel&room=kitchen'],
       ['Bathrooms', 'img/site/bathroom.jpg', 'trade=remodel&room=bathroom'],
-      ['Living rooms', 'img/styles/living-modern.svg', 'trade=remodel&room=living'],
-      ['Bedrooms', 'img/styles/bedroom-modern.svg', 'trade=remodel&room=bedroom'],
       ['Interior remodeling', 'img/site/basement.jpg', 'trade=remodel&room=none&what=interior'],
-      ['Basements', 'img/styles/basement-family.svg', 'trade=remodel&room=basement'],
       ['Garages', 'img/site/garage.jpg', 'trade=remodel&room=garage'],
       ['Decks', 'img/site/deck.jpg', 'trade=decks'],
       ['Patios', 'img/site/patio.jpg', 'trade=concrete&what=patio'],
       ['Concrete', 'img/site/concrete.jpg', 'trade=concrete'],
       ['Masonry', 'img/site/masonry.jpg', 'trade=masonry'],
-      ['Roofing', 'img/projects/roofing.svg', 'trade=roofing'],
-      ['Siding', 'img/projects/siding.svg', 'trade=siding'],
-      ['Fencing', 'img/projects/fencing.svg', 'trade=fencing'],
-      ['Painting', 'img/projects/painting.svg', 'trade=painting'],
-      ['Flooring', 'img/projects/flooring.svg', 'trade=flooring'],
-      ['Windows & doors', 'img/projects/windows.svg', 'trade=windows'],
     ];
     view.append(el('div', { class: 'stack' },
       el('section', { class: 'hero' },

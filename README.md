@@ -51,7 +51,7 @@ Reps and crews only go out to customers who have already agreed to the price, so
 Today shows each stage: new leads to call, **🔥 hot leads that need a rep visit**, **🤝 rep visits today and tomorrow**, **🤔 customers thinking it over**, and **visits done that need a crew**.
 
 
-**Home page:** the slogan "We bring the right contractor to the right job.", the big start button, and **What are we building?**: picture buttons for Kitchens, Bathrooms, Living rooms, Bedrooms, Interior remodeling, Basements, Garages, Decks, Patios, Concrete, Masonry, Roofing, Siding, Fencing, Painting, Flooring, Windows & doors and Something else. Each one starts the request already set to that job (`#/request?trade=decks`, `?trade=remodel&room=kitchen`). Pictures are drawings in `img/styles/` and `img/projects/`; replace them with real photos using the same file names.
+**Home page:** the slogan "We bring the right contractor to the right job.", the big start button, and **What are we building?**: picture buttons, only for jobs with a real photo from tophatcontracting.com: Kitchens, Bathrooms, Interior remodeling, Garages, Decks, Patios, Concrete, Masonry, plus Something else. Each one starts the request already set to that job (`#/request?trade=decks`, `?trade=remodel&room=kitchen`). Photos are in `img/site/` (from the company website).
 
 **The request (3 steps):** **1 Photos**: add up to 5 photos and the "Describe your project" box (+ measurements). **2 Design**: which room and look, the ✨ design studio (Describe your design, Build my dream, before/after slider) and the budget. **3 Schedule**: pick a day to meet your project manager, the project address, and create the account (name, phone, email, password), then **Send my request**.
 
