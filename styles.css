@@ -653,7 +653,7 @@ button.ghost, .btn.ghost { border-width: 1.5px; }
 .four-steps h2 .hl { background: var(--gold); padding: 0 6px; border-radius: 6px; }
 .four-steps ol { list-style: none; margin: 0; padding: 0; }
 .four-steps li + li { border-top: 1px solid var(--border); }
-.four-steps summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 10px 2px; cursor: pointer; }
+.four-steps summary, .four-steps .step-row { list-style: none; display: flex; align-items: center; gap: 10px; padding: 10px 2px; cursor: pointer; }
 .four-steps summary::-webkit-details-marker { display: none; }
 .four-steps .n { flex: none; width: 30px; height: 30px; border-radius: 99px; background: var(--ink); color: var(--gold); font-weight: 800; display: grid; place-items: center; }
 .four-steps .ic { flex: none; font-size: 1.35rem; }
@@ -993,3 +993,4 @@ label.dream-pick { display: flex; align-items: center; justify-content: center; 
 .insurance-card h3 { margin: 0; }
 .summary .asked-for { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 4px; }
 .summary .asked-for h3 { margin: 0; font-size: 1.05rem; }
+.four-steps .step-row { cursor: default; }

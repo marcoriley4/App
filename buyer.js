@@ -101,10 +101,8 @@
   async function home() {
     // The 4 steps: a short line each, tap one for the full story.
     const STEPS = [
-      ['🎨', 'Design it & agree on a budget price', 'Share photos or describe it. Pick the design, colors and details.',
-        'Upload current pictures of the space or structure for your project.'],
-      ['📐', 'Meet your project manager', 'We measure, finalize the estimate and put you on the calendar.',
-        'Your Top Hat project manager comes out to field-verify measurements, go over the details, finalize the estimate and collect your deposit. Your project goes on the Top Hat calendar and is assigned to a contractor.'],
+      ['📷', 'Upload your photo', 'Upload current pictures of the space or structure for your project.', ''],
+      ['✨', 'Build my dream', 'Describe your dream. Pick the design, colors, and details.', ''],
       ['🏗️', 'Permits, materials & we begin', 'Permits pulled, materials delivered, work starts.',
         'Your contractor applies for the local building permits if required and visits the site. Materials are ordered and delivered, and your project begins.'],
       ['🥤', 'Relax & watch the magic happen', 'Sit back while Top Hat handles the rest.',
@@ -137,15 +135,14 @@
           el('a', { class: 'project-tile other', href: '#/request?trade=remodel&room=none', onclick: () => { draft.step = 1; saveDraft(); } }, el('span', { class: 'ic', 'aria-hidden': 'true' }, '📋'), el('span', {}, 'Something else'))),
       ),
       el('section', { class: 'four-steps' },
-        el('h2', {}, 'It’s simple: ', el('span', { class: 'hl' }, '4 steps'), ' and you’re on your way'),
-        el('ol', {}, ...STEPS.map(([ic, title, short, long], i) => el('li', {},
-          el('details', {},
-            el('summary', {},
-              el('span', { class: 'n' }, String(i + 1)),
-              el('span', { class: 'ic', 'aria-hidden': 'true' }, ic),
-              el('span', { class: 'txt' }, el('b', {}, title), el('span', {}, short)),
-              el('span', { class: 'more', 'aria-hidden': 'true' })),
-            el('p', {}, long))))),
+        el('h2', {}, 'It’s simple: ', el('span', { class: 'hl' }, '4 steps'), ' and you’re done'),
+        el('ol', {}, ...STEPS.map(([ic, title, short, long], i) => { const head = (tag) => el(tag, { class: tag === 'div' ? 'step-row' : '' },
+            el('span', { class: 'n' }, String(i + 1)),
+            el('span', { class: 'ic', 'aria-hidden': 'true' }, ic),
+            el('span', { class: 'txt' }, el('b', {}, title), el('span', {}, short)),
+            long ? el('span', { class: 'more', 'aria-hidden': 'true' }) : null);
+          // A step with more to say opens on tap; a step with just one line is shown as is.
+          return el('li', {}, long ? el('details', {}, head('summary'), el('p', {}, long)) : head('div')); })),
       ),
     ));
   }
@@ -288,7 +285,7 @@
       const studioHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, isRoom ? '2' : '1'), '✨ Build my dream');
       // Budget: on the Design step, under the studio.
       const budgetChips = el('div', { class: 'stage-chips budget-chips', role: 'radiogroup', 'aria-label': 'Budget' });
-      const drawBudget = () => budgetChips.replaceChildren(...BUDGETS.map((bg) => { const on = draft.budgetSet && draft.budget === bg.id;
+      const drawBudget = () => budgetChips.replaceChildren(...BUDGETS.filter((bg) => !bg.old).map((bg) => { const on = draft.budgetSet && draft.budget === bg.id;
         return el('button', { type: 'button', role: 'radio', 'aria-checked': String(on), class: 'chip' + (on ? ' on' : ''),
           onclick: () => { draft.budget = bg.id; draft.budgetSet = true; saveDraft(); drawBudget(); } }, BUDGET_TEXT[bg.id] || bg.label); }));
       drawBudget();
@@ -378,7 +375,7 @@
         // The design studio here is a core screen: never remove it (see CLAUDE.md).
         ...(isRoom ? [lookHead, looks] : []),
         studioHead, designWrap, dreamBox,
-        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, isRoom ? '3' : '2'), 'Have you thought about a budget?'),
+        el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, isRoom ? '3' : '2'), 'Which level of finish closely meets your expectations?'),
         budgetChips,
       ]));
       view.querySelector('.wiz').append(btnWrap);

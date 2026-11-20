@@ -96,12 +96,16 @@
     { id: 'flexible', label: "I'm flexible" },
   ];
 
+  // Level of finish the customer expects (owner's choices). The old price ranges stay so older jobs still read right.
   const BUDGETS = [
     { id: '', label: 'Not sure yet' },
-    { id: 'u1k', label: 'Under $1,000' },
-    { id: '1-5k', label: '$1,000 – $5,000' },
-    { id: '5-15k', label: '$5,000 – $15,000' },
-    { id: '15k+', label: '$15,000+' },
+    { id: 'budget', label: 'Budget' },
+    { id: 'mid', label: 'Mid-grade' },
+    { id: 'premium', label: 'Premium' },
+    { id: 'u1k', label: 'Under $1,000', old: true },
+    { id: '1-5k', label: '$1,000 – $5,000', old: true },
+    { id: '5-15k', label: '$5,000 – $15,000', old: true },
+    { id: '15k+', label: '$15,000+', old: true },
   ];
 
   const FILE_KINDS = [
