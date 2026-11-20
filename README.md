@@ -58,6 +58,9 @@ Today shows each stage: new leads to call, **🔥 hot leads that need a rep visi
 
 **Contractors: insurance, invoices and photos.** The office or the salesperson assigns the contractor on the job (**👷 Contractor & schedule**, or "Assign a contractor & date now"). Before their first bill the contractor uploads **proof of insurance** once (PDF or photo, with the date it runs out; they're asked again when it runs out). **Every bill** on the crew pay schedule (and every extra-work bill) needs **photos of the work** and **their own invoice to Top Hat** (PDF or photo). The office sees each bill's invoice and photos on the job's Payments tab, and each contractor's insurance (with a link, and a warning when it's missing or ran out) on the Contractors page. Live: `contractors.insurance_*` columns, `crew_set_insurance` / `crew_my_insurance`, files under `insurance/<contractor id>/`, and `crew_bill(..., p_invoice)`.
 
+
+**Calendar appointments (Today tab).** Tap any day on the office calendar to make an appointment: pick the customer's job, a time, the contractor, the sales rep (office only; a salesperson books for their own clients) and notes. With a contractor it's saved as the job's work day (green dot; the job becomes Scheduled); with only a rep it's a rep visit (blue dot). Notes are added to the job's office notes with the date.
+
 ## How it works
 
 **Customers** (`index.html`)

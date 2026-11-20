@@ -260,7 +260,7 @@
         const k = `${y}-${pad(m)}-${pad(d)}`; const ev = byDay[k] || [];
         cells.push(el('button', { type: 'button', class: 'tcal-cell' + (k === calDay ? ' on' : '') + (k === todayK ? ' today' : '') + (ev.length ? ' has' : ''),
           'aria-label': `${new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}: ${ev.length ? ev.length + (ev.length === 1 ? ' job' : ' jobs') : 'nothing'}`,
-          'aria-pressed': String(k === calDay), onclick: () => { calDay = k; draw(); } },
+          'aria-pressed': String(k === calDay), onclick: () => { calDay = k; draw(); apptDialog(k); } },
           el('span', { class: 'tcal-num' }, String(d)),
           ev.length ? el('span', { class: 'tcal-dots' }, ...ev.slice(0, 3).map((e) => el('i', { class: e.kind }))) : null,
           ev.length > 3 ? el('span', { class: 'tcal-more' }, `+${ev.length - 3}`) : null));
@@ -289,6 +289,64 @@
     };
     draw();
     return card;
+  }
+
+  // Tap a day on the calendar: make an appointment. Pick the customer's job, a time, the contractor, the sales rep, and notes.
+  // Saved on the job: contractor + work day (green on the calendar), or a rep visit (blue) when only a rep is picked.
+  function apptDialog(day) {
+    const open = jobs.filter((j) => !['lost', 'completed'].includes(j.status))
+      .sort((a, b) => a.buyer.name.localeCompare(b.buyer.name) || a.number - b.number);
+    const dayName = new Date(day + 'T12:00').toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+    const err = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const jobSel = el('select', { 'aria-label': 'Customer' }, el('option', { value: '' }, 'Pick the customer'),
+      ...open.map((j) => el('option', { value: j.id }, `${j.buyer.name} · ${jobNo(j)} · ${tradeOf(j.trade).label}`)));
+    const time = el('input', { type: 'time', value: '09:00', 'aria-label': 'Time' });
+    const crewSel = el('select', { 'aria-label': 'Contractor' }, el('option', { value: '' }, 'No contractor'),
+      ...crew.filter((c) => c.active).sort((a, c) => a.name.localeCompare(c.name)).map((c) => el('option', { value: c.id }, `${c.name}${c.state ? ` · ${c.state}` : ''}`)));
+    const repSel = isStaff ? el('select', { 'aria-label': 'Sales rep' }, el('option', { value: '' }, 'No sales rep'),
+      ...team.filter((x) => x.active !== false).map((x) => el('option', { value: x.id }, x.name))) : null;
+    const notes = el('textarea', { rows: 3, maxlength: '1000', placeholder: 'What’s happening? e.g. measure the deck, bring tile samples', 'aria-label': 'Notes' });
+    // Picking a customer fills in who's already on their job.
+    jobSel.addEventListener('change', () => { const j = open.find((x) => x.id === jobSel.value); if (!j) return;
+      if (j.contractorId) crewSel.value = j.contractorId; if (repSel && j.salesId) repSel.value = j.salesId; });
+    const dlg = el('dialog', { class: 'appt-dialog', 'aria-label': `New appointment on ${dayName}` });
+    const close = () => { dlg.close(); dlg.remove(); };
+    const save = async (e) => {
+      const btn = e.currentTarget; err.hidden = true;
+      const j = open.find((x) => x.id === jobSel.value);
+      if (!j) { err.textContent = 'Pick the customer.'; err.hidden = false; return; }
+      if (!crewSel.value && !(repSel ? repSel.value : j.salesId)) { err.textContent = 'Pick a contractor or a sales rep.'; err.hidden = false; return; }
+      if (!/^\d{2}:\d{2}$/.test(time.value)) { err.textContent = 'Pick a time.'; err.hidden = false; return; }
+      const at = `${day}T${time.value}`;
+      const patch = {};
+      if (repSel && repSel.value !== (j.salesId || '')) patch.salesId = repSel.value || null;
+      if (crewSel.value) {
+        patch.contractorId = crewSel.value; patch.scheduledFor = at;
+        if (['new', 'qualifying', 'hot'].includes(j.status)) patch.status = 'scheduled';
+      } else patch.visitAt = at; // only a rep: a rep visit
+      const txt = notes.value.trim();
+      if (txt) patch.notes = [j.notes || '', `📅 ${new Date(at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}: ${txt}`].filter(Boolean).join('\n\n');
+      btn.disabled = true;
+      try { await api.jobs.update(j.id, patch); close(); await load(); calDay = day; calMonth = day.slice(0, 7); render(); }
+      catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
+    };
+    dlg.append(el('div', { class: 'stack' },
+      el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, `📅 New appointment`), el('button', { type: 'button', class: 'ghost small', 'aria-label': 'Close', onclick: close }, '✕')),
+      el('p', { class: 'muted small', style: 'margin:0' }, dayName),
+      el('label', { class: 'field' }, 'Customer', jobSel,
+        el('button', { type: 'button', class: 'link small', style: 'align-self:flex-start', onclick: () => { close(); newJobForm(); } }, 'New customer? Add their job first')),
+      el('label', { class: 'field' }, 'Time', time),
+      el('label', { class: 'field' }, '👷 Contractor', crewSel),
+      repSel ? el('label', { class: 'field' }, '💼 Sales rep', repSel) : null,
+      el('label', { class: 'field' }, '📝 Notes', notes),
+      el('p', { class: 'muted small', style: 'margin:0' }, 'With a contractor it’s a work day (green). With only a sales rep it’s a rep visit (blue).'),
+      err,
+      el('div', { class: 'row', style: 'gap:8px' },
+        el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: close }, 'Cancel'),
+        el('button', { type: 'button', class: 'gold', style: 'flex:2', onclick: save }, 'Save appointment'))));
+    dlg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+    dlg.addEventListener('change', () => { err.hidden = true; }); dlg.addEventListener('input', () => { err.hidden = true; });
+    document.body.append(dlg); dlg.showModal();
   }
 
   function todayView() {

@@ -995,3 +995,8 @@ label.dream-pick { display: flex; align-items: center; justify-content: center; 
 .summary .asked-for h3 { margin: 0; font-size: 1.05rem; }
 .four-steps .step-row { cursor: default; }
 .step-names span { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.2; }
+/* Calendar: new appointment pop-up */
+.appt-dialog { width: min(480px, calc(100vw - 24px)); max-height: calc(100vh - 32px); overflow: auto; border: 0; border-radius: 18px; padding: 18px; background: var(--surface); color: var(--text); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+.appt-dialog::backdrop { background: rgba(0,0,0,.55); }
+.appt-dialog h3 { margin: 0; }
+.appt-dialog select, .appt-dialog input, .appt-dialog textarea { width: 100%; }
