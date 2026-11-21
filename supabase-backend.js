@@ -283,6 +283,15 @@
         const rows = await fetchAll(() => sb.from('job_events').select('at, text').eq('job_id', id).order('at').order('id'));
         return rows.map((r) => ({ at: ms(r.at), text: r.text }));
       },
+      // Owner/office only: delete a job for good (its rows go with it; its stored files are removed first).
+      async remove(id) {
+        await requireStaff();
+        const files = must(await sb.from('job_files').select('path').eq('job_id', id)) || [];
+        const designs = must(await sb.from('design_versions').select('path').eq('job_id', id)) || [];
+        const paths = [...files, ...designs].map((x) => x.path).filter(Boolean);
+        for (let i = 0; i < paths.length; i += 100) await sb.storage.from(BUCKET).remove(paths.slice(i, i + 100));
+        must(await sb.from('jobs').delete().eq('id', id));
+      },
       async update(id, patch) {
         await requireOffice();
         const jobPatch = {}, privPatch = {};

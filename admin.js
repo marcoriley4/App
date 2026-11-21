@@ -680,7 +680,14 @@
         `Last update: ${progressText(j)} · ${j.progressByCrew ? `${j.progressBy} (crew)` : j.progressBy || 'office'} · ${ago(j.progressAt)}`) : null,
       el('div', { class: 'row' },
         el('p', { class: 'muted small', style: 'flex:1' }, j.status === 'lost' ? 'Closed as “Not a fit”. Tap a step to reopen.' : `The customer sees: “${j.stage ? stageOf(j.stage).buyer : statusOf(j.status).buyer}”`),
-        j.status !== 'lost' ? el('button', { type: 'button', class: 'link small', style: 'color:var(--bad)', onclick: () => { if (confirm('Close this job as “Not a fit”?')) update({ status: 'lost' }); } }, 'Not a fit') : null),
+        j.status !== 'lost' ? el('button', { type: 'button', class: 'link small', style: 'color:var(--bad)', onclick: () => { if (confirm('Close this job as “Not a fit”?')) update({ status: 'lost' }); } }, 'Not a fit') : null,
+        // Owner/office only: delete the job for good (it asks twice).
+        isStaff ? el('button', { type: 'button', class: 'link small', style: 'color:var(--bad)', onclick: async () => {
+          if (!confirm(`Delete ${jobNo(j)} (${b.name}) for good? Its photos, designs, estimates and invoices are deleted too. This can’t be undone.`)) return;
+          if (prompt('Type DELETE to confirm.', '') !== 'DELETE') return;
+          try { await api.jobs.remove(j.id); await load(); closeDrawer(); }
+          catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
+        } }, '🗑 Delete job') : null),
     );
 
     // Crew & schedule

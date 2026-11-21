@@ -963,6 +963,17 @@
         j.log.push({ at: Date.now(), text: `📞 Call (${u.name}): ${outcome}${note ? '. ' + note : ''}` });
         writeDb(d);
       },
+      // Owner/office only: delete a job for good, with its photos, files, designs and paperwork.
+      async remove(id) {
+        await requireStaff();
+        const d = await db();
+        const j = d.jobs.find((x) => x.id === id);
+        if (!j) throw new Error('Job not found.');
+        for (const f of j.files || []) await blobs.del(f.id).catch(() => {});
+        for (const v of j.designs || []) await blobs.del('design:' + v.id).catch(() => {});
+        d.jobs = d.jobs.filter((x) => x.id !== id);
+        writeDb(d);
+      },
       async update(id, patch) {
         const { isStaff } = await officeJob(id);
         const d = await db();
