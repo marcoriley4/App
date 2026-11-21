@@ -540,7 +540,14 @@
     return el('div', { class: 'job-meter', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pct), 'aria-label': 'Job completion' },
       el('div', { class: 'row' }, el('b', {}, 'Job completion'), el('span', { class: 'spacer' }), el('b', { class: 'pct' }, `${pct}%`)),
       el('div', { class: 'bar' }, el('span', { style: `width:${pct}%` })),
-      el('span', { class: 'muted small' }, `Now: ${NOW_TEXT[j.status] || ''}`)); };
+      el('span', { class: 'muted small' }, `Now: ${NOW_TEXT[j.status] || ''}`),
+      // Agreed start date (the booked work day) and the expected finish the office set.
+      el('div', { class: 'meter-dates' },
+        el('div', {}, el('span', { class: 'muted small' }, 'Start date'),
+          el('b', {}, j.scheduledFor ? fmtDay(j.scheduledFor) : 'To be agreed')),
+        el('div', {}, el('span', { class: 'muted small' }, 'End date'),
+          el('b', {}, j.endDate ? fmtDay(j.endDate) : 'To be set')))); };
+  const fmtDay = (v) => new Date(v.length === 10 ? v + 'T12:00' : v).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   async function myJobs() {
     const me = await api.auth.me();
     if (!me) return go('login?next=jobs');

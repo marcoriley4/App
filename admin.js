@@ -681,6 +681,7 @@
       el('option', { value: '' }, '— Not assigned —'),
       ...sortedCrew.map((c) => el('option', { value: c.id, selected: c.id === j.contractorId }, `${TH.doesTrade(c, j.trade) ? '★ ' : ''}${c.name}${c.state ? ` · ${c.state}` : ''}${j.state && c.state && c.state !== j.state ? ' (other state)' : ''}`)));
     const whenInput = el('input', { type: 'datetime-local', name: 'scheduledFor', value: j.scheduledFor || '' });
+    const endInput = el('input', { type: 'date', name: 'endDate', value: j.endDate || '' }); // expected finish: the customer sees it
     const crewLink = j.crewToken ? new URL(`crew.html?t=${j.crewToken}`, location.href).href : null;
     // Sent to the crew lead. Never include prices, budget or notes here.
     const dispatchText = assigned && [
@@ -693,13 +694,15 @@
     ].filter(Boolean).join('\n');
     const setup = el('form', { class: 'card stack', onsubmit: (e) => {
       e.preventDefault();
-      const patch = { contractorId: crewSel.value || null, scheduledFor: whenInput.value || null };
+      if (endInput.value && whenInput.value && endInput.value < whenInput.value.slice(0, 10)) { errorBox.textContent = 'The expected finish can’t be before the start date.'; errorBox.hidden = false; return; }
+      const patch = { contractorId: crewSel.value || null, scheduledFor: whenInput.value || null, endDate: endInput.value || null };
       if (patch.contractorId && patch.scheduledFor && ['new', 'qualifying', 'hot'].includes(j.status)) patch.status = 'scheduled';
       update(patch);
     } },
       el('h3', {}, '👷 Contractor & schedule'),
       el('label', { class: 'field' }, 'Contractor', el('span', { class: 'hint' }, `★ = does this kind of work${j.state ? ` · contractors in ${TH.stateName(j.state)} first` : ''}`), crewSel),
-      el('label', { class: 'field' }, 'Date & time', whenInput),
+      el('label', { class: 'field' }, 'Start date & time', whenInput),
+      el('label', { class: 'field' }, 'Expected finish', el('span', { class: 'hint' }, 'The customer sees the start and finish dates'), endInput),
       el('button', { type: 'submit' }, 'Save contractor & date'),
       ['scheduled', 'in_progress'].includes(j.status) ? null : el('p', { class: 'muted small' }, 'Picking a crew and a date moves the job to “Scheduled”.'),
       assigned?.phone ? el('a', { class: 'btn ghost', href: smsHref(assigned.phone, dispatchText) }, `💬 Text job details to ${assigned.name.split(' ')[0]}`) : null,

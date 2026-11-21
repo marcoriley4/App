@@ -168,7 +168,7 @@
         return list.map((j) => ({
           id: j.id, number: j.number, trade: j.trade, status: j.status, created: ms(j.created_at),
           description: j.description, address: j.address, zip: j.zip || '', state: j.state || '', timeframe: j.timeframe, budget: j.budget, photos: [],
-          scheduledFor: local16(j.scheduled_for), contractorName: j.contractor_name || null, stage: j.stage || null,
+          scheduledFor: local16(j.scheduled_for), endDate: j.end_date || null, contractorName: j.contractor_name || null, stage: j.stage || null,
           visitAt: local16(j.visit_at), repName: j.rep_name || null,
           pm: j.pm_name ? { name: j.pm_name, phone: j.pm_phone || '' } : null,
           permit: { status: j.permit_status || 'none', number: j.permit_number || '', authorizedBy: j.permit_authorized_by || '', authorizedAt: ms(j.permit_authorized_at) || null },
@@ -212,7 +212,7 @@
           return {
             id: j.id, number: j.number, buyerId: j.buyer_id, trade: j.trade, status: j.status, created: ms(j.created_at),
             description: j.description, address: j.address, zip: j.zip, state: j.state || '', timeframe: j.timeframe, budget: j.budget, photos: [],
-            contractorId: j.contractor_id, scheduledFor: local16(j.scheduled_for), visitAt: local16(j.visit_at),
+            contractorId: j.contractor_id, scheduledFor: local16(j.scheduled_for), endDate: j.end_date || null, visitAt: local16(j.visit_at),
             permit: { status: j.permit_status || 'none', number: j.permit_number || '', authorizedBy: j.permit_authorized_by || '', authorizedAt: ms(j.permit_authorized_at) || null,
               portalUrl: p.permit_portal || '', fee: p.permit_fee == null ? null : Number(p.permit_fee) },
             designs: designsBy[j.id] || [], crewBills: billsBy[j.id] || [], materials: matsBy[j.id] || [], style: j.style || '',
@@ -295,6 +295,7 @@
         }
         if ('contractorId' in patch) jobPatch.contractor_id = patch.contractorId;
         if ('scheduledFor' in patch) jobPatch.scheduled_for = patch.scheduledFor;
+        if ('endDate' in patch) jobPatch.end_date = patch.endDate || null;
         if ('visitAt' in patch) jobPatch.visit_at = patch.visitAt || null;
         if (patch.permit) {
           const pm = patch.permit;

@@ -156,6 +156,7 @@ create table public.jobs (
   contractor_id uuid references public.contractors(id) on delete set null,
   sales_id uuid references public.salespeople(id) on delete set null,   -- the salesperson who owns this client
   scheduled_for timestamp,
+  end_date date,        -- expected finish (set by the office/sales; the customer sees it with the start date)
   visit_at timestamp,   -- the sales rep's walkthrough with a hot lead
   -- Building permit: the customer's OK (typed-name signature) and the status/number they can see.
   permit_status text not null default 'none' check (permit_status in ('none', 'authorized', 'preparing', 'applied', 'approved', 'inspections', 'closed', 'not_needed')),
@@ -550,7 +551,7 @@ language sql stable security definer set search_path = '' as $$
   select coalesce(jsonb_agg(jsonb_build_object(
     'id', j.id, 'number', j.number, 'trade', j.trade, 'status', j.status, 'created_at', j.created_at,
     'description', j.description, 'address', j.address, 'zip', j.zip, 'state', j.state, 'timeframe', j.timeframe, 'budget', j.budget,
-    'scheduled_for', j.scheduled_for, 'stage', j.stage,
+    'scheduled_for', j.scheduled_for, 'end_date', j.end_date, 'stage', j.stage,
     'visit_at', case when j.status = 'hot' then j.visit_at end,
     'permit_status', j.permit_status, 'permit_number', j.permit_number,
     'permit_authorized_by', j.permit_authorized_by, 'permit_authorized_at', j.permit_authorized_at,

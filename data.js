@@ -918,7 +918,7 @@
           const c = d.contractors.find((x) => x.id === j.contractorId);
           return {
             id: j.id, number: j.number, trade: j.trade, status: j.status, created: j.created, description: j.description, address: j.address, zip: j.zip, state: j.state || '',
-            timeframe: j.timeframe, budget: j.budget, photos: j.photos, scheduledFor: j.scheduledFor,
+            timeframe: j.timeframe, budget: j.budget, photos: j.photos, scheduledFor: j.scheduledFor, endDate: j.endDate || null,
             visitAt: j.status === 'hot' ? j.visitAt || null : null,
             permit: j.permit ? { status: j.permit.status, number: j.permit.number || '', authorizedBy: j.permit.authorizedBy || '', authorizedAt: j.permit.authorizedAt || null } : { status: 'none' },
             designCount: (j.designs || []).length, style: j.style || '',
@@ -1007,7 +1007,8 @@
           if ((next.number || '') !== (was.number || '') && next.number) j.log.push({ at: Date.now(), text: `📋 Permit # ${next.number}` });
           j.permit = next;
         }
-        for (const k of ['contractorId', 'scheduledFor', 'visitAt', 'price', 'crewPay', 'notes']) if (k in patch) j[k] = patch[k] || (k === 'notes' ? '' : patch[k] === 0 ? 0 : null);
+        if ('endDate' in patch && (patch.endDate || null) !== (j.endDate || null)) j.log.push({ at: Date.now(), text: patch.endDate ? `Expected finish → ${patch.endDate}` : 'Expected finish cleared' });
+        for (const k of ['contractorId', 'scheduledFor', 'endDate', 'visitAt', 'price', 'crewPay', 'notes']) if (k in patch) j[k] = patch[k] || (k === 'notes' ? '' : patch[k] === 0 ? 0 : null);
         writeDb(d);
         return j;
       },
