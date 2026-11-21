@@ -318,7 +318,7 @@
       ...open.map((j) => el('option', { value: j.id }, `${j.buyer.name} · ${jobNo(j)} · ${tradeOf(j.trade).label}`)));
     const time = el('input', { type: 'time', value: '09:00', 'aria-label': 'Time' });
     const crewSel = el('select', { 'aria-label': 'Contractor' }, el('option', { value: '' }, 'No contractor'),
-      ...crew.filter((c) => c.active).sort((a, c) => a.name.localeCompare(c.name)).map((c) => el('option', { value: c.id, disabled: insuranceExpired(c.id) }, `${c.name}${c.state ? ` · ${c.state}` : ''}${insuranceExpired(c.id) ? ' (insurance ran out)' : ''}`)));
+      ...crew.filter((c) => c.active).sort((a, c) => a.name.localeCompare(c.name)).map((c) => el('option', { value: c.id, disabled: insuranceExpired(c.id) }, `${c.name}${c.state ? ` · ${c.state}` : ''}${insuranceExpired(c.id) ? ' (insurance ran out)' : ''}${offTag(c.id, day)}`)));
     const repSel = isStaff ? el('select', { 'aria-label': 'Sales rep' }, el('option', { value: '' }, 'No sales rep'),
       ...team.filter((x) => x.active !== false).map((x) => el('option', { value: x.id }, x.name))) : null;
     const notes = el('textarea', { rows: 3, maxlength: '1000', placeholder: 'What’s happening? e.g. measure the deck, bring tile samples', 'aria-label': 'Notes' });
@@ -372,12 +372,22 @@
   const isKitchen = (j) => String(j.style || '').startsWith('kitchen/') || /kitchen/i.test(j.description || '');
   const soldAt = (j) => j.scheduledFor ? Date.parse(j.scheduledFor) : j.created; // when it became a sale (best guess)
   // Insurance problems: ran out, runs out within 30 days, or none on file (only the office sees insurance).
-  const insuranceIssues = () => crew.filter((c) => c.active && 'insurance' in c).map((c) => {
+  const insuranceIssues = () => [...crew.filter((c) => c.active && 'insurance' in c).flatMap((c) => {
+    const pf = c.profile || {}; const t = dayKey(Date.now()); const soon = dayKey(Date.now() + 30 * 864e5); const out = [];
+    if (pf.license_expires && pf.license_expires <= soon) out.push({ c, kind: pf.license_expires < t ? 'out' : 'soon', text: `contractor license ${pf.license_expires < t ? 'ran out' : 'runs out'} ${docs.fmtDate(pf.license_expires)}` });
+    if (!c.w9 && jobs.some((j) => j.contractorId === c.id && (j.crewBills || []).some((b) => b.status === 'paid'))) out.push({ c, kind: 'w9', text: 'no W-9 yet (needed for their 1099)' });
+    return out; }), ...crew.filter((c) => c.active && 'insurance' in c).map((c) => {
     const ins = c.insurance; const t = dayKey(Date.now()); const soon = dayKey(Date.now() + 30 * 864e5);
     if (!ins) return { c, kind: 'none', text: 'no proof of insurance' };
     if (ins.expires && ins.expires < t) return { c, kind: 'out', text: `insurance ran out ${docs.fmtDate(ins.expires)}` };
     if (ins.expires && ins.expires <= soon) return { c, kind: 'soon', text: `insurance runs out ${docs.fmtDate(ins.expires)}` };
-    return null; }).filter(Boolean);
+    return null; }).filter(Boolean)];
+  // Contractor's own availability: weekdays off and dates they're booked (they set these in their login).
+  const crewOff = (cid, when) => { const c = crew.find((x) => x.id === cid); const pf = c && c.profile; if (!pf || !when) return false;
+    const day = String(when).slice(0, 10); return (pf.blocked || []).includes(day) || (pf.days_off || []).includes(new Date(day + 'T12:00').getDay()); };
+  const offTag = (cid, when) => (crewOff(cid, when) ? ' (off that day)' : '');
+  const crewRating = (cid) => { const r = recs('crew_review').filter((x) => x.contractorId === cid); return r.length ? { avg: r.reduce((t, x) => t + (Number(x.stars) || 0), 0) / r.length, n: r.length } : null; };
+  const lienOf = (b) => (b.lien && typeof b.lien === 'object' ? b.lien : b.lienSig || null);
   const insuranceExpired = (cid) => { const c = crew.find((x) => x.id === cid); return !!(c && c.insurance && c.insurance.expires && c.insurance.expires < dayKey(Date.now())); };
   // No update in 7 days on a job that should be moving.
   const stalledJobs = () => jobs.filter((j) => ['scheduled', 'in_progress', 'hot', 'qualifying'].includes(j.status)
@@ -1118,7 +1128,7 @@
             el('option', { value: '' }, 'Assign a contractor'),
             ...crew.filter((c) => c.active || c.id === j.contractorId)
               .sort((a, c) => ((!!j.state && c.state === j.state) - (!!j.state && a.state === j.state)) || (TH.doesTrade(c, j.trade) - TH.doesTrade(a, j.trade)) || a.name.localeCompare(c.name))
-              .map((c) => el('option', { value: c.id, selected: c.id === j.contractorId, disabled: insuranceExpired(c.id) && c.id !== j.contractorId }, `${TH.doesTrade(c, j.trade) ? '★ ' : ''}${c.name}${c.state ? ` · ${c.state}` : ''}${insuranceExpired(c.id) ? ' (insurance ran out)' : ''}`))),
+              .map((c) => el('option', { value: c.id, selected: c.id === j.contractorId, disabled: insuranceExpired(c.id) && c.id !== j.contractorId }, `${TH.doesTrade(c, j.trade) ? '★ ' : ''}${c.name}${c.state ? ` · ${c.state}` : ''}${insuranceExpired(c.id) ? ' (insurance ran out)' : ''}${offTag(c.id, j.scheduledFor)}`))),
           assigned && j.status === 'scheduled' ? el('span', { class: 'small ' + (j.crewResponse === 'declined' ? 'bad-text' : 'muted') },
             j.crewResponse === 'confirmed' ? '✓ confirmed' : j.crewResponse === 'declined' ? `can’t make it: “${j.crewResponseNote}”` : 'not confirmed yet') : null)),
         lastCall ? el('li', {}, el('span', { class: 'fi' }, '📞'), el('span', { class: 'muted' }, `${lastCall.text.replace(/^📞 Call /, 'Last call ')} · ${ago(lastCall.at)}`)) : null,
@@ -1244,7 +1254,7 @@
       .sort((a, c) => (sameSt(c) - sameSt(a)) || (TH.doesTrade(c, j.trade) - TH.doesTrade(a, j.trade)) || a.name.localeCompare(c.name));
     const crewSel = el('select', { name: 'contractorId' },
       el('option', { value: '' }, '— Not assigned —'),
-      ...sortedCrew.map((c) => el('option', { value: c.id, selected: c.id === j.contractorId, disabled: insuranceExpired(c.id) && c.id !== j.contractorId }, `${insuranceExpired(c.id) ? '⛔ ' : ''}${TH.doesTrade(c, j.trade) ? '★ ' : ''}${c.name}${c.state ? ` · ${c.state}` : ''}${j.state && c.state && c.state !== j.state ? ' (other state)' : ''}`)));
+      ...sortedCrew.map((c) => el('option', { value: c.id, selected: c.id === j.contractorId, disabled: insuranceExpired(c.id) && c.id !== j.contractorId }, `${insuranceExpired(c.id) ? '⛔ ' : ''}${TH.doesTrade(c, j.trade) ? '★ ' : ''}${c.name}${c.state ? ` · ${c.state}` : ''}${j.state && c.state && c.state !== j.state ? ' (other state)' : ''}${offTag(c.id, j.scheduledFor)}`)));
     const whenInput = el('input', { type: 'datetime-local', name: 'scheduledFor', value: j.scheduledFor || '' });
     const endInput = el('input', { type: 'date', name: 'endDate', value: j.endDate || '' }); // expected finish: the customer sees it
     const crewLink = j.crewToken ? new URL(`crew.html?t=${j.crewToken}`, location.href).href : null;
@@ -1421,6 +1431,7 @@
           return el('div', { class: 'crew-bill' + (b.status === 'submitted' ? ' new' : '') },
             el('div', { class: 'row' }, el('b', { style: 'flex:1' }, `${b.label} · ${docs.usd(b.amount)}`), el('span', { class: `pill ${PILL[b.status][1]}` }, PILL[b.status][0])),
             el('div', { class: 'muted small' }, `Billed by ${b.by} · ${ago(b.at)}${b.paidDate ? ` · paid ${docs.fmtDate(b.paidDate)} (${b.paidMethod})` : ''}`),
+            b.status === 'paid' ? el('div', { class: 'small ' + (lienOf(b) ? 'good-text' : 'muted') }, lienOf(b) ? `📝 Lien waiver signed${lienOf(b).name ? ' by ' + lienOf(b).name : ''}${lienOf(b).at ? ' · ' + docs.fmtDate(dayKey(lienOf(b).at)) : ''}` : '📝 Lien waiver not signed yet (they sign it in their login)') : null,
             b.note ? el('div', { class: 'small' }, `“${b.note}”`) : null,
             (() => { const inv = files.find((f) => f.billId === b.id && f.kind === 'invoice');
               return inv ? el('div', { class: 'small' }, '📄 Their invoice: ', inv.url ? el('a', { href: inv.url, target: '_blank', rel: 'noopener' }, inv.name) : inv.name) : null; })(),
@@ -1601,6 +1612,15 @@
       el('h3', {}, '📋 Tasks & punch list'),
       el('p', { class: 'muted small', style: 'margin:0' }, 'Office only. Tasks are the steps to get the job done; the punch list is the small fixes before the final walkthrough.'),
       taskList(false), taskList(true)) : null;
+    // Rate the contractor's work once the job is done (office only; averaged on the Team tab).
+    const myReview = assigned ? recs('crew_review', j.id).find((x) => x.contractorId === assigned.id) : null;
+    const rateCard = isStaff && assigned && j.status === 'completed' ? el('section', { class: 'card stack' },
+      el('h3', {}, `⭐ Rate ${assigned.name}’s work`),
+      el('div', { class: 'stage-chips' }, ...[1, 2, 3, 4, 5].map((n) => el('button', { type: 'button', class: 'chip', 'aria-pressed': String(myReview?.stars === n), 'aria-label': `${n} star${n === 1 ? '' : 's'}`,
+        onclick: () => recSave('crew_review', { ...(myReview || {}), contractorId: assigned.id, stars: n, note: myReview?.note || '' }) }, '★'.repeat(n)))),
+      el('input', { placeholder: 'Note (optional): on time, clean, quality…', maxlength: '200', value: myReview?.note || '', 'aria-label': 'Rating note',
+        onchange: (e) => myReview && recSave('crew_review', { ...myReview, note: e.target.value }) }),
+      el('p', { class: 'muted small', style: 'margin:0' }, 'Only the office sees ratings. The average shows on the contractor in Team → Contractors.')) : null;
     const walk = recs('walkthrough', j.id).at(-1);
     const walkArea = el('div', { class: 'stack' });
     const walkBtn = el('button', { type: 'button', class: 'gold', onclick: () => {
@@ -1659,7 +1679,7 @@
       tabsBar.replaceChildren(...TABS.map(([id, icon, label, sub]) => el('button', { type: 'button', role: 'tab', 'data-tab': id, 'aria-selected': String(leadTab === id), 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } },
         el('span', { class: 'tab-ic', 'aria-hidden': 'true' }, icon), el('span', { class: 'tab-txt' }, el('b', {}, label), el('span', {}, sub)))));
       const content = {
-        overview: [dreamFirst ? designCard : null, nextCard, walk || !['in_progress', 'completed'].includes(j.status) ? null : walkCard, isStaff && (LEAD_OPEN.includes(j.status) || needsReply(j)) ? convo : null, reviewCard, progress, isStaff && (LEAD_OPEN.includes(j.status) || needsReply(j)) ? null : convo, materialsCard, tasksCard, walk ? walkCard : null, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, dreamFirst ? null : designCard, permitCard,
+        overview: [dreamFirst ? designCard : null, nextCard, walk || !['in_progress', 'completed'].includes(j.status) ? null : walkCard, isStaff && (LEAD_OPEN.includes(j.status) || needsReply(j)) ? convo : null, reviewCard, progress, isStaff && (LEAD_OPEN.includes(j.status) || needsReply(j)) ? null : convo, materialsCard, tasksCard, walk ? walkCard : null, rateCard, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, dreamFirst ? null : designCard, permitCard,
           !setupWanted && ['new', 'qualifying', 'hot'].includes(j.status) ? el('button', { type: 'button', class: 'link small', style: 'align-self:flex-start', onclick: focusSetup }, '👷 Assign a contractor & date now (skip the visit)') : null],
         money: [scheduleCard, crewBillsCard, docsCard, moneyCard, expensesCard],
         files: [filesCard],
@@ -2489,6 +2509,19 @@
       return el('p', { class: 'small' + (out ? ' bad-text' : '') }, `🛡 Insurance ${out ? 'ran out' : 'on file, runs out'} ${docs.fmtDate(ins.expires)}${soon ? ' (soon)' : ''} · `,
         ins.url ? el('a', { href: ins.url, target: '_blank', rel: 'noopener' }, 'View') : el('span', { class: 'muted' }, ins.name));
     };
+    // What the contractor keeps up to date in their login: W-9, license, availability, and the office's ratings.
+    const paperLine = (c) => {
+      if (!('insurance' in c)) return null;
+      const pf = c.profile || {}; const today = docs.todayKey(); const rt = crewRating(c.id);
+      const upcoming = (pf.blocked || []).filter((d) => d >= today).slice(0, 3);
+      return el('div', { class: 'small stack', style: 'gap:2px' },
+        el('span', { class: c.w9 ? '' : 'bad-text' }, c.w9 ? '📄 W-9 on file · ' : '📄 No W-9 yet', c.w9 && c.w9.url ? el('a', { href: c.w9.url, target: '_blank', rel: 'noopener' }, 'View') : null),
+        pf.license_number ? el('span', { class: pf.license_expires && pf.license_expires < today ? 'bad-text' : '' }, `🪪 License ${pf.license_number}${pf.license_state ? ' (' + pf.license_state + ')' : ''}${pf.license_expires ? `, ${pf.license_expires < today ? 'ran out' : 'runs out'} ${docs.fmtDate(pf.license_expires)}` : ''}`) : null,
+        pf.business ? el('span', {}, `🏢 ${pf.business}${pf.email ? ' · ' + pf.email : ''}`) : null,
+        (pf.days_off || []).length || upcoming.length ? el('span', {}, `📅 ${(pf.days_off || []).length ? 'Off ' + pf.days_off.map((d) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d]).join(', ') : ''}${upcoming.length ? `${(pf.days_off || []).length ? ' · ' : ''}booked ${upcoming.map((d) => docs.fmtDate(d)).join(', ')}` : ''}`) : null,
+        pf.service_area ? el('span', {}, `📍 ${pf.service_area}`) : null,
+        rt ? el('span', {}, `⭐ ${rt.avg.toFixed(1)} from ${rt.n} job${rt.n === 1 ? '' : 's'}`) : null);
+    };
     const crewItem = (c) =>
         el('div', { class: 'crew-item' + (c.active ? '' : ' inactive') },
           el('span', { class: 'avatar' }, initials(c.name)),
@@ -2497,7 +2530,7 @@
             el('p', { class: 'skill-line' + ((c.trades || []).includes('allround') ? ' all' : '') }, skillLine(c)),
             el('p', { class: 'small' }, c.state ? `${c.state} · ` : '', c.phone ? el('a', { href: telHref(c.phone) }, c.phone) : null, ` · ${activeJobs(c.id)} open job${activeJobs(c.id) === 1 ? '' : 's'}`,
               c.login === 'active' ? el('span', { class: 'pill s-completed', style: 'margin-left:6px' }, '🔑 Login') : c.login === 'invited' ? el('span', { class: 'pill s-qualifying', style: 'margin-left:6px' }, 'Invited') : null),
-            insuranceLine(c)),
+            insuranceLine(c), paperLine(c)),
           el('button', { class: 'ghost small', onclick: () => crewForm(c) }, 'Edit'));
     const sortC = (l) => l.slice().sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name));
     const section = (title, list, sub) => list.length ? el('section', { class: 'stack', style: 'gap:6px' },

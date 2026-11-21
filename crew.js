@@ -266,8 +266,10 @@
         notDone.length ? el('span', { class: 'count' }, String(notDone.length)) : null),
       el('button', { role: 'tab', 'aria-current': String(which === 'done'), onclick: () => { location.hash = '#/done'; } }, 'Completed',
         finished.length ? el('span', { class: 'count' }, String(finished.length)) : null),
-      el('button', { role: 'tab', 'aria-current': String(which === 'records'), onclick: () => { location.hash = '#/records'; } }, '📒 Records'));
+      el('button', { role: 'tab', 'aria-current': String(which === 'records'), onclick: () => { location.hash = '#/records'; } }, '📒 Records'),
+      el('button', { role: 'tab', 'aria-current': String(which === 'info'), onclick: () => { location.hash = '#/info'; } }, '🪪 My info'));
     const head = el('div', {}, el('h1', {}, `Hi ${me.name.split(' ')[0]}`), el('p', { class: 'muted' }, 'Your Top Hat jobs'));
+    if (which === 'info') return renderInfo(message, tabs, head);
 
     if (which === 'records') {
       // Records for taxes and books: pick a year, see the totals, take it all with you.
@@ -394,6 +396,7 @@
       message ? el('div', { class: 'callout' }, message) : null,
       toConfirm ? el('div', { class: 'callout stage' }, `👋 ${toConfirm} new job${toConfirm === 1 ? '' : 's'} to confirm. Tap to open.`) : null,
       insuranceCard(),
+      paperworkNotice(),
       ...section('Today', today, 'Nothing scheduled for today.'),
       ...section('Upcoming', upcoming, 'No upcoming jobs. The office will text you when you’re assigned one.'),
       finished.length ? el('a', { class: 'btn ghost block', href: '#/done' }, `✓ See all ${finished.length} completed job${finished.length === 1 ? '' : 's'} →`) : null,
@@ -418,6 +421,90 @@
   }
 
   // One job, everything the contractor needs from start to finish.
+  /* ---------- My info: business, license, W-9, insurance and when they can work ---------- */
+  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const fmtDay = (d) => (d ? new Date(d + 'T12:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '');
+  const daysUntil = (d) => Math.round((Date.parse(d + 'T12:00') - Date.parse(todayKey() + 'T12:00')) / 864e5);
+  // What's missing or running out, in plain words (shown on My jobs and My info).
+  async function paperworkIssues() {
+    const out = [];
+    let pr = null, ins = null;
+    try { pr = await api.crewPortal.profile(); } catch (e) { return out; }
+    try { ins = await api.crewPortal.insurance(); } catch (e) { /* none */ }
+    if (!ins) out.push('Upload your proof of insurance.');
+    else if (ins.expires && daysUntil(ins.expires) <= 30 && daysUntil(ins.expires) >= 0) out.push(`Your insurance runs out ${fmtDay(ins.expires)}. Upload the new one before then.`);
+    if (!pr.w9) out.push('Upload your W-9 so Top Hat can send your 1099.');
+    const lx = pr.profile.license_expires;
+    if (lx && daysUntil(lx) < 0) out.push(`Your contractor license ran out ${fmtDay(lx)}. Add your renewed license.`);
+    else if (lx && daysUntil(lx) <= 30) out.push(`Your contractor license runs out ${fmtDay(lx)}.`);
+    return out;
+  }
+  function paperworkNotice() {
+    const box = el('div');
+    paperworkIssues().then((list) => { if (list.length) box.replaceChildren(el('a', { class: 'callout stage paperwork-note', href: '#/info' }, el('b', {}, '🪪 Your paperwork'), ...list.map((x) => el('span', { class: 'small', style: 'display:block' }, '• ' + x)), el('span', { class: 'small', style: 'display:block;text-decoration:underline' }, 'Open My info →'))); });
+    return box;
+  }
+  async function renderInfo(message, tabs, head) {
+    let pr;
+    try { pr = await api.crewPortal.profile(); } catch (e) { return renderLogin(e.message); }
+    const p = { ...pr.profile, days_off: [...(pr.profile.days_off || [])], blocked: [...(pr.profile.blocked || [])] };
+    const err = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const saved = el('span', { class: 'saved-note', hidden: true }, 'Saved ✓');
+    const save = async (btn) => { btn.disabled = true; err.hidden = true;
+      try { await api.crewPortal.setProfile(p); saved.hidden = false; setTimeout(() => { saved.hidden = true; }, 1600); } catch (e) { err.textContent = e.message; err.hidden = false; }
+      btn.disabled = false; };
+    const field = (k, label, attrs = {}) => el('label', { class: 'field' }, label, el('input', { value: p[k] || '', oninput: (e) => { p[k] = e.target.value; }, ...attrs }));
+    // W-9
+    const w9Box = el('section', { class: 'card stack' + (pr.w9 ? '' : ' needs') });
+    const drawW9 = (w9) => {
+      const file = el('input', { type: 'file', accept: 'application/pdf,image/*', 'aria-label': 'W-9 file' });
+      const e2 = el('div', { class: 'error', hidden: true, role: 'alert' });
+      const form = el('div', { class: 'stack', style: 'gap:8px' }, el('label', { class: 'field' }, 'Your signed W-9 (PDF or photo)', file), e2,
+        el('button', { type: 'button', class: 'gold block', onclick: async (ev) => { const b = ev.currentTarget; b.disabled = true;
+          try { await api.crewPortal.setW9(file.files[0]); const n = await api.crewPortal.profile(); drawW9(n.w9); } catch (x) { e2.textContent = x.message; e2.hidden = false; b.disabled = false; } } }, '📄 Save W-9'));
+      w9Box.classList.toggle('needs', !w9);
+      w9Box.replaceChildren(el('div', { class: 'row' }, el('h3', {}, '📄 W-9 (for your 1099)'), el('span', { class: 'spacer' }), w9 ? el('span', { class: 'pill s-completed' }, '✓ On file') : null),
+        w9 ? el('p', { class: 'muted small' }, `${w9.name}${w9.at ? ' · sent ' + new Date(w9.at).toLocaleDateString() : ''}`) : el('p', { class: 'small' }, 'Top Hat needs your W-9 to send you a 1099 at tax time. Get the form at irs.gov/w9, fill it in and sign it, then upload a PDF or a clear photo.'),
+        w9 ? el('div', { class: 'row', style: 'gap:12px' }, w9.url ? el('a', { href: w9.url, target: '_blank', rel: 'noopener' }, 'View') : null, el('button', { type: 'button', class: 'link', onclick: () => w9Box.replaceChildren(el('h3', {}, '📄 New W-9'), form) }, 'Replace')) : form);
+    };
+    drawW9(pr.w9);
+    // Days off and booked dates
+    const dayChips = el('div', { class: 'stage-chips' });
+    const drawDays = () => dayChips.replaceChildren(...DOW.map((d, i) => el('button', { type: 'button', class: 'chip', 'aria-pressed': String(p.days_off.includes(i)),
+      onclick: () => { p.days_off = p.days_off.includes(i) ? p.days_off.filter((x) => x !== i) : [...p.days_off, i].sort(); drawDays(); } }, d)));
+    drawDays();
+    const blockedList = el('div', { class: 'stack', style: 'gap:6px' });
+    const drawBlocked = () => blockedList.replaceChildren(...(p.blocked.length ? p.blocked.map((d) => el('div', { class: 'task-row' }, el('span', { style: 'flex:1' }, fmtDay(d)),
+      el('button', { type: 'button', class: 'link small', 'aria-label': `Remove ${d}`, onclick: () => { p.blocked = p.blocked.filter((x) => x !== d); drawBlocked(); } }, '✕'))) : [el('p', { class: 'muted small', style: 'margin:0' }, 'No dates blocked.')]));
+    drawBlocked();
+    const addDate = el('input', { type: 'date', min: todayKey(), 'aria-label': 'Date you can’t work' });
+    const ready = [['🛡 Insurance', !!(await api.crewPortal.insurance().catch(() => null))], ['📄 W-9', !!pr.w9], ['🪪 License', !!p.license_number], ['📅 Availability', p.days_off.length > 0 || p.blocked.length > 0 || !!p.service_area]];
+    view.replaceChildren(el('div', { class: 'stack', style: 'margin:20px 0' }, head, tabs,
+      message ? el('div', { class: 'callout' }, message) : null,
+      el('section', { class: 'card stack' }, el('h3', {}, 'Your paperwork for Top Hat'),
+        el('div', { class: 'ready-list' }, ...ready.map(([label, ok]) => el('span', { class: 'flag' + (ok ? ' paid' : ' hot') }, `${ok ? '✓' : '•'} ${label}`))),
+        el('p', { class: 'muted small', style: 'margin:0' }, 'Keep these up to date. Top Hat can’t pay a bill without current insurance, and needs your W-9 for your 1099.')),
+      paperworkNotice(),
+      insuranceCard(),
+      w9Box,
+      el('section', { class: 'card stack' }, el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, '🪪 Business & license'), saved),
+        field('business', 'Business name (as on your W-9)', { maxlength: '120', autocomplete: 'organization' }),
+        field('email', 'Email for invoices and payments', { type: 'email', maxlength: '120', autocomplete: 'email' }),
+        el('div', { class: 'two' }, field('license_number', 'Contractor license #', { maxlength: '60' }),
+          el('label', { class: 'field' }, 'State', el('select', { onchange: (e) => { p.license_state = e.target.value; } }, el('option', { value: '' }, '—'),
+            ...TH.US_STATES.map(([c, nm]) => el('option', { value: c, selected: c === p.license_state }, nm))))),
+        field('license_expires', 'License runs out', { type: 'date' }),
+        field('service_area', 'Where you work (towns or ZIP codes)', { maxlength: '200', placeholder: 'e.g. Springfield, Chatham, 62704' }),
+        el('label', { class: 'field' }, 'Anything else the office should know', el('textarea', { rows: 2, maxlength: '500', value: p.notes || '', oninput: (e) => { p.notes = e.target.value; } })),
+        err, el('button', { type: 'button', class: 'gold block', onclick: (e) => save(e.currentTarget) }, 'Save my info')),
+      el('section', { class: 'card stack' }, el('h3', {}, '📅 When you can work'),
+        el('p', { class: 'muted small', style: 'margin:0' }, 'The office sees this when they pick a contractor for a job, so you don’t get booked on a day you’re off.'),
+        el('b', { class: 'small' }, 'Days you don’t work'), dayChips,
+        el('b', { class: 'small' }, 'Dates you’re booked or away'), blockedList,
+        el('div', { class: 'row', style: 'gap:6px' }, addDate, el('button', { type: 'button', class: 'ghost small', onclick: () => { if (addDate.value && !p.blocked.includes(addDate.value)) { p.blocked = [...p.blocked, addDate.value].sort(); drawBlocked(); addDate.value = ''; } } }, 'Add date')),
+        el('button', { type: 'button', class: 'gold block', onclick: (e) => save(e.currentTarget) }, 'Save when I can work'))));
+  }
+
   async function renderJob(id, message) {
     const { me, jobs, company = {}, error } = await loadCrew();
     if (!me) return renderLogin(error);
@@ -559,6 +646,15 @@
       ...['Need more materials: ', 'Customer not home.', 'Found extra work: ', 'Running late. ETA '].map((txt) =>
         el('button', { type: 'button', class: 'chip', onclick: () => { ta.value = txt; ta.focus(); ta.setSelectionRange(txt.length, txt.length); } }, txt.replace(/[:.]?\s*(ETA\s*)?$/, '')))), ta);
 
+    // Punch list from the office: the small fixes before the final walkthrough. Checking one off tells the office.
+    const punch = await api.crewPortal.punch(j.id).catch(() => []);
+    const punchCard = punch.length ? el('section', { class: 'card stack' + (punch.some((x) => !x.done) ? ' needs' : '') },
+      el('h3', {}, `🔧 Punch list · ${punch.filter((x) => !x.done).length} left`),
+      el('p', { class: 'muted small', style: 'margin:0' }, 'Small fixes the office wants done before the final walkthrough. Check each one off when it’s done.'),
+      ...punch.map((x) => el('label', { class: 'task-row' + (x.done ? ' done' : '') },
+        el('input', { type: 'checkbox', checked: x.done, 'aria-label': x.text, onchange: async (e) => { try { await api.crewPortal.punchDone(x.id, e.target.checked); renderJob(j.id, e.target.checked ? `✅ Done: ${x.text}` : null); } catch (ex) { fail(ex); } } }),
+        el('span', { style: 'flex:1' }, x.text)))) : null;
+
     // Bill Top Hat: each step of the crew pay schedule, plus extra work or materials.
     const billCard = (() => {
       if (company.showCrewPay === false) return null;
@@ -612,9 +708,18 @@
         el('span', { class: 'n' }, b?.status === 'paid' ? '✓' : num),
         el('span', { class: 'body' }, el('b', {}, label), el('span', { class: 'amt' }, usd(amount)), el('span', { class: 'muted small' }, sub),
           b?.photos ? el('span', { class: 'muted small' }, `📷 ${b.photos} ${b.photos === 1 ? 'photo' : 'photos'} sent${b.invoice ? ' · 📄 invoice sent' : ''}`) : null,
-          b?.status === 'declined' && b.reason ? el('span', { class: 'small bad-text' }, `Declined: ${b.reason}`) : null),
+          b?.status === 'declined' && b.reason ? el('span', { class: 'small bad-text' }, `Declined: ${b.reason}`) : null,
+          b?.status === 'paid' ? (b.lien ? el('span', { class: 'small good-text' }, '📝 Lien waiver signed') : el('button', { type: 'button', class: 'ghost small', style: 'align-self:flex-start', onclick: () => lienForm(b) }, '✍️ Sign lien waiver')) : null),
         b && (b.status !== 'declined' || !action) ? el('span', { class: `pill ${PILL[b.status][1]}` }, b.status === 'paid' && b.paidDate ? `Paid ${b.paidDate.slice(5).replace('-', '/')}` : PILL[b.status][0]) : action || el('span', { class: 'muted small' }, 'Not yet'));
       const paidSoFar = paidOf(j);
+      // Lien waiver for a paid bill: they sign with their finger.
+      const lienForm = (b) => {
+        formWrap.replaceChildren(TH.docs.signaturePad({ name: me.name, title: `Lien waiver · ${usd(b.amount)}`, submitLabel: 'Sign lien waiver',
+          agree: `I received ${usd(b.amount)} from ${co} for “${b.label}” on job ${n} at ${TH.addrLine(j)}. I waive and release any lien rights for the work and materials covered by this payment.`,
+          onCancel: () => formWrap.replaceChildren(),
+          onSign: async (sig) => { await api.crewPortal.signLien(b.id, sig); renderJob(j.id, `📝 Lien waiver signed for ${usd(b.amount)}. Thank you!`); } }));
+        formWrap.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      };
       return el('section', { class: 'card stack' },
         el('div', { class: 'row' }, el('h3', {}, '💵 Bill Top Hat'), el('span', { class: 'spacer' }), el('span', { class: 'muted small' }, `${usd(paidSoFar)} of ${usd(earnedOf(j))} paid`)),
         el('p', { class: 'muted small' }, 'Bill for each part as you finish it, with your invoice and photos of the work. The office approves it and pays you.'),
@@ -635,7 +740,7 @@
       el('div', { class: 'row' }, el('a', { class: 'btn ghost small', href: j.status === 'completed' ? '#/done' : '#/' }, j.status === 'completed' ? '← Completed' : '← My jobs'), el('span', { class: 'spacer' }), el('span', { class: `pill s-${j.status}` }, find(STATUSES, j.status).label)),
       el('div', {}, el('h1', { style: 'font-size:1.45rem' }, `${t.icon} ${t.label}`), el('p', { class: 'muted' }, `${n} · ${j.customerName}`)),
       message && !onWayMsg ? el('div', { class: 'callout' }, message) : null,
-      errorBox, nextCard, onWayMsg ? textsBox : null, quick, j.status !== 'completed' || (j.materials || []).length ? TH.materialsCard(j, { mode: 'crew', onChange: () => renderJob(j.id, '📦 Materials updated. The office can see it.') }) : null, billCard, progress, details, notesCard,
+      errorBox, nextCard, onWayMsg ? textsBox : null, punchCard, quick, j.status !== 'completed' || (j.materials || []).length ? TH.materialsCard(j, { mode: 'crew', onChange: () => renderJob(j.id, '📦 Materials updated. The office can see it.') }) : null, billCard, progress, details, notesCard,
     ));
     window.scrollTo(0, 0);
   }
@@ -646,7 +751,7 @@
     if (invite) return renderInvite();
     const m = location.hash.match(/^#\/job\/(.+)$/);
     if (m) return renderJob(decodeURIComponent(m[1]));
-    return renderPortal(null, location.hash === '#/done' ? 'done' : location.hash === '#/records' ? 'records' : 'active');
+    return renderPortal(null, location.hash === '#/done' ? 'done' : location.hash === '#/records' ? 'records' : location.hash === '#/info' ? 'info' : 'active');
   }
   window.addEventListener('hashchange', () => { if (!token && !invite) route(); });
   route();

@@ -42,7 +42,8 @@ drop function if exists public.handle_new_user, public.is_staff, public.new_crew
   public.sales_invite_info, public.claim_sales_invite, public.office_crew_list,
   public.authorize_permit, public.can_design, public.permit_label, public.report_payment, public.resolve_payment_report, public.crew_bill, public.staff_crew_bill, public.crew_halfway,
   public.crew_material_add, public.crew_material_delivered, public.job_materials_log, public.sign_document, public.office_ask_review, public.customer_review,
-  public.crew_my_insurance, public.crew_set_insurance, public.crew_owns_insurance_path, public.log_message cascade;
+  public.crew_my_insurance, public.crew_set_insurance, public.crew_owns_insurance_path, public.log_message,
+  public.crew_my_profile, public.crew_set_profile, public.crew_set_w9, public.crew_sign_lien, public.crew_punch, public.crew_punch_done cascade;
 
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
@@ -106,6 +107,13 @@ create table public.contractors (
   insurance_name text not null default '' check (length(insurance_name) <= 200),
   insurance_expires date,
   insurance_at timestamptz,
+  -- The contractor's own details (they keep these up to date in their login): business name, email, license # / state / expiry,
+  -- service area, days of the week they don't work and dates they're booked elsewhere.
+  profile jsonb not null default '{}' check (jsonb_typeof(profile) = 'object' and length(profile::text) <= 20000),
+  -- W-9 (for the 1099), stored next to their insurance under insurance/<contractor id>/.
+  w9_path text check (w9_path is null or w9_path like 'insurance/%'),
+  w9_name text not null default '' check (length(w9_name) <= 200),
+  w9_at timestamptz,
   created_at timestamptz not null default now()
 );
 alter table public.profiles add column contractor_id uuid references public.contractors(id) on delete set null;
@@ -311,7 +319,7 @@ create index on public.job_messages (job_id, at);
 create table public.office_records (
   id uuid primary key default gen_random_uuid(),
   kind text not null check (kind in ('price_item', 'est_template', 'est_cost', 'task', 'walkthrough', 'expense', 'commission_rule', 'commission_paid',
-                                     'vendor', 'staff', 'company_doc', 'ticket', 'sop', 'asset')),
+                                     'vendor', 'staff', 'company_doc', 'ticket', 'sop', 'asset', 'crew_review')),
   job_id uuid references public.jobs(id) on delete cascade,
   data jsonb not null default '{}' check (jsonb_typeof(data) = 'object' and length(data::text) <= 400000),
   by_name text not null default '' check (length(by_name) <= 120),
@@ -763,7 +771,10 @@ create table public.crew_bills (
   by_name text not null default '',
   created_at timestamptz not null default now(),
   resolved_at timestamptz,
-  resolved_by text not null default ''
+  resolved_by text not null default '',
+  -- Lien waiver: the contractor signs once they're paid for this bill. { name, image, at }
+  lien_sig jsonb check (lien_sig is null or (jsonb_typeof(lien_sig) = 'object' and length(lien_sig->>'name') between 3 and 120
+    and (lien_sig->>'image') ~ '^data:image/png;base64,[A-Za-z0-9+/=]+$' and length(lien_sig->>'image') <= 300000))
 );
 create index on public.crew_bills (job_id);
 -- Photos the contractor sent with a bill (required), so the office can see the work.
@@ -1062,6 +1073,76 @@ begin
   update public.contractors set insurance_path = p_path, insurance_name = left(coalesce(p_name, ''), 200), insurance_expires = p_expires, insurance_at = now() where id = cid;
 end $$;
 
+-- Crew: their own details (business, email, license, service area, days off, booked dates) and W-9.
+create function public.crew_my_profile() returns jsonb
+language plpgsql stable security definer set search_path = '' as $$
+begin
+  return (select jsonb_build_object('contractor', c.id, 'name', c.name, 'phone', c.phone, 'trades', c.trades, 'profile', c.profile,
+    'w9_path', c.w9_path, 'w9_name', c.w9_name, 'w9_at', c.w9_at)
+  from public.contractors c where c.id = public.my_crew());
+end $$;
+create function public.crew_set_profile(p jsonb) returns void
+language plpgsql security definer set search_path = '' as $$
+declare cid uuid := public.my_crew(); clean jsonb;
+begin
+  if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
+  if p is null or jsonb_typeof(p) <> 'object' then raise exception 'Bad details.'; end if;
+  clean := jsonb_build_object(
+    'business', left(trim(coalesce(p->>'business', '')), 120),
+    'email', left(trim(coalesce(p->>'email', '')), 120),
+    'license_number', left(trim(coalesce(p->>'license_number', '')), 60),
+    'license_state', case when upper(coalesce(p->>'license_state', '')) ~ '^[A-Z]{2}$' then upper(p->>'license_state') else '' end,
+    'license_expires', case when coalesce(p->>'license_expires', '') ~ '^\d{4}-\d{2}-\d{2}$' then p->>'license_expires' else '' end,
+    'service_area', left(trim(coalesce(p->>'service_area', '')), 200),
+    'notes', left(trim(coalesce(p->>'notes', '')), 500),
+    'days_off', coalesce((select jsonb_agg(distinct v::int) from jsonb_array_elements_text(case when jsonb_typeof(p->'days_off') = 'array' then p->'days_off' else '[]'::jsonb end) v where v ~ '^[0-6]$'), '[]'::jsonb),
+    'blocked', coalesce((select jsonb_agg(distinct v) from (select v from jsonb_array_elements_text(case when jsonb_typeof(p->'blocked') = 'array' then p->'blocked' else '[]'::jsonb end) v
+      where v ~ '^\d{4}-\d{2}-\d{2}$' and v >= to_char(current_date, 'YYYY-MM-DD') limit 120) x), '[]'::jsonb));
+  update public.contractors set profile = clean where id = cid;
+end $$;
+create function public.crew_set_w9(p_path text, p_name text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare cid uuid := public.my_crew();
+begin
+  if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
+  if p_path is null or p_path not like 'insurance/' || cid || '/%' or p_path like '%..%' then raise exception 'Bad file path.'; end if;
+  update public.contractors set w9_path = p_path, w9_name = left(coalesce(p_name, ''), 200), w9_at = now() where id = cid;
+end $$;
+-- Crew: sign the lien waiver for a bill Top Hat has paid.
+create function public.crew_sign_lien(p_bill uuid, p_name text, p_image text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare cid uuid := public.my_crew(); b record; nm text := left(trim(coalesce(p_name, '')), 120);
+begin
+  if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
+  select * into b from public.crew_bills where id = p_bill and contractor_id = cid;
+  if b.id is null then raise exception 'Bill not found.'; end if;
+  if b.status <> 'paid' then raise exception 'You sign the lien waiver once Top Hat has paid this bill.'; end if;
+  if b.lien_sig is not null then raise exception 'You already signed this lien waiver.'; end if;
+  if length(nm) < 3 then raise exception 'Type your full name.'; end if;
+  update public.crew_bills set lien_sig = jsonb_build_object('name', nm, 'image', p_image, 'at', now()) where id = p_bill;
+  perform public.log_event(b.job_id, '📝 Lien waiver signed by ' || nm || ' for ' || public.usd(b.amount) || ' (“' || b.label || '”)');
+end $$;
+-- Crew: the punch list the office made for their job, and checking items off.
+create function public.crew_punch(p_job uuid) returns jsonb
+language plpgsql stable security definer set search_path = '' as $$
+begin
+  if public.my_crew() is null or not exists (select 1 from public.jobs where id = p_job and contractor_id = public.my_crew()) then raise exception 'Job not found.'; end if;
+  return coalesce((select jsonb_agg(jsonb_build_object('id', r.id, 'text', r.data->>'text', 'done', coalesce((r.data->>'done')::boolean, false), 'doneBy', coalesce(r.data->>'doneBy', '')) order by r.created_at)
+    from public.office_records r where r.kind = 'task' and r.job_id = p_job and coalesce((r.data->>'punch')::boolean, false)), '[]'::jsonb);
+end $$;
+create function public.crew_punch_done(p_id uuid, p_done boolean) returns void
+language plpgsql security definer set search_path = '' as $$
+declare r record; who text;
+begin
+  select x.id, x.job_id, x.data into r from public.office_records x join public.jobs j on j.id = x.job_id
+   where x.id = p_id and x.kind = 'task' and coalesce((x.data->>'punch')::boolean, false) and j.contractor_id = public.my_crew() and public.my_crew() is not null;
+  if r.id is null then raise exception 'Not found.'; end if;
+  select name into who from public.contractors where id = public.my_crew();
+  update public.office_records set updated_at = now(), data = data || jsonb_build_object('done', coalesce(p_done, false),
+    'doneBy', case when p_done then coalesce(who, 'Crew') else '' end, 'doneAt', case when p_done then (extract(epoch from now()) * 1000)::bigint else null end) where id = p_id;
+  perform public.log_event(r.job_id, case when p_done then '✅ ' || coalesce(who, 'Crew') || ' finished punch item: ' else '↩ Punch item reopened by ' || coalesce(who, 'crew') || ': ' end || left(r.data->>'text', 120));
+end $$;
+
 -- Crew: "I'm halfway done." Unlocks the halfway bill and tells the office.
 create function public.crew_halfway(p_job uuid) returns void
 language plpgsql security definer set search_path = '' as $$
@@ -1209,7 +1290,7 @@ begin
       'bills', case when coalesce(show_pay, true) then (select coalesce(jsonb_agg(jsonb_build_object('id', cb.id, 'step', cb.step, 'label', cb.label, 'amount', cb.amount, 'note', cb.note,
                   'status', cb.status, 'reason', cb.reason, 'paid_date', cb.paid_date, 'paid_method', cb.paid_method, 'created_at', cb.created_at,
                   'photos', (select count(*) from public.job_files f where f.bill_id = cb.id and f.kind <> 'invoice'),
-                  'invoice', exists (select 1 from public.job_files f where f.bill_id = cb.id and f.kind = 'invoice')) order by cb.created_at), '[]'::jsonb)
+                  'invoice', exists (select 1 from public.job_files f where f.bill_id = cb.id and f.kind = 'invoice'), 'lien', cb.lien_sig is not null) order by cb.created_at), '[]'::jsonb)
                   from public.crew_bills cb where cb.job_id = j.id and cb.contractor_id = cid) else '[]'::jsonb end,
       'crew_paid_method', case when coalesce(show_pay, true) then (select k.crew_paid_method from public.job_costs k where k.job_id = j.id) end,
       'notes', (select coalesce(jsonb_agg(jsonb_build_object('id', n.id, 'text', n.text, 'created_at', n.created_at) order by n.created_at), '[]'::jsonb)
@@ -1500,7 +1581,8 @@ grant execute on function public.is_staff(), public.owns_job(text), public.custo
   public.office_can_access_path(text), public.log_call(uuid, text, text), public.log_message(uuid, text, text, text), public.staff_invite_sales(uuid), public.staff_revoke_sales(uuid),
   public.claim_sales_invite(text), public.office_crew_list(), public.authorize_permit(uuid, text), public.can_design(uuid),
   public.report_payment(uuid, numeric, text, text, text, text), public.resolve_payment_report(uuid, boolean),
-  public.crew_bill(uuid, int, numeric, text, text[], text), public.crew_my_insurance(), public.crew_set_insurance(text, text, date), public.crew_owns_insurance_path(text), public.staff_crew_bill(uuid, text, text, date, text), public.crew_halfway(uuid) to authenticated;
+  public.crew_bill(uuid, int, numeric, text, text[], text), public.crew_my_insurance(), public.crew_set_insurance(text, text, date), public.crew_owns_insurance_path(text), public.staff_crew_bill(uuid, text, text, date, text), public.crew_halfway(uuid),
+  public.crew_my_profile(), public.crew_set_profile(jsonb), public.crew_set_w9(text, text), public.crew_sign_lien(uuid, text, text), public.crew_punch(uuid), public.crew_punch_done(uuid, boolean) to authenticated;
 grant execute on function public.sales_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_add_note(text, uuid, text) to anon, authenticated;

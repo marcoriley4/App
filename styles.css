@@ -1067,3 +1067,6 @@ label.dream-pick { display: flex; align-items: center; justify-content: center; 
 .record-grid > .full, .record-grid > .field:has(textarea) { grid-column: 1 / -1; }
 @media (max-width: 420px) { .record-grid { grid-template-columns: 1fr; } }
 .alert-row > b { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+.ready-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.paperwork-note { display: block; text-decoration: none; color: inherit; }
+.card.needs { border-color: var(--gold); }

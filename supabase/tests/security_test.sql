@@ -408,6 +408,42 @@ do $$ begin
   begin perform public.crew_bill(current_setting('t.job')::uuid, 2, null, '', array[t.pic()], t.inv()); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'finish bill still locked while working'); end;
 end $$;
+-- Their own details, W-9 and lien waivers
+select public.crew_set_profile('{"business":"Ray J Roofing LLC","license_number":"104.0188","license_state":"il","license_expires":"2027-03-01","days_off":[0,6,9,"x"],"blocked":["2099-01-02","1999-01-01","bad"],"role":"staff"}');
+select t.ok((public.crew_my_profile()->'profile'->>'license_state') = 'IL' and (public.crew_my_profile()->'profile'->'days_off') = '[0, 6]'::jsonb
+  and (public.crew_my_profile()->'profile'->'blocked') = '["2099-01-02"]'::jsonb and not (public.crew_my_profile()->'profile' ? 'role'), 'crew profile is cleaned (state, days off, future dates, no extra keys)');
+do $$ begin
+  begin perform public.crew_set_w9('insurance/' || gen_random_uuid() || '/w9.pdf', 'w9.pdf'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'crew can only save a W-9 in their own folder'); end;
+  begin perform public.crew_sign_lien((select (x->>'id')::uuid from jsonb_array_elements(public.crew_my_jobs()->0->'bills') x where x->>'step' = '1'), 'Ray Johnson', 'data:image/png;base64,AAAA'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'no lien waiver before the bill is paid'); end;
+end $$;
+select public.crew_set_w9('insurance/' || (public.crew_my_profile()->>'contractor') || '/w9.pdf', 'w9.pdf');
+select t.ok((public.crew_my_profile()->>'w9_name') = 'w9.pdf', 'crew saves their W-9');
+select public.crew_sign_lien((select (x->>'id')::uuid from jsonb_array_elements(public.crew_my_jobs()->0->'bills') x where x->>'step' = '0'), 'Ray Johnson', 'data:image/png;base64,AAAA');
+select t.ok((select x->>'lien' from jsonb_array_elements(public.crew_my_jobs()->0->'bills') x where x->>'step' = '0') = 'true', 'crew signs the lien waiver for a paid bill');
+do $$ begin
+  begin perform public.crew_sign_lien((select (x->>'id')::uuid from jsonb_array_elements(public.crew_my_jobs()->0->'bills') x where x->>'step' = '0'), 'Ray Johnson', 'data:image/png;base64,AAAA'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'a lien waiver is signed once'); end;
+end $$;
+reset role;
+-- Punch list: the office writes it, the assigned contractor sees and checks it off
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+insert into public.office_records (kind, job_id, data) values ('task', current_setting('t.job')::uuid, '{"text":"Touch up flashing","punch":true,"done":false}'),
+  ('task', current_setting('t.job')::uuid, '{"text":"Office-only task","punch":false,"done":false}');
+select t.ok(exists (select 1 from public.job_events where text like '📝 Lien waiver signed by Ray Johnson%'), 'office sees the lien waiver in the history');
+reset role;
+select set_config('request.jwt.claim.sub', :'C', false);
+set role authenticated;
+select t.ok(jsonb_array_length(public.crew_punch(current_setting('t.job')::uuid)) = 1, 'crew sees only the punch list, not office tasks');
+select public.crew_punch_done((public.crew_punch(current_setting('t.job')::uuid)->0->>'id')::uuid, true);
+select t.ok((public.crew_punch(current_setting('t.job')::uuid)->0->>'done') = 'true', 'crew checks off a punch item');
+select t.ok((select count(*) from public.office_records) = 0, 'crew still cannot read office records directly');
+do $$ begin
+  begin perform public.crew_punch(gen_random_uuid()); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'crew cannot read punch lists of other jobs'); end;
+end $$;
 reset role;
 select set_config('request.jwt.claim.sub', :'S', false);
 set role authenticated;
@@ -729,7 +765,7 @@ update public.jobs set do_not_contact = false where contact_name = 'Kim Caller';
 -- Office records (price book, expenses, suppliers…)
 insert into public.office_records (kind, job_id, data, by_name) select 'expense', id, '{"amount":120,"category":"Materials"}', 'Office' from public.jobs where contact_name = 'Kim Caller';
 insert into public.office_records (kind, data) values ('price_item', '{"name":"Cabinet install","cost":80,"price":140}');
-select t.ok((select count(*) from public.office_records) = 2, 'office keeps its own records');
+select t.ok((select count(*) from public.office_records where kind in ('expense', 'price_item')) = 2, 'office keeps its own records');
 -- Change orders add to the agreed price
 update public.documents set status = 'approved' where number like 'E-%' and job_id = (select id from public.jobs where contact_name = 'Kim Caller');
 select t.ok((select price from public.job_private p join public.jobs j on j.id = p.job_id where j.contact_name = 'Kim Caller') = 900, 'approved estimate sets the price');

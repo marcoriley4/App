@@ -21,7 +21,7 @@
   /* ---------- helpers ---------- */
   const mapMaterial = (m) => ({ id: m.id, name: m.name, qty: m.qty || '', note: m.note || '', status: m.status, eta: m.eta || null, by: m.added_by || '', updatedBy: m.updated_by || '' });
   const mapBill = (b) => ({ id: b.id, step: b.step ?? null, label: b.label, amount: Number(b.amount), note: b.note || '', status: b.status, reason: b.reason || '',
-    paidDate: b.paid_date || null, paidMethod: b.paid_method || '', by: b.by_name || '', at: Date.parse(b.created_at) || null, photos: Number(b.photos) || 0, invoice: !!b.invoice });
+    paidDate: b.paid_date || null, paidMethod: b.paid_method || '', lien: b.lien_sig ? { name: b.lien_sig.name, at: Date.parse(b.lien_sig.at) || null } : b.lien ? true : null, by: b.by_name || '', at: Date.parse(b.created_at) || null, photos: Number(b.photos) || 0, invoice: !!b.invoice });
   const mapRecord = (r) => ({ ...(r.data || {}), id: r.id, kind: r.kind, jobId: r.job_id || null, by: r.by_name || '', at: ms(r.created_at), updatedAt: ms(r.updated_at) });
   const mapMsg = (m) => ({ id: m.id, at: ms(m.at), by: m.by_name || '', channel: m.channel, dir: m.dir, body: m.body });
   const mapDesign = (v) => v && ({ id: v.id, parentId: v.parent_id || null, source: v.source, prompt: v.prompt || '', by: v.by_name || '', at: Date.parse(v.created_at) || Date.now(), chosen: !!v.chosen, saved: !!v.saved, url: v.url || null });
@@ -573,11 +573,12 @@
         const rows = await fetchAll(() => sb.from('contractors').select('*').order('name'));
         const ids = rows.map((c) => c.user_id).filter(Boolean);
         const emails = ids.length ? Object.fromEntries(must(await sb.from('profiles').select('id, email').in('id', ids)).map((p) => [p.id, p.email])) : {};
-        const insUrls = await signedUrls(rows.map((c) => c.insurance_path).filter(Boolean));
+        const insUrls = await signedUrls([...rows.map((c) => c.insurance_path), ...rows.map((c) => c.w9_path)].filter(Boolean));
         return rows.map((c) => ({
           id: c.id, name: c.name, phone: c.phone, trades: c.trades || [], active: c.active, state: c.state || '',
           login: c.user_id ? 'active' : c.invite_code ? 'invited' : 'none', inviteCode: c.invite_code || null, loginEmail: emails[c.user_id] || '',
           insurance: c.insurance_path ? { name: c.insurance_name, expires: c.insurance_expires, at: ms(c.insurance_at), url: insUrls[c.insurance_path] || null } : null,
+          profile: c.profile || {}, w9: c.w9_path ? { name: c.w9_name, at: ms(c.w9_at), url: insUrls[c.w9_path] || null } : null,
         }));
       },
       async save(c) {
@@ -715,6 +716,27 @@
         must(await sb.rpc('crew_set_insurance', { p_path: path, p_name: file.name || 'insurance.pdf', p_expires: expires }));
         return { name: file.name, expires };
       },
+      async profile() {
+        const r = must(await sb.rpc('crew_my_profile'));
+        if (!r) throw new Error('Your crew login is turned off. Ask the Top Hat office if this is a mistake.');
+        const urls = r.w9_path ? await signedUrls([r.w9_path]) : {};
+        return { contractor: r.contractor, name: r.name, phone: r.phone || '', trades: r.trades || [], profile: r.profile || {},
+          w9: r.w9_path ? { name: r.w9_name, at: ms(r.w9_at), url: urls[r.w9_path] || null } : null };
+      },
+      async setProfile(p) { must(await sb.rpc('crew_set_profile', { p: p || {} })); },
+      async setW9(file) {
+        if (!file) throw new Error('Attach your W-9.');
+        if (!/^image\//.test(file.type || '') && file.type !== 'application/pdf') throw new Error('Your W-9 has to be a PDF or a photo.');
+        tooBig(file);
+        const cid = must(await sb.rpc('crew_my_profile'))?.contractor;
+        if (!cid) throw new Error('Your crew login is turned off. Ask the Top Hat office if this is a mistake.');
+        const path = `insurance/${cid}/${rid()}-w9-${safeName(file.name || 'w9.pdf')}`;
+        await upload(path, file);
+        must(await sb.rpc('crew_set_w9', { p_path: path, p_name: file.name || 'w9.pdf' }));
+      },
+      async signLien(billId, sig) { must(await sb.rpc('crew_sign_lien', { p_bill: billId, p_name: String(sig?.name || ''), p_image: sig?.image || '' })); },
+      async punch(jobId) { return must(await sb.rpc('crew_punch', { p_job: jobId })) || []; },
+      async punchDone(id, done) { must(await sb.rpc('crew_punch_done', { p_id: id, p_done: !!done })); },
       async addNote(jobId, text) {
         must(await sb.rpc('crew_add_note', { p_token: null, p_job: jobId, p_text: text }));
       },

@@ -720,6 +720,19 @@
   // Approving an estimate sets the price (plus any approved change orders); approving a change order adds to it.
   const priceAfterApproval = (j, rec) => rec.changeOrder ? (Number(j.price) || 0) + docTotal(rec)
     : docTotal(rec) + j.docs.filter((x) => x.changeOrder && x.status === 'approved' && x !== rec).reduce((t, x) => t + docTotal(x), 0);
+  // Contractor's own details, cleaned the same way the database does.
+  function cleanCrewProfile(p = {}) {
+    const str = (v, n) => String(v || '').trim().slice(0, n);
+    const today = isoDay(Date.now());
+    return {
+      business: str(p.business, 120), email: str(p.email, 120), license_number: str(p.license_number, 60),
+      license_state: /^[A-Za-z]{2}$/.test(p.license_state || '') ? p.license_state.toUpperCase() : '',
+      license_expires: /^\d{4}-\d{2}-\d{2}$/.test(p.license_expires || '') ? p.license_expires : '',
+      service_area: str(p.service_area, 200), notes: str(p.notes, 500),
+      days_off: [...new Set((Array.isArray(p.days_off) ? p.days_off : []).map(String).filter((v) => /^[0-6]$/.test(v)).map(Number))].sort(),
+      blocked: [...new Set((Array.isArray(p.blocked) ? p.blocked : []).filter((v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && v >= today))].sort().slice(0, 120),
+    };
+  }
   async function officeJob(jobId) {
     const ctx = await requireOffice();
     const j = ctx.d.jobs.find((x) => x.id === jobId);
@@ -1205,7 +1218,7 @@
       },
       async save(kind, rec, jobId = null) {
         const u = await requireStaff();
-        if (!['price_item', 'est_template', 'est_cost', 'task', 'walkthrough', 'expense', 'commission_rule', 'commission_paid', 'vendor', 'staff', 'company_doc', 'ticket', 'sop', 'asset'].includes(kind)) throw new Error('Unknown record.');
+        if (!['price_item', 'est_template', 'est_cost', 'task', 'walkthrough', 'expense', 'commission_rule', 'commission_paid', 'vendor', 'staff', 'company_doc', 'ticket', 'sop', 'asset', 'crew_review'].includes(kind)) throw new Error('Unknown record.');
         const d = await db(); d.records ||= [];
         const { id, kind: _k, jobId: _j, by: _b, at: _a, updatedAt: _u, ...data } = rec || {};
         if (JSON.stringify(data).length > 400000) throw new Error('That’s too big to save.');
@@ -1517,7 +1530,9 @@
         return Promise.all(d.contractors.map(async (c) => {
           const u = c.userId && d.users.find((x) => x.id === c.userId);
           const blob = c.insurance && await blobs.get('insurance:' + c.id).catch(() => null);
-          return { ...c, insurance: c.insurance ? { ...c.insurance, url: blob ? URL.createObjectURL(blob) : null } : null,
+          const w9b = c.w9 && await blobs.get('w9:' + c.id).catch(() => null);
+          return { ...c, profile: cleanCrewProfile(c.profile || {}), w9: c.w9 ? { ...c.w9, url: w9b ? URL.createObjectURL(w9b) : null } : null,
+            insurance: c.insurance ? { ...c.insurance, url: blob ? URL.createObjectURL(blob) : null } : null,
             login: u ? 'active' : c.inviteCode ? 'invited' : 'none', loginEmail: u ? u.email : '' };
         }));
       },
@@ -1806,6 +1821,54 @@
         writeDb(d);
         return { ...c.insurance };
       },
+      // Their business details, license, service area and when they can't work.
+      async profile() {
+        const { c } = await requireCrew();
+        const blob = c.w9 ? await blobs.get('w9:' + c.id).catch(() => null) : null;
+        return { contractor: c.id, name: c.name, phone: c.phone || '', trades: c.trades || [], profile: cleanCrewProfile(c.profile || {}),
+          w9: c.w9 ? { ...c.w9, url: blob ? URL.createObjectURL(blob) : null } : null };
+      },
+      async setProfile(p) {
+        const { d, c } = await requireCrew();
+        c.profile = cleanCrewProfile(p); writeDb(d);
+        return { ...c.profile };
+      },
+      async setW9(file) {
+        const { d, c, u } = await requireCrew();
+        checkDocFile(file, 'your W-9');
+        await blobs.put('w9:' + c.id, file);
+        c.w9 = { name: file.name || 'w9.pdf', mime: file.type, size: file.size, at: Date.now(), by: u.name };
+        writeDb(d);
+      },
+      // Lien waiver: signed once Top Hat has paid a bill.
+      async signLien(billId, sig) {
+        const { d, c } = await requireCrew();
+        const j = d.jobs.find((x) => (x.crewBills || []).some((b) => b.id === billId && b.contractorId === c.id));
+        const b = j && j.crewBills.find((x) => x.id === billId);
+        if (!b) throw new Error('Bill not found.');
+        if (b.status !== 'paid') throw new Error('You sign the lien waiver once Top Hat has paid this bill.');
+        if (b.lienSig) throw new Error('You already signed this lien waiver.');
+        const s = checkSignature(sig);
+        b.lienSig = { name: s.name, image: s.image, at: Date.now() };
+        j.log.push({ at: Date.now(), text: `📝 Lien waiver signed by ${s.name} for ${usd(b.amount)} (“${b.label}”)` });
+        writeDb(d);
+      },
+      // The punch list the office made for their job; they check items off.
+      async punch(jobId) {
+        const { d, c } = await requireCrew();
+        if (!d.jobs.some((x) => x.id === jobId && x.contractorId === c.id)) throw new Error('Job not found.');
+        return (d.records || []).filter((r) => r.kind === 'task' && r.jobId === jobId && r.punch).sort((a, b) => a.at - b.at)
+          .map((r) => ({ id: r.id, text: r.text, done: !!r.done, doneBy: r.doneBy || '' }));
+      },
+      async punchDone(id, done) {
+        const { d, c } = await requireCrew();
+        const r = (d.records || []).find((x) => x.id === id && x.kind === 'task' && x.punch);
+        const j = r && d.jobs.find((x) => x.id === r.jobId && x.contractorId === c.id);
+        if (!j) throw new Error('Not found.');
+        Object.assign(r, { done: !!done, doneBy: done ? c.name : '', doneAt: done ? Date.now() : null, updatedAt: Date.now() });
+        j.log.push({ at: Date.now(), text: done ? `✅ ${c.name} finished punch item: ${r.text}` : `↩ Punch item reopened by ${c.name}: ${r.text}` });
+        writeDb(d);
+      },
       async jobs() {
         const { d, c } = await requireCrew();
         const showPay = d.settings.showCrewPay !== false;
@@ -1830,7 +1893,7 @@
               const w = await withUrl(f); return { name: f.name, stage: f.stage || '', uploaded: f.uploaded, mime: f.mime, url: w.url };
             })),
             crewPaid: showPay && j.crewPaid ? { date: j.crewPaid.date, method: j.crewPaid.method } : null,
-            crewBills: showPay ? (j.crewBills || []).filter((x) => x.contractorId === c.id).map((x) => ({ ...x })) : [],
+            crewBills: showPay ? (j.crewBills || []).filter((x) => x.contractorId === c.id).map(({ lienSig, ...x }) => ({ ...x, lien: !!lienSig })) : [],
             halfwayAt: j.halfwayAt || null,
             notes: ownNotes(j),
           };
