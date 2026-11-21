@@ -61,6 +61,9 @@ Today shows each stage: new leads to call, **🔥 hot leads that need a rep visi
 
 **Calendar appointments (Today tab).** Tap any day on the office calendar to make an appointment: pick the customer's job, a time, the contractor, the sales rep (office only; a salesperson books for their own clients) and notes. With a contractor it's saved as the job's work day (green dot; the job becomes Scheduled); with only a rep it's a rep visit (blue dot). Notes are added to the job's office notes with the date.
 
+
+**Office tabs:** Today · Jobs · **Team** · Payments. Team holds both the **💼 Sales** team and the **👷 Contractors** (switch at the top). Old links to `#sales` / `#crew` open the right half.
+
 ## How it works
 
 **Customers** (`index.html`)

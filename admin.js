@@ -78,9 +78,12 @@
   }
 
   /* ---------- main ---------- */
-  const MAIN_TABS = [['today', 'Today', '📅'], ['jobs', 'Jobs', '🗂️'], ['sales', 'Sales', '💼'], ['crew', 'Contractors', '👷'], ['business', 'Payments', '💳']];
+  // Sales and Contractors are one tab, "Team", with a switch inside (owner's request).
+  const MAIN_TABS = [['today', 'Today', '📅'], ['jobs', 'Jobs', '🗂️'], ['team', 'Team', '👥'], ['business', 'Payments', '💳']];
+  let teamPart = 'sales'; // which half of Team is showing: 'sales' or 'crew'
   const SALES_TABS = [['today', 'Today', '📅'], ['jobs', 'My clients', '🗂️']];
   if (MAIN_TABS.some(([id]) => id === location.hash.slice(1))) tab = location.hash.slice(1);
+  if (['sales', 'crew'].includes(location.hash.slice(1))) { tab = 'team'; teamPart = location.hash.slice(1); } // old links
   const salesName = (id) => team.find((x) => x.id === id)?.name;
   let stateFilter = ''; // jobs, customers and crew: show one state ('' = all, 'none' = no state set)
   let picking = false; const picked = new Set(); let jobsMsg = ''; // office: pick several leads and assign them to a salesperson at once
@@ -229,8 +232,13 @@
           id === 'today' && todo ? el('span', { class: 'count hot' }, String(todo)) : null,
           id === 'jobs' && newCount ? el('span', { class: 'count' }, String(newCount)) : null),
         el('span', { class: 'tab-lbl' }, label))));
-    const body = tab === 'today' ? todayView() : tab === 'jobs' ? leadsView() : tab === 'sales' ? salesTeamView() : tab === 'crew' ? crewView() : businessView();
-    view.replaceChildren(tabs, el('div', { class: 'stack', style: 'margin:16px 0' }, body));
+    if (tab === 'sales' || tab === 'crew') { teamPart = tab; tab = 'team'; }
+    const teamSwitch = () => el('div', { class: 'tabs-bar team-switch', role: 'group', 'aria-label': 'Team' },
+      ...[['sales', '💼 Sales'], ['crew', '👷 Contractors']].map(([id, label]) => el('button', { type: 'button', 'aria-pressed': String(teamPart === id),
+        class: teamPart === id ? 'on' : '', onclick: () => { teamPart = id; render(); } }, label)));
+    const body = tab === 'today' ? todayView() : tab === 'jobs' ? leadsView()
+      : tab === 'team' ? [teamSwitch(), ...[].concat(teamPart === 'crew' ? crewView() : salesTeamView())] : businessView();
+    view.replaceChildren(tabs, el('div', { class: 'stack', style: 'margin:16px 0' }, ...[].concat(body)));
     if (tab === 'today') fillDreams();
   }
 

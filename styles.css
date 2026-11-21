@@ -1000,3 +1000,7 @@ label.dream-pick { display: flex; align-items: center; justify-content: center; 
 .appt-dialog::backdrop { background: rgba(0,0,0,.55); }
 .appt-dialog h3 { margin: 0; }
 .appt-dialog select, .appt-dialog input, .appt-dialog textarea { width: 100%; }
+/* Team tab: Sales / Contractors switch */
+.team-switch { display: flex; gap: 0; border: 2px solid var(--border); border-radius: 12px; padding: 3px; background: var(--surface); }
+.team-switch button { flex: 1; border: 0; border-radius: 9px; padding: 10px 8px; font-weight: 800; font-size: 1rem; color: var(--muted); background: none; }
+.team-switch button.on { background: var(--gold); color: var(--ink); }
