@@ -1018,3 +1018,4 @@ label.dream-pick { display: flex; align-items: center; justify-content: center; 
 .job-meter .meter-team { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .job-meter .meter-team > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: 12px; background: var(--surface-2); min-width: 0; }
 .job-meter .meter-team.one { grid-template-columns: 1fr; }
+.job-details { display: flex; flex-direction: column; gap: 4px; }

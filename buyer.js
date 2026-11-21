@@ -648,7 +648,13 @@
           // Owner's order: the steps first, then the before & after, then the rest.
           j.status === 'lost' ? el('p', { class: 'muted small' }, 'This request was closed. Questions? Just request a new job and mention it.')
             : meter(j),
-          TH.beforeAfter(docs[j.id].filter((f) => f.source === 'design'), { title: '' }), // owner: no title, no description here
+          TH.beforeAfter(docs[j.id].filter((f) => f.source === 'design'), { title: '' }), // owner: no title here
+          // Details: what the customer told us, in their own words (without the automatic "… look (…)" line).
+          (() => { const look = TH.styleOf(j.style);
+            let txt = String(j.description || '');
+            if (look) txt = txt.replace(`${look.room.label} remodel, ${look.style.name} look (${look.style.desc.toLowerCase()})`, '').replace(/^[.\s]+/, '');
+            txt = txt.trim();
+            return txt ? el('div', { class: 'job-details' }, el('b', {}, 'Details'), el('p', { class: 'small', style: 'white-space:pre-wrap;margin:0' }, txt)) : null; })(),
           TH.styleOf(j.style) ? el('div', { class: 'style-chosen' }, el('img', { src: TH.styleOf(j.style).img, alt: '' }),
             el('span', {}, el('span', { class: 'muted small' }, 'The look you picked'), el('b', {}, TH.styleOf(j.style).label))) : null,
           j.status === 'hot' ? el('div', { class: 'callout' }, '🤝 ', j.visitAt
