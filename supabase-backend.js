@@ -22,6 +22,7 @@
   const mapMaterial = (m) => ({ id: m.id, name: m.name, qty: m.qty || '', note: m.note || '', status: m.status, eta: m.eta || null, by: m.added_by || '', updatedBy: m.updated_by || '' });
   const mapBill = (b) => ({ id: b.id, step: b.step ?? null, label: b.label, amount: Number(b.amount), note: b.note || '', status: b.status, reason: b.reason || '',
     paidDate: b.paid_date || null, paidMethod: b.paid_method || '', by: b.by_name || '', at: Date.parse(b.created_at) || null, photos: Number(b.photos) || 0, invoice: !!b.invoice });
+  const mapMsg = (m) => ({ id: m.id, at: ms(m.at), by: m.by_name || '', channel: m.channel, dir: m.dir, body: m.body });
   const mapDesign = (v) => v && ({ id: v.id, parentId: v.parent_id || null, source: v.source, prompt: v.prompt || '', by: v.by_name || '', at: Date.parse(v.created_at) || Date.now(), chosen: !!v.chosen, saved: !!v.saved, url: v.url || null });
   async function designCall(body) {
     const { data, error } = await sb.functions.invoke('design', { body });
@@ -190,6 +191,9 @@
           u.role === 'staff' ? fetchAll(() => sb.from('job_costs').select('job_id, crew_pay, crew_paid_date, crew_paid_method, crew_paid_note')) : Promise.resolve([]),
         ]);
         const designRows = await fetchAll(() => sb.from('design_versions').select('id, job_id, chosen, source'));
+        const lastMsgs = must(await sb.from('job_messages').select('job_id, at, by_name, channel, dir, body').order('at', { ascending: false }).limit(1000)) || [];
+        const lastMsgBy = {};
+        lastMsgs.forEach((m) => { if (!lastMsgBy[m.job_id]) lastMsgBy[m.job_id] = mapMsg(m); });
         const matRows = await fetchAll(() => sb.from('job_materials').select('*').order('created_at'));
         const matsBy = {};
         matRows.forEach((m) => { (matsBy[m.job_id] ||= []).push(mapMaterial(m)); });
@@ -227,6 +231,8 @@
             stage: j.stage || null, progressAt: ms(j.progress_at), progressBy: j.progress_by || '', progressByCrew: !!j.progress_by_crew,
             crewResponse: j.crew_response || null, crewResponseNote: j.crew_response_note || '',
             startedAt: ms(j.started_at), finishedAt: ms(j.finished_at),
+            enteredBy: j.entered_by || '', source: j.source || '', homeowner: j.homeowner ?? null, decisionMakers: j.decision_makers || '',
+            lostReason: j.lost_reason || '', doNotContact: !!j.do_not_contact, firstContactAt: ms(j.first_contact_at), lastMessage: lastMsgBy[j.id] || null,
           };
         });
       },
@@ -257,6 +263,9 @@
           timeframe: input.timeframe || '', status: scheduled ? 'scheduled' : input.agreed ? 'hot' : 'qualifying',
           contractor_id: isSales ? null : input.contractorId || null, scheduled_for: isSales ? null : input.scheduledFor || null,
           sales_id: isSales ? staff.salesId : input.salesId || null,
+          source: TH.LEAD_SOURCES.some((x) => x.id === input.source) ? input.source : 'phone',
+          homeowner: input.homeowner === true || input.homeowner === false ? input.homeowner : null,
+          decision_makers: String(input.decisionMakers || '').trim().slice(0, 200), first_contact_at: new Date().toISOString(),
         }).select('id').single());
         if (input.price != null && input.price !== '') {
           const quote = '$' + Number(input.price).toLocaleString();
@@ -277,6 +286,20 @@
         await requireOffice();
         if (!outcome) throw new Error('Pick how the call went.');
         must(await sb.rpc('log_call', { p_job: id, p_outcome: outcome, p_note: note || '' }));
+      },
+      async messages(id) {
+        await requireOffice();
+        const rows = must(await sb.from('job_messages').select('*').eq('job_id', id).order('at'));
+        return rows.map(mapMsg);
+      },
+      async addMessage(id, m) {
+        await requireOffice();
+        must(await sb.rpc('log_message', { p_job: id, p_channel: m.channel || 'text', p_dir: m.dir === 'in' ? 'in' : 'out', p_body: m.body || '' }));
+      },
+      async recentMessages(limit = 60) {
+        await requireOffice();
+        const rows = must(await sb.from('job_messages').select('*').order('at', { ascending: false }).limit(limit));
+        return rows.map((r) => ({ ...mapMsg(r), jobId: r.job_id }));
       },
       async log(id) {
         await requireOffice();
@@ -307,6 +330,11 @@
         if ('scheduledFor' in patch) jobPatch.scheduled_for = patch.scheduledFor;
         if ('endDate' in patch) jobPatch.end_date = patch.endDate || null;
         if ('visitAt' in patch) jobPatch.visit_at = patch.visitAt || null;
+        if ('source' in patch) jobPatch.source = patch.source || '';
+        if ('homeowner' in patch) jobPatch.homeowner = patch.homeowner === true || patch.homeowner === false ? patch.homeowner : null;
+        if ('decisionMakers' in patch) jobPatch.decision_makers = String(patch.decisionMakers || '').trim().slice(0, 200);
+        if ('lostReason' in patch) jobPatch.lost_reason = String(patch.lostReason || '').slice(0, 200);
+        if ('doNotContact' in patch) jobPatch.do_not_contact = !!patch.doNotContact;
         if (patch.permit) {
           const pm = patch.permit;
           if ('status' in pm) jobPatch.permit_status = pm.status;

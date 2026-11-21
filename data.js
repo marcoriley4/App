@@ -96,6 +96,25 @@
     { id: 'flexible', label: "I'm flexible" },
   ];
 
+  // Where a lead came from (for close rate and money spent per lead, by source).
+  const LEAD_SOURCES = [
+    { id: 'angi', label: 'Angi' }, { id: 'website', label: 'Website' }, { id: 'google', label: 'Google' }, { id: 'facebook', label: 'Facebook / Instagram' },
+    { id: 'referral', label: 'Referral' }, { id: 'repeat', label: 'Past customer' }, { id: 'phone', label: 'Called in' }, { id: 'walk_in', label: 'Walk-in' },
+    { id: 'yard_sign', label: 'Yard sign / truck' }, { id: 'other', label: 'Other' },
+  ];
+  const sourceLabel = (id) => (LEAD_SOURCES.find((x) => x.id === id) || {}).label || 'Not set';
+  // Why a lead didn't buy (picked when it's closed as "Not a fit").
+  const LOST_REASONS = ['Price too high', 'Went with another company', 'Not ready yet / timing', 'Outside our service area', 'Job too small', 'Couldn’t reach them', 'Just shopping / getting prices', 'Other'];
+  // Ready-made texts and emails. {first} {company} {phone} {job} {trade} are filled in. The office edits them on the Payments tab.
+  const DEFAULT_TEMPLATES = [
+    { id: 't-hello', name: 'First reply', channel: 'text', body: 'Hi {first}, this is {company}. Thanks for your {trade} request ({job})! When is a good time for a quick call about your project?' },
+    { id: 't-price', name: 'Pricing', channel: 'text', body: 'Hi {first}, most {trade} projects like yours are priced after a quick look at the space. We can give you a ballpark on the phone and an exact price after a free visit. Want to set that up?' },
+    { id: 't-timeline', name: 'Timeline', channel: 'text', body: 'Hi {first}, once you approve the estimate we usually start within 1–3 weeks, depending on materials. We’ll give you a start and finish date before any work begins.' },
+    { id: 't-area', name: 'Service area', channel: 'text', body: 'Hi {first}, yes, we work in your area. What’s the best day this week for us to come take a look?' },
+    { id: 't-follow', name: 'Follow-up', channel: 'text', body: 'Hi {first}, just checking in on your {trade} project with {company}. Any questions I can answer? Call or text {phone}.' },
+    { id: 't-visit', name: 'Visit reminder', channel: 'text', body: 'Hi {first}, reminder: {company} is coming out for your {trade} project. Reply here if you need to change the time.' },
+    { id: 't-est', name: 'Estimate sent', channel: 'email', body: 'Hi {first},\n\nYour estimate for job {job} is ready in the Top Hat app (My jobs). You can approve it there with one tap.\n\nAny questions, call or text {phone}.\n\nThank you,\n{company}' },
+  ];
   // Level of finish the customer expects (owner's choices). The old price ranges stay so older jobs still read right.
   const BUDGETS = [
     { id: '', label: 'Not sure yet' },
@@ -258,6 +277,7 @@
   const DEFAULT_SETTINGS = {
     name: 'Top Hat Contracting', phone: '', email: '', address: '', license: '',
     taxRate: 0, dueDays: 14, showCrewPay: true,
+    templates: DEFAULT_TEMPLATES,
     estimatePaymentInstructions: 'We accept Zelle, check, cash and card.',
     // How a contractor's pay is split; they bill Top Hat at each step.
     crewPaySchedule: [
@@ -530,8 +550,12 @@
     function msAt(days, h, m = 0) { return when(days, h, m).getTime(); }
 
     // Number jobs oldest first, so job numbers read like a real history.
+    const demoSources = ['angi', 'angi', 'website', 'referral', 'google', 'angi', 'repeat', 'website', 'facebook', 'angi'];
     d.jobs.sort((a, b) => a.created - b.created).forEach((j, i) => {
       j.number = 1001 + i;
+      if (!j.source) j.source = demoSources[i % demoSources.length];
+      if (j.status !== 'new' && !j.firstContactAt) j.firstContactAt = j.created + ((i * 23) % 140 + 3) * 60e3;
+      if (j.status === 'lost' && !j.lostReason) j.lostReason = 'Price too high';
       j.docs = j.docs || [];
       const count = {};
       j.docs.forEach((doc) => {
@@ -840,7 +864,7 @@
           trade: job.trade, description: job.description.trim(), address: job.address.trim(), zip: (job.zip || '').trim(), state: cleanState(job.state) || stateFromZip(job.zip),
           style: styleOf(job.style) ? job.style : '',
           timeframe: job.timeframe, budget: job.budget || '', photos: job.photos || [],
-          contractorId: null, scheduledFor: null, price: null, crewPay: null, notes: '',
+          contractorId: null, scheduledFor: null, price: null, crewPay: null, notes: '', source: 'website', messages: [],
           log: [{ at: now, text: 'Lead received' }],
         };
         d.jobs.push(rec); writeDb(d);
@@ -868,6 +892,9 @@
           timeframe: input.timeframe || '', budget: '', photos: [],
           contractorId: crewOk ? input.contractorId : null, crewToken: crewOk ? newToken() : null, scheduledFor: input.scheduledFor || null,
           price: input.price != null && input.price !== '' ? Number(input.price) : null, crewPay: null, notes: '', visitAt: null,
+          source: LEAD_SOURCES.some((x) => x.id === input.source) ? input.source : 'phone', messages: [],
+          homeowner: input.homeowner === true || input.homeowner === false ? input.homeowner : null, decisionMakers: String(input.decisionMakers || '').trim().slice(0, 200),
+          firstContactAt: now, // they were on the phone (or in the door) when it was entered
           log: [{ at: now, text: `Job entered by ${staff.name} (${isStaff ? 'office' : 'sales'})` }],
         };
         if (rec.price != null) rec.log.push({ at: now, text: `📞 Phone estimate ${'$' + rec.price.toLocaleString()}${input.agreed ? ': customer agreed' : ''}` });
@@ -953,7 +980,7 @@
         const { d, isStaff, salesId } = await requireOffice();
         return d.jobs.filter((j) => isStaff || j.salesId === salesId).sort((a, b) => b.created - a.created).map((j) => (
           // Salespeople never see crew pay (so never profit either).
-          { ...j, crewPay: isStaff ? j.crewPay : null, crewBills: isStaff ? j.crewBills || [] : [], crewPaid: isStaff ? j.crewPaid || null : null, buyer: customerOf(d, j), hasAccount: !!j.buyerId }));
+          { ...j, messages: undefined, lastMessage: (j.messages || []).reduce((m, x) => (!m || x.at > m.at ? x : m), null), crewPay: isStaff ? j.crewPay : null, crewBills: isStaff ? j.crewBills || [] : [], crewPaid: isStaff ? j.crewPaid || null : null, buyer: customerOf(d, j), hasAccount: !!j.buyerId }));
       },
       // Office or sales: record a phone call and how it went.
       async logCall(id, outcome, note = '') {
@@ -961,7 +988,34 @@
         if (!outcome) throw new Error('Pick how the call went.');
         note = String(note || '').trim().slice(0, 500);
         j.log.push({ at: Date.now(), text: `📞 Call (${u.name}): ${outcome}${note ? '. ' + note : ''}` });
+        if (!j.firstContactAt) j.firstContactAt = Date.now();
+        (j.messages ||= []).push({ id: uid(), at: Date.now(), by: u.name, channel: 'call', dir: 'out', body: outcome + (note ? '. ' + note : '') });
         writeDb(d);
+      },
+      // Texts, emails and calls with the customer, oldest first (office and the job's salesperson).
+      async messages(id) {
+        const { j } = await officeJob(id);
+        return (j.messages || []).slice().sort((a, b) => a.at - b.at);
+      },
+      // Save a text or email (sent from your phone, or the customer's reply) to the job's conversation.
+      async addMessage(id, m) {
+        const { d, u, j } = await officeJob(id);
+        const channel = ['text', 'email', 'call'].includes(m.channel) ? m.channel : 'text';
+        const dir = m.dir === 'in' ? 'in' : 'out';
+        const body = String(m.body || '').trim().slice(0, 2000);
+        if (!body) throw new Error('Type the message first.');
+        if (dir === 'out' && j.doNotContact) throw new Error('This customer asked not to be contacted.');
+        (j.messages ||= []).push({ id: uid(), at: Date.now(), by: u.name, channel, dir, body });
+        if (dir === 'out' && !j.firstContactAt) j.firstContactAt = Date.now();
+        j.log.push({ at: Date.now(), text: `${channel === 'email' ? '✉️ Email' : channel === 'call' ? '📞 Call' : '💬 Text'} ${dir === 'in' ? 'from the customer' : `sent by ${u.name}`}` });
+        writeDb(d);
+      },
+      // Office inbox: the newest messages on every job you can see.
+      async recentMessages(limit = 60) {
+        const { d, isStaff, salesId } = await requireOffice();
+        return d.jobs.filter((j) => isStaff || j.salesId === salesId)
+          .flatMap((j) => (j.messages || []).map((m) => ({ ...m, jobId: j.id })))
+          .sort((a, b) => b.at - a.at).slice(0, limit);
       },
       // Owner/office only: delete a job for good, with its photos, files, designs and paperwork.
       async remove(id) {
@@ -1026,6 +1080,14 @@
           if ((next.number || '') !== (was.number || '') && next.number) j.log.push({ at: Date.now(), text: `📋 Permit # ${next.number}` });
           j.permit = next;
         }
+        if ('source' in patch && patch.source !== (j.source || '')) {
+          if (patch.source && !LEAD_SOURCES.some((x) => x.id === patch.source)) throw new Error('Pick where the lead came from.');
+          j.log.push({ at: Date.now(), text: `Lead source → ${sourceLabel(patch.source)}` }); j.source = patch.source || '';
+        }
+        if ('homeowner' in patch && patch.homeowner !== (j.homeowner ?? null)) { j.homeowner = patch.homeowner === true || patch.homeowner === false ? patch.homeowner : null; j.log.push({ at: Date.now(), text: `Homeowner → ${j.homeowner == null ? 'not asked' : j.homeowner ? 'yes' : 'no (renter / other)'}` }); }
+        if ('decisionMakers' in patch) j.decisionMakers = String(patch.decisionMakers || '').trim().slice(0, 200);
+        if ('lostReason' in patch && (patch.lostReason || '') !== (j.lostReason || '')) { j.lostReason = String(patch.lostReason || '').slice(0, 200); if (j.lostReason) j.log.push({ at: Date.now(), text: `Why it didn’t close: ${j.lostReason}` }); }
+        if ('doNotContact' in patch && !!patch.doNotContact !== !!j.doNotContact) { j.doNotContact = !!patch.doNotContact; j.log.push({ at: Date.now(), text: j.doNotContact ? '🚫 Customer asked not to be contacted' : 'OK to contact again' }); }
         if ('endDate' in patch && (patch.endDate || null) !== (j.endDate || null)) j.log.push({ at: Date.now(), text: patch.endDate ? `Expected finish → ${patch.endDate}` : 'Expected finish cleared' });
         for (const k of ['contractorId', 'scheduledFor', 'endDate', 'visitAt', 'price', 'crewPay', 'notes']) if (k in patch) j[k] = patch[k] || (k === 'notes' ? '' : patch[k] === 0 ? 0 : null);
         writeDb(d);
@@ -2058,5 +2120,5 @@
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupTheme); else setupTheme();
 
-  window.TH = { dreamNoun, beforeAfter, dreamRequest, dreamRequestText, materialsCard, SKILLS, doesTrade, STYLE_ROOMS, STYLE_TRADES, roomFromText, styleOf, MATERIAL_STATUS, US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, connect: connectAi, disconnect: () => { try { localStorage.removeItem(AI_KEY); } catch (e) {} }, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+  window.TH = { dreamNoun, beforeAfter, dreamRequest, dreamRequestText, materialsCard, SKILLS, doesTrade, STYLE_ROOMS, STYLE_TRADES, roomFromText, styleOf, MATERIAL_STATUS, US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, connect: connectAi, disconnect: () => { try { localStorage.removeItem(AI_KEY); } catch (e) {} }, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, LEAD_SOURCES, LOST_REASONS, DEFAULT_TEMPLATES, sourceLabel, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();

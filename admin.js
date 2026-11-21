@@ -79,9 +79,9 @@
 
   /* ---------- main ---------- */
   // Sales and Contractors are one tab, "Team", with a switch inside (owner's request).
-  const MAIN_TABS = [['today', 'Today', '📅'], ['jobs', 'Jobs', '🗂️'], ['team', 'Team', '👥'], ['business', 'Payments', '💳']];
+  const MAIN_TABS = [['today', 'Today', '📅'], ['jobs', 'Jobs', '🗂️'], ['inbox', 'Inbox', '💬'], ['team', 'Team', '👥'], ['reports', 'Reports', '📊'], ['business', 'Payments', '💳']];
   let teamPart = 'sales'; // which half of Team is showing: 'sales' or 'crew'
-  const SALES_TABS = [['today', 'Today', '📅'], ['jobs', 'My clients', '🗂️']];
+  const SALES_TABS = [['today', 'Today', '📅'], ['jobs', 'My clients', '🗂️'], ['inbox', 'Inbox', '💬']];
   if (MAIN_TABS.some(([id]) => id === location.hash.slice(1))) tab = location.hash.slice(1);
   if (['sales', 'crew'].includes(location.hash.slice(1))) { tab = 'team'; teamPart = location.hash.slice(1); } // old links
   const salesName = (id) => team.find((x) => x.id === id)?.name;
@@ -140,7 +140,9 @@
     return [
       { id: 'new', icon: '🔔', title: 'New leads: call with a phone estimate', why: 'Go over their photos and measurements and give them a price.', call: true,
         list: open.filter((j) => j.status === 'new').sort((a, b) => a.created - b.created),
-        line: (j) => `${tradeOf(j.trade).label} · came in ${ago(j.created)}` },
+        line: (j) => `${tradeOf(j.trade).label} · ${srcLabel(j.source)} · ${j.firstContactAt ? 'came in ' + ago(j.created) : '⏱ waiting ' + fmtDur(Date.now() - j.created)}` },
+      { id: 'replies', icon: '↩️', title: 'Customers waiting on a reply', why: 'They texted or emailed back. Answer from the job’s Messages box.',
+        list: open.filter(needsReply), line: (j) => `“${j.lastMessage.body.slice(0, 70)}” · ${ago(j.lastMessage.at)}` },
       { id: 'hotbook', icon: '🔥', title: 'Hot leads: book the rep visit', why: 'They agreed to the price. Send a rep out for the walkthrough.',
         list: open.filter(needsVisit), line: (j) => `${tradeOf(j.trade).label}${j.price != null ? ' · agreed ' + money(j.price) : ''}${salesName(j.salesId) ? ' · ' + salesName(j.salesId) : ''}` },
       { id: 'declined', icon: '🙅', title: 'Crew can’t make it', why: 'Pick another crew or a new date.',
@@ -194,7 +196,7 @@
     ];
   }
   // Salespeople only see what's theirs to act on: calls to make and estimates waiting.
-  const SALES_BUCKETS = ['new', 'hotbook', 'visits', 'followup', 'declined', 'schedule', 'invoice', 'permits', 'materials', 'notes', 'waiting', 'soon', 'reviews', 'newreviews'];
+  const SALES_BUCKETS = ['new', 'replies', 'hotbook', 'visits', 'followup', 'declined', 'schedule', 'invoice', 'permits', 'materials', 'notes', 'waiting', 'soon', 'reviews', 'newreviews'];
   // Salespeople run their own projects; the owner oversees. These are the rep's job when the project has a salesperson.
   const REP_BUCKETS = ['hotbook', 'visits', 'followup', 'declined', 'schedule', 'invoice', 'permits', 'materials', 'notes', 'waiting', 'soon', 'reviews'];
   const myBuckets = () => buckets().filter((b) => isStaff || SALES_BUCKETS.includes(b.id))
@@ -230,13 +232,15 @@
       ...(isStaff ? MAIN_TABS : SALES_TABS).map(([id, label, icon]) => el('button', { role: 'tab', 'aria-current': String(tab === id), onclick: () => { tab = id; history.replaceState(null, '', '#' + id); render(); } },
         el('span', { class: 'tab-ic', 'aria-hidden': 'true' }, icon,
           id === 'today' && todo ? el('span', { class: 'count hot' }, String(todo)) : null,
-          id === 'jobs' && newCount ? el('span', { class: 'count' }, String(newCount)) : null),
+          id === 'jobs' && newCount ? el('span', { class: 'count' }, String(newCount)) : null,
+          id === 'inbox' && jobs.filter(needsReply).length ? el('span', { class: 'count hot' }, String(jobs.filter(needsReply).length)) : null),
         el('span', { class: 'tab-lbl' }, label))));
     if (tab === 'sales' || tab === 'crew') { teamPart = tab; tab = 'team'; }
     const teamSwitch = () => el('div', { class: 'tabs-bar team-switch', role: 'group', 'aria-label': 'Team' },
       ...[['sales', '💼 Sales'], ['crew', '👷 Contractors']].map(([id, label]) => el('button', { type: 'button', 'aria-pressed': String(teamPart === id),
         class: teamPart === id ? 'on' : '', onclick: () => { teamPart = id; render(); } }, label)));
     const body = tab === 'today' ? todayView() : tab === 'jobs' ? leadsView()
+      : tab === 'inbox' ? inboxView() : tab === 'reports' ? reportsView()
       : tab === 'team' ? [teamSwitch(), ...[].concat(teamPart === 'crew' ? crewView() : salesTeamView())] : businessView();
     view.replaceChildren(tabs, el('div', { class: 'stack', style: 'margin:16px 0' }, ...[].concat(body)));
     if (tab === 'today') fillDreams();
@@ -434,6 +438,261 @@
         el('b', {}, `${x.kind === 'out' ? '⛔' : '🛡'} ${x.c.name}`), el('span', { class: 'muted small' }, x.text))));
   }
 
+  /* ---------- leads, messages & reports (CRM checklist 1, 2, 14 · office checklist 2, 6) ---------- */
+  const LEAD_OPEN = ['new', 'qualifying', 'hot'];
+  const srcLabel = (id) => TH.sourceLabel(id);
+  const normAddr = (j) => String(j.address || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const fmtDur = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 1440)} days`; };
+  const speedOf = (j) => (j.firstContactAt ? j.firstContactAt - j.created : null);
+  // The same person asking twice (same phone, email or address on another open lead).
+  function dupesOf(j) {
+    const ph = digitsOnly(j.buyer.phone), em = String(j.buyer.email || '').toLowerCase(), ad = normAddr(j);
+    return jobs.filter((x) => x.id !== j.id && (LEAD_OPEN.includes(x.status) || Math.abs(x.created - j.created) < 30 * 864e5) && x.status !== 'lost'
+      && ((ph.length >= 10 && digitsOnly(x.buyer.phone) === ph) || (em && String(x.buyer.email || '').toLowerCase() === em) || (ad.length > 6 && normAddr(x) === ad)));
+  }
+  // Hot / warm / cold for open leads, from their answers.
+  function leadTemp(j) {
+    if (!LEAD_OPEN.includes(j.status)) return null;
+    if (j.status === 'hot') return { id: 'hot', label: '🔥 Hot' };
+    let s = 0;
+    if (j.homeowner === true) s += 2; else if (j.homeowner === false) s -= 3;
+    const tf = j.timeframe || '';
+    if (['asap', '2weeks'].includes(tf) || (/^\d{4}-\d{2}-\d{2}$/.test(tf) && Date.parse(tf) - Date.now() < 45 * 864e5)) s += 2;
+    else if (tf === 'month') s += 1; else if (tf === 'flexible') s -= 1;
+    if ((j.designs || []).length) s += 1;
+    if (['mid', 'premium'].includes(j.budget)) s += 1;
+    if (j.price != null) s += 1;
+    if (Date.now() - j.created > 21 * 864e5) s -= 2;
+    return s >= 4 ? { id: 'hot', label: '🔥 Hot' } : s >= 2 ? { id: 'warm', label: '🌤 Warm' } : { id: 'cold', label: '❄️ Cold' };
+  }
+  // Fill a template: {first} {company} {phone} {job} {trade}.
+  const fillTemplate = (body, j) => String(body || '').replace(/\{(\w+)\}/g, (m, k) => ({
+    first: (j.buyer.name || '').split(' ')[0] || 'there', company: settings.name || 'Top Hat Contracting', phone: settings.phone || '',
+    job: jobNo(j), trade: tradeOf(j.trade).label.toLowerCase() }[k] ?? m));
+  const templatesOf = () => (Array.isArray(settings.templates) && settings.templates.length ? settings.templates : TH.DEFAULT_TEMPLATES);
+  const needsReply = (j) => j.lastMessage && j.lastMessage.dir === 'in';
+  // Follow-up: open lead with no call/text/email in 2+ days.
+  const lastTouch = (j) => Math.max(j.firstContactAt || 0, j.lastMessage?.at || 0);
+  const needsFollowUp = (j) => ['qualifying', 'hot'].includes(j.status) && !j.doNotContact && lastTouch(j) && Date.now() - lastTouch(j) > 2 * 864e5 && !j.visitAt;
+
+  // Lead details on the job: temperature, source, homeowner, decision makers, do-not-contact, speed to lead, duplicates.
+  function leadBox(j, update) {
+    const temp = leadTemp(j); const dupes = dupesOf(j); const sp = speedOf(j);
+    const yn = (val, label) => el('button', { type: 'button', class: 'chip', 'aria-pressed': String(j.homeowner === val), onclick: () => update({ homeowner: j.homeowner === val ? null : val }) }, label);
+    return el('div', { class: 'stack lead-box', style: 'gap:8px' },
+      el('div', { class: 'row', style: 'flex-wrap:wrap;gap:6px' },
+        temp ? el('span', { class: 'pill temp-' + temp.id }, temp.label) : null,
+        el('select', { class: 'inline-select', 'aria-label': 'Lead source', onchange: (e) => update({ source: e.target.value }) },
+          el('option', { value: '' }, 'Where did they find us?'), ...TH.LEAD_SOURCES.map((x) => el('option', { value: x.id, selected: x.id === j.source }, `📣 ${x.label}`)))),
+      el('div', { class: 'row', style: 'flex-wrap:wrap;gap:6px' }, el('span', { class: 'small' }, '🏠 Homeowner?'), yn(true, 'Yes'), yn(false, 'No (renter / other)')),
+      el('label', { class: 'mini-field' }, el('span', { class: 'muted small' }, '👥 Who decides (spouse, landlord…)'),
+        el('input', { class: 'inline-select', 'aria-label': 'Decision makers', maxlength: '200', value: j.decisionMakers || '', placeholder: 'e.g. Wife Karen has to see it', onchange: (e) => update({ decisionMakers: e.target.value }) })),
+      el('p', { class: 'small ' + (sp == null && LEAD_OPEN.includes(j.status) && Date.now() - j.created > 15 * 60e3 ? 'bad-text' : 'muted'), style: 'margin:0' },
+        sp != null ? `⏱ First contact ${fmtDur(sp)} after the lead came in` : LEAD_OPEN.includes(j.status) ? `⏱ Not contacted yet · waiting ${fmtDur(Date.now() - j.created)}` : '⏱ No contact recorded'),
+      dupes.length ? el('div', { class: 'dupe-warn small' }, '⚠️ Possible duplicate: ',
+        ...dupes.slice(0, 3).flatMap((x, i) => [i ? ', ' : '', el('button', { type: 'button', class: 'link small', onclick: () => openLead(x.id, 'overview') }, `${jobNo(x)} (${statusOf(x.status).label})`)])) : null,
+      el('label', { class: 'dnc-row small' },
+        el('input', { type: 'checkbox', checked: !!j.doNotContact, 'aria-label': 'Do not contact', onchange: (e) => update({ doNotContact: e.target.checked }) }),
+        el('span', {}, '🚫 Do not contact (they asked us to stop calling or texting)')));
+  }
+
+  // Conversation with the customer: texts, emails and calls, plus a box to send one from your phone using a template.
+  function convoBox(j, messages, after) {
+    const b = j.buyer; let channel = b.phone ? 'text' : 'email';
+    const err = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const body = el('textarea', { rows: 3, 'aria-label': 'Message', placeholder: 'Type a message, or tap a ready-made one above' });
+    const chips = el('div', { class: 'stage-chips' });
+    const chanBtns = el('div', { class: 'row', style: 'gap:6px' });
+    const draw = () => {
+      chanBtns.replaceChildren(...[['text', '💬 Text', b.phone], ['email', '✉️ Email', b.email]].filter((x) => x[2]).map(([id, label]) =>
+        el('button', { type: 'button', class: 'chip', 'aria-pressed': String(channel === id), onclick: () => { channel = id; draw(); } }, label)));
+      chips.replaceChildren(...templatesOf().filter((t) => (t.channel || 'text') === channel || channel === 'email').map((t) =>
+        el('button', { type: 'button', class: 'chip', onclick: () => { body.value = fillTemplate(t.body, j); body.focus(); } }, t.name)));
+    };
+    draw();
+    const save = async (dir, btn) => {
+      err.hidden = true; btn.disabled = true;
+      try {
+        await api.jobs.addMessage(j.id, { channel, dir, body: body.value });
+        if (dir === 'out') {
+          const href = channel === 'email' ? `mailto:${b.email}?subject=${encodeURIComponent(`${settings.name || 'Top Hat Contracting'} · ${jobNo(j)}`)}&body=${encodeURIComponent(body.value)}` : smsHref(b.phone, body.value);
+          const a = el('a', { href, hidden: true }); document.body.append(a); try { a.click(); } catch (e) {} a.remove();
+        }
+        after();
+      } catch (e) { err.textContent = e.message; err.hidden = false; btn.disabled = false; }
+    };
+    let showAll = false;
+    const list = el('div', { class: 'convo' });
+    const drawList = () => {
+      const shown = showAll ? messages : messages.slice(-6);
+      list.replaceChildren(...[
+        messages.length > shown.length ? el('button', { type: 'button', class: 'link small', onclick: () => { showAll = true; drawList(); } }, `Show all ${messages.length}`) : null,
+        ...shown.map((m) => el('div', { class: 'msg ' + (m.dir === 'in' ? 'in' : 'out') + (m.channel === 'call' ? ' call' : '') },
+          el('p', {}, m.channel === 'call' ? `📞 ${m.body}` : m.body),
+          el('span', { class: 'muted small' }, `${m.channel === 'email' ? '✉️ ' : m.channel === 'text' ? '💬 ' : ''}${m.dir === 'in' ? (b.name || 'Customer') : m.by} · ${ago(m.at)}`))),
+        messages.length ? null : el('p', { class: 'muted small' }, 'No texts or emails saved yet.')].filter(Boolean));
+    };
+    drawList();
+    return el('section', { class: 'card stack convo-card', id: 'convo' },
+      el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, '💬 Messages'), needsReply(j) ? el('span', { class: 'flag hot' }, 'Customer replied') : null),
+      list,
+      j.doNotContact ? el('p', { class: 'small bad-text' }, '🚫 This customer asked not to be contacted. Uncheck “Do not contact” above if they say it’s OK again.')
+        : (b.phone || b.email) ? el('div', { class: 'stack', style: 'gap:8px' }, chanBtns, chips, body, err,
+          el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' },
+            el('button', { type: 'button', style: 'flex:1', onclick: (e) => save('out', e.currentTarget) }, channel === 'email' ? 'Send email' : 'Send text'),
+            el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: (e) => save('in', e.currentTarget) }, 'Save their reply')),
+          el('p', { class: 'muted small', style: 'margin:0' }, 'Send opens your phone’s messages (or email) with this filled in, and saves it here. Paste what the customer writes back with “Save their reply” so the whole team sees it.'))
+        : el('p', { class: 'muted small' }, 'No phone or email for this customer.'));
+  }
+
+  // Inbox: replies waiting, leads to call (fastest first), follow-ups due, and the latest messages.
+  function inboxView() {
+    const box = el('div', { class: 'stack' }, el('p', { class: 'muted' }, 'Loading messages…'));
+    const row = (j, text, flag) => el('button', { type: 'button', class: 'alert-row', onclick: () => openLead(j.id, 'overview') },
+      el('b', {}, `${j.buyer.name} · ${jobNo(j)}`, flag ? el('span', { class: 'flag hot', style: 'margin-left:6px' }, flag) : null), el('span', { class: 'muted small' }, text));
+    const callList = jobs.filter((j) => j.status === 'new' && !j.firstContactAt && !j.doNotContact).sort((a, b) => a.created - b.created);
+    const replies = jobs.filter(needsReply).sort((a, b) => b.lastMessage.at - a.lastMessage.at);
+    const follow = jobs.filter(needsFollowUp).sort((a, b) => lastTouch(a) - lastTouch(b));
+    const card = (title, why, items) => el('section', { class: 'card stack' }, el('h3', {}, title), el('p', { class: 'muted small', style: 'margin:0' }, why),
+      ...(items.length ? items : [el('p', { class: 'small good-text' }, '✓ Nothing waiting')]));
+    api.jobs.recentMessages(80).then((msgs) => {
+      const latest = []; const seen = new Set();
+      msgs.forEach((m) => { if (!seen.has(m.jobId)) { seen.add(m.jobId); latest.push(m); } });
+      box.replaceChildren(
+        card('↩️ Customers waiting on a reply', 'Their last message came in and nobody has answered yet.', replies.map((j) => row(j, `“${j.lastMessage.body.slice(0, 80)}” · ${ago(j.lastMessage.at)}`, 'Reply'))),
+        card('📞 Call list: new leads not contacted yet', 'Oldest first. The faster you call, the more you close.', callList.map((j) => row(j, `${tradeOf(j.trade).label} · ${srcLabel(j.source)} · waiting ${fmtDur(Date.now() - j.created)}`))),
+        card('🔁 Follow up', 'Leads with no call, text or email in 2+ days.', follow.map((j) => row(j, `${statusOf(j.status).label} · last contact ${ago(lastTouch(j))}`))),
+        el('section', { class: 'card stack' }, el('h3', {}, '💬 Latest messages'),
+          ...(latest.length ? latest.slice(0, 30).map((m) => { const j = jobs.find((x) => x.id === m.jobId); return j ? row(j, `${m.dir === 'in' ? '⬅ ' : '➡ '}${m.channel === 'call' ? '📞 ' : ''}${m.body.slice(0, 90)} · ${ago(m.at)}`) : null; })
+            : [el('p', { class: 'muted small' }, 'Texts, emails and calls you save on a job show up here.')])),
+        el('p', { class: 'muted small' }, 'Texts and emails go out from your own phone for now. When a texting service (like Twilio) is connected, they’ll send and arrive here automatically.'));
+    }).catch((e) => box.replaceChildren(el('p', { class: 'error' }, e.message)));
+    return box;
+  }
+
+  // Reports (owner/office): pipeline, sales vs goal, lead sources, reps, speed to lead, profit, lost reasons, sales tax, 1099s.
+  let reportYear = new Date().getFullYear();
+  function reportsView() {
+    const y = reportYear; const inYear = (ms) => ms && new Date(ms).getFullYear() === y;
+    const pct = (a, b) => (b ? Math.round(a / b * 100) + '%' : '—');
+    const MONTHS = Array.from({ length: 12 }, (_, i) => new Date(y, i, 1).toLocaleString(undefined, { month: 'short' }));
+    const valueOf = (j) => jobTotal(j) || Number(j.price) || 0;
+    const table = (head, rows, foot) => el('div', { class: 'report-scroll' }, el('table', { class: 'report-table' },
+      el('thead', {}, el('tr', {}, ...head.map((h) => el('th', {}, h)))),
+      el('tbody', {}, ...rows.map((r) => el('tr', {}, ...r.map((c) => el('td', {}, c ?? '—'))))),
+      foot ? el('tfoot', {}, el('tr', {}, ...foot.map((c) => el('td', {}, c ?? '')))) : null));
+    const section = (title, why, head, rows, foot, extra) => el('section', { class: 'card stack report' },
+      el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, title),
+        el('button', { type: 'button', class: 'ghost small', onclick: () => TH.download(`top-hat-${title.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${y}.csv`, TH.csv([head, ...rows, ...(foot ? [foot] : [])])) }, '⬇ CSV')),
+      why ? el('p', { class: 'muted small', style: 'margin:0' }, why) : null, extra || null, table(head, rows, foot));
+    const leadsY = jobs.filter((j) => inYear(j.created));
+    const won = (j) => WON.includes(j.status);
+    const decided = (list) => list.filter((j) => won(j) || j.status === 'lost');
+
+    // 1. Pipeline by stage (everything open, any year).
+    const STG = [['new', 'New lead'], ['qualifying', 'Phone estimate'], ['hot', 'Hot lead'], ['scheduled', 'Scheduled'], ['in_progress', 'In progress']];
+    const pipeRows = STG.map(([s, label]) => { const l = jobs.filter((j) => j.status === s); return [label, l.length, money(l.reduce((t, j) => t + valueOf(j), 0))]; });
+    const pipeAll = jobs.filter((j) => OPEN.includes(j.status));
+
+    // 2. Sales by month vs goal.
+    const gCount = Number(settings.goalCount) || 100, gWhat = settings.goalWhat || 'kitchens', gRev = Number(settings.goalRevenue) || 500000;
+    const countGoal = (l) => (/kitchen/i.test(gWhat) ? l.filter(isKitchen) : l).length;
+    const pays = paymentsOf();
+    const monthRows = MONTHS.map((m, i) => {
+      const sold = jobs.filter((j) => won(j) && inYear(soldAt(j)) && new Date(soldAt(j)).getMonth() === i);
+      const coll = pays.filter((p) => p.date.slice(0, 4) === String(y) && Number(p.date.slice(5, 7)) === i + 1).reduce((t, p) => t + p.amount, 0);
+      const rev = sold.reduce((t, j) => t + valueOf(j), 0);
+      return [m, `${countGoal(sold)} / ${Math.round(gCount / 12)}`, money(rev), pct(rev, gRev / 12), money(coll)];
+    });
+    const soldY = jobs.filter((j) => won(j) && inYear(soldAt(j)));
+    const revY = soldY.reduce((t, j) => t + valueOf(j), 0);
+
+    // 3. Lead sources: leads, sold, close rate, money, spend and cost per lead/sale.
+    const spendAll = settings.leadSpend || {}; const spendY = spendAll[y] || {};
+    const srcIds = [...new Set([...TH.LEAD_SOURCES.map((x) => x.id), ...leadsY.map((j) => j.source || '')])];
+    const srcRows = srcIds.map((id) => {
+      const l = leadsY.filter((j) => (j.source || '') === id); const w = l.filter(won); const spend = Number(spendY[id]) || 0;
+      if (!l.length && !spend) return null;
+      const rev = w.reduce((t, j) => t + valueOf(j), 0);
+      return [srcLabel(id), l.length, w.length, pct(w.length, decided(l).length), money(rev), spend ? money(spend) : '—', spend && l.length ? money(spend / l.length) : '—', spend && w.length ? money(spend / w.length) : '—', spend ? (rev / spend).toFixed(1) + '×' : '—'];
+    }).filter(Boolean);
+    const spendSaved = el('span', { class: 'saved-note', hidden: true }, 'Saved ✓');
+    const spendForm = el('details', { class: 'spend-edit' }, el('summary', { class: 'small' }, `✏️ Enter what you spent on leads in ${y}`),
+      el('div', { class: 'two', style: 'margin-top:8px' }, ...TH.LEAD_SOURCES.map((x) => el('label', { class: 'field' }, x.label,
+        el('input', { type: 'number', min: '0', step: '1', inputmode: 'decimal', 'data-src': x.id, value: spendY[x.id] ?? '', placeholder: '$ this year' })))),
+      el('div', { class: 'row' }, el('button', { type: 'button', onclick: async (e) => {
+        const next = { ...spendY }; e.currentTarget.closest('details').querySelectorAll('input[data-src]').forEach((i) => { if (i.value === '') delete next[i.dataset.src]; else next[i.dataset.src] = Number(i.value) || 0; });
+        settings = await api.settings.save({ leadSpend: { ...spendAll, [y]: next } }); render();
+      } }, 'Save spend'), spendSaved));
+
+    // 4. Sales reps.
+    const reps = [...team.map((x) => [x.id, x.name]), [null, 'No salesperson (office)']];
+    const repRows = reps.map(([id, name]) => {
+      const l = leadsY.filter((j) => (j.salesId || null) === id); if (!l.length) return null;
+      const w = l.filter(won); const sp = l.map(speedOf).filter((v) => v != null);
+      return [name, l.length, w.length, pct(w.length, decided(l).length), money(w.reduce((t, j) => t + valueOf(j), 0)), sp.length ? fmtDur(sp.reduce((a, b) => a + b, 0) / sp.length) : '—'];
+    }).filter(Boolean);
+
+    // 5. Speed to lead.
+    const sp = leadsY.map(speedOf).filter((v) => v != null).sort((a, b) => a - b);
+    const notYet = leadsY.filter((j) => j.firstContactAt == null && LEAD_OPEN.includes(j.status)).length;
+    const speedRows = [['Average time to first contact', sp.length ? fmtDur(sp.reduce((a, b) => a + b, 0) / sp.length) : '—'],
+      ['Middle (median)', sp.length ? fmtDur(sp[Math.floor(sp.length / 2)]) : '—'],
+      ['Contacted within 5 minutes', pct(sp.filter((v) => v <= 5 * 60e3).length, sp.length)],
+      ['Contacted within 1 hour', pct(sp.filter((v) => v <= 60 * 60e3).length, sp.length)],
+      ['Open leads never contacted', String(notYet)]];
+
+    // 6. Profit by month and by type of work (finished jobs).
+    const done = jobs.filter((j) => j.status === 'completed' && inYear(j.finishedAt || soldAt(j)));
+    const extras = (j) => (j.crewBills || []).filter((b) => b.step == null && ['approved', 'paid'].includes(b.status)).reduce((s, b) => s + Number(b.amount), 0);
+    const pl = (l) => { const rev = l.reduce((t, j) => t + valueOf(j), 0); const cost = l.reduce((t, j) => t + (Number(j.crewPay) || 0) + extras(j), 0); return [l.length, money(rev), money(cost), money(rev - cost), pct(rev - cost, rev)]; };
+    const plMonth = MONTHS.map((m, i) => [m, ...pl(done.filter((j) => new Date(j.finishedAt || soldAt(j)).getMonth() === i))]).filter((r) => r[1]);
+    const plTrade = [...new Set(done.map((j) => j.trade))].map((t) => [tradeOf(t).label, ...pl(done.filter((j) => j.trade === t))]);
+
+    // 7. Why leads didn't close.
+    const lost = leadsY.filter((j) => j.status === 'lost');
+    const lostRows = [...new Set(lost.map((j) => j.lostReason || 'No reason picked'))].map((r) => [r, lost.filter((j) => (j.lostReason || 'No reason picked') === r).length, pct(lost.filter((j) => (j.lostReason || 'No reason picked') === r).length, lost.length)]).sort((a, b) => b[1] - a[1]);
+
+    // 8. Sales tax collected (the tax share of each payment on an invoice).
+    const taxRows = MONTHS.map((m, i) => {
+      let tax = 0, gross = 0;
+      jobs.forEach((j) => liveInvoices(j).forEach((d) => { const t = docs.totals(d); (d.payments || []).forEach((p) => {
+        const k = String(p.date || ''); if (k.slice(0, 4) !== String(y) || Number(k.slice(5, 7)) !== i + 1) return;
+        gross += Number(p.amount) || 0; if (t.total) tax += (Number(p.amount) || 0) * t.tax / t.total; }); }));
+      return [m, money(gross), '$' + tax.toFixed(2)];
+    });
+
+    // 9. Contractor payments for 1099s ($600 or more in the year).
+    const paidTo = {};
+    jobs.forEach((j) => {
+      if (!j.contractorId) return;
+      let billed = 0;
+      (j.crewBills || []).filter((b) => b.status === 'paid' && String(b.paidDate || '').slice(0, 4) === String(y)).forEach((b) => { billed += Number(b.amount); paidTo[j.contractorId] = (paidTo[j.contractorId] || 0) + Number(b.amount); });
+      if (j.crewPaid && String(j.crewPaid.date).slice(0, 4) === String(y)) { const rest = crewOwedTotal(j) - crewBillsOf(j, ['paid']).reduce((t, b) => t + Number(b.amount), 0); if (rest > 0) paidTo[j.contractorId] = (paidTo[j.contractorId] || 0) + rest; }
+    });
+    const tenRows = Object.entries(paidTo).sort((a, b) => b[1] - a[1]).map(([cid, amt]) => { const c = find(crew, cid) || {}; return [c.name || 'Unknown', c.phone || '', money(amt), amt >= 600 ? '✅ Needs a 1099' : 'Under $600']; });
+
+    const years = [...new Set([new Date().getFullYear(), ...jobs.map((j) => new Date(j.created).getFullYear())])].sort((a, b) => b - a);
+    return [
+      el('div', { class: 'row' }, el('h2', { style: 'flex:1' }, '📊 Reports'),
+        el('select', { class: 'inline-select', 'aria-label': 'Year', onchange: (e) => { reportYear = Number(e.target.value); render(); } }, ...years.map((yy) => el('option', { value: yy, selected: yy === y }, String(yy))))),
+      section('Pipeline by stage', 'Every open job right now and what it’s worth (approved estimate, or the price you quoted).', ['Stage', 'Jobs', 'Value'], pipeRows,
+        ['Total', pipeAll.length, money(pipeAll.reduce((t, j) => t + valueOf(j), 0))]),
+      section(`Sales by month vs goal (${gCount} ${gWhat} · ${money(gRev)})`, 'Sold = scheduled, in progress or done, by start date. Collected = payments received that month.',
+        ['Month', `${gWhat[0].toUpperCase() + gWhat.slice(1)} sold / goal`, 'Sold', 'Of monthly goal', 'Collected'], monthRows,
+        ['Year', `${countGoal(soldY)} / ${gCount}`, money(revY), pct(revY, gRev), money(pays.filter((p) => p.date.slice(0, 4) === String(y)).reduce((t, p) => t + p.amount, 0))]),
+      section('Lead sources', 'Which sources bring leads that buy. Enter what you spend on each (Angi, ads…) to see the cost per lead and per sale.',
+        ['Source', 'Leads', 'Sold', 'Close rate', 'Sold $', 'Spent', 'Per lead', 'Per sale', 'Return'], srcRows, null, spendForm),
+      section('Sales reps', 'Leads that came in this year, by who owns them.', ['Rep', 'Leads', 'Sold', 'Close rate', 'Sold $', 'Speed to lead'], repRows),
+      section('Speed to lead', 'Time from a lead coming in to the first call, text or email.', ['', ''], speedRows),
+      section('Profit by month', 'Finished jobs. Cost = crew pay plus approved extras.', ['Month', 'Jobs', 'Revenue', 'Cost', 'Profit', 'Margin'], plMonth),
+      section('Profit by type of work', null, ['Work', 'Jobs', 'Revenue', 'Cost', 'Profit', 'Margin'], plTrade),
+      section('Why leads didn’t close', 'Pick a reason when you close a lead as “Not a fit”.', ['Reason', 'Leads', 'Share'], lostRows),
+      section('Sales tax collected', 'The tax part of each invoice payment received.', ['Month', 'Payments', 'Sales tax'], taxRows),
+      section('Contractor payments (1099)', 'Paid to each contractor this year. $600 or more needs a 1099-NEC by January 31.', ['Contractor', 'Phone', 'Paid', '1099'], tenRows),
+    ];
+  }
+
   function todayView() {
     const bs = myBuckets();
     const today = dayKey(Date.now()), weekEnd = dayKey(Date.now() + 7 * 86400e3);
@@ -589,7 +848,7 @@
     if (tabName) leadTab = tabName; else if (openId !== id) leadTab = 'overview';
     openId = id;
     releaseUrls();
-    const [files, history, jobDocs, crewNotes, designs] = await Promise.all([api.files.list(j.id), api.jobs.log(j.id), api.docs.list(j.id), api.jobs.crewNotes(j.id), api.designs.list(j.id).catch(() => [])]);
+    const [files, history, jobDocs, crewNotes, designs, messages] = await Promise.all([api.files.list(j.id), api.jobs.log(j.id), api.docs.list(j.id), api.jobs.crewNotes(j.id), api.designs.list(j.id).catch(() => []), api.jobs.messages(j.id).catch(() => [])]);
     j.crewNotesSeenAt = Date.now(); // opened → no longer "new"
     fileUrls = [...files.map((f) => f.url), ...designs.map((v) => v.url)].filter(Boolean);
     const t = tradeOf(j.trade);
@@ -633,10 +892,12 @@
           el('p', { class: 'muted small' }, `${t.icon} ${t.label} · ${jobNo(j)} · `,
             el('button', { type: 'button', class: 'link small', onclick: () => openCustomer(customerKey(j)) }, (() => { const n = jobsOfCustomer(customerKey(j)).length; return `📁 ${n} job${n === 1 ? '' : 's'} with us`; })())))),
       el('div', { class: 'contact' },
-        b.phone ? el('a', { class: 'btn ghost small', href: telHref(b.phone) }, '📞 Call') : null,
+        j.doNotContact ? el('span', { class: 'flag hot' }, '🚫 Do not contact') : null,
+        b.phone && !j.doNotContact ? el('a', { class: 'btn ghost small', href: telHref(b.phone) }, '📞 Call') : null,
         el('button', { type: 'button', class: 'ghost small', onclick: () => { callBox.hidden = !callBox.hidden; } }, '📝 Log call'),
-        b.phone ? el('a', { class: 'btn ghost small', href: smsHref(b.phone) }, '💬 Text') : null,
-        b.email ? el('a', { class: 'btn ghost small', href: `mailto:${b.email}?subject=${encodeURIComponent('Your ' + t.label.toLowerCase() + ' request with Top Hat Contracting')}` }, '✉️ Email') : null),
+        b.phone && !j.doNotContact ? el('a', { class: 'btn ghost small', href: smsHref(b.phone) }, '💬 Text') : null,
+        b.email && !j.doNotContact ? el('a', { class: 'btn ghost small', href: `mailto:${b.email}?subject=${encodeURIComponent('Your ' + t.label.toLowerCase() + ' request with Top Hat Contracting')}` }, '✉️ Email') : null,
+        (b.phone || b.email) && !j.doNotContact ? el('button', { type: 'button', class: 'ghost small', onclick: () => { leadTab = 'overview'; renderTab(); document.getElementById('convo')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, '📋 Templates') : null),
       callBox,
       el('ul', { class: 'facts' },
         isStaff ? el('li', {}, el('span', { class: 'fi' }, '💼'), team.length
@@ -677,8 +938,10 @@
         el('li', {}, el('span', { class: 'fi' }, '💲'), j.price != null
           ? el('span', {}, `${money(j.price)} ${['new', 'qualifying'].includes(j.status) ? 'phone estimate' : j.status === 'hot' ? 'agreed price' : 'customer price'}`, j.crewPay != null ? el('span', { class: 'muted' }, ` · ${money(j.price - j.crewPay)} profit`) : null)
           : el('span', { class: 'muted' }, 'No price yet'))),
+      leadBox(j, update),
       askedFor(),
     );
+    const convo = convoBox(j, messages, async () => { await load(); openLead(j.id); });
 
     // What the customer asked for
     // Design studio: the customer's AI pictures, and the one they picked.
@@ -758,6 +1021,8 @@
       j.progressAt ? el('p', { class: 'small last-update' + (j.progressByCrew ? ' crew' : '') },
         `Last update: ${progressText(j)} · ${j.progressByCrew ? `${j.progressBy} (crew)` : j.progressBy || 'office'} · ${ago(j.progressAt)}`) : null,
       el('div', { class: 'row' },
+        j.status === 'lost' ? el('div', { class: 'stack', style: 'gap:6px;flex-basis:100%' }, el('b', { class: 'small' }, 'Why didn’t it close?'),
+          el('div', { class: 'stage-chips' }, ...TH.LOST_REASONS.map((r) => el('button', { type: 'button', class: 'chip', 'aria-pressed': String(j.lostReason === r), onclick: () => update({ lostReason: r }) }, r)))) : null,
         el('p', { class: 'muted small', style: 'flex:1' }, j.status === 'lost' ? 'Closed as “Not a fit”. Tap a step to reopen.' : `The customer sees: “${j.stage ? stageOf(j.stage).buyer : statusOf(j.status).buyer}”`),
         j.status !== 'lost' ? el('button', { type: 'button', class: 'link small', style: 'color:var(--bad)', onclick: () => { if (confirm('Close this job as “Not a fit”?')) update({ status: 'lost' }); } }, 'Not a fit') : null,
         // Owner/office only: delete the job for good (it asks twice).
@@ -1124,7 +1389,7 @@
       tabsBar.replaceChildren(...TABS.map(([id, icon, label, sub]) => el('button', { type: 'button', role: 'tab', 'data-tab': id, 'aria-selected': String(leadTab === id), 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } },
         el('span', { class: 'tab-ic', 'aria-hidden': 'true' }, icon), el('span', { class: 'tab-txt' }, el('b', {}, label), el('span', {}, sub)))));
       const content = {
-        overview: [dreamFirst ? designCard : null, nextCard, reviewCard, progress, materialsCard, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, dreamFirst ? null : designCard, permitCard,
+        overview: [dreamFirst ? designCard : null, nextCard, LEAD_OPEN.includes(j.status) || needsReply(j) ? convo : null, reviewCard, progress, LEAD_OPEN.includes(j.status) || needsReply(j) ? null : convo, materialsCard, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, dreamFirst ? null : designCard, permitCard,
           !setupWanted && ['new', 'qualifying', 'hot'].includes(j.status) ? el('button', { type: 'button', class: 'link small', style: 'align-self:flex-start', onclick: focusSetup }, '👷 Assign a contractor & date now (skip the visit)') : null],
         money: [scheduleCard, crewBillsCard, docsCard, moneyCard],
         files: [filesCard],
@@ -1342,6 +1607,7 @@
           trade: f.get('trade'), description: f.get('description'), address: f.get('address'), zip: f.get('zip'), state: f.get('state'),
           timeframe: f.get('timeframe'), contractorId: f.get('contractorId') || null, scheduledFor: f.get('scheduledFor') || null,
           price: num(f.get('price')), agreed: f.get('agreed') === 'on',
+          source: f.get('source'), homeowner: f.get('homeowner') === 'yes' ? true : f.get('homeowner') === 'no' ? false : null, decisionMakers: f.get('decisionMakers'),
         });
         await load();
         openLead(id, 'overview');
@@ -1352,7 +1618,11 @@
         el('h3', {}, '1. Customer'),
         el('label', { class: 'field' }, 'Name', nameIn),
         el('div', { class: 'two' }, el('label', { class: 'field' }, 'Phone', phoneIn), el('label', { class: 'field' }, 'Email', emailIn)),
-        matchBox),
+        matchBox,
+        el('div', { class: 'two' },
+          el('label', { class: 'field' }, 'Where did they find us?', el('select', { name: 'source' }, ...TH.LEAD_SOURCES.map((x) => el('option', { value: x.id, selected: x.id === (pre.source || 'phone') }, x.label)))),
+          el('label', { class: 'field' }, 'Homeowner?', el('select', { name: 'homeowner' }, el('option', { value: '' }, 'Didn’t ask'), el('option', { value: 'yes' }, 'Yes'), el('option', { value: 'no' }, 'No (renter / other)')))),
+        el('label', { class: 'field' }, 'Who decides', el('input', { name: 'decisionMakers', maxlength: '200', autocomplete: 'off', placeholder: 'Optional, e.g. husband and wife together' }))),
       el('section', { class: 'card stack' },
         el('h3', {}, '2. The job'),
         el('label', { class: 'field' }, 'Type of work', tradeSel),
@@ -1688,7 +1958,29 @@
         const data = { exportedAt: new Date().toISOString(), settings, jobs, contractors: crew, salesTeam: team };
         TH.download(`top-hat-backup-${docs.todayKey()}.json`, JSON.stringify(data, (k, v) => (k === 'url' ? undefined : v), 2), 'application/json');
       } }, '⬇ Download backup'));
-    return [form, agingCard, records, backupCard];
+    // Ready-made texts and emails (CRM checklist 2.7 · office checklist 2.6). Used in every job's Messages box.
+    let tpl = templatesOf().map((x) => ({ ...x }));
+    const tplSaved = el('span', { class: 'saved-note', hidden: true }, 'Saved ✓');
+    const tplList = el('div', { class: 'stack' });
+    const drawTpl = () => tplList.replaceChildren(...tpl.map((x, i) => el('div', { class: 'tpl-row stack' },
+      el('div', { class: 'row', style: 'gap:6px' },
+        el('input', { value: x.name, 'aria-label': 'Template name', maxlength: '40', style: 'flex:1', oninput: (e) => { x.name = e.target.value; } }),
+        el('select', { 'aria-label': 'Text or email', onchange: (e) => { x.channel = e.target.value; } }, el('option', { value: 'text', selected: x.channel !== 'email' }, '💬 Text'), el('option', { value: 'email', selected: x.channel === 'email' }, '✉️ Email')),
+        el('button', { type: 'button', class: 'link small', style: 'color:var(--bad)', 'aria-label': 'Remove template', onclick: () => { tpl.splice(i, 1); drawTpl(); } }, '✕')),
+      el('textarea', { rows: 3, 'aria-label': 'Template text', maxlength: '1500', value: x.body, oninput: (e) => { x.body = e.target.value; } }))));
+    drawTpl();
+    const tplCard = el('section', { class: 'card stack' },
+      el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, '💬 Message templates'), tplSaved),
+      el('p', { class: 'muted small', style: 'margin:0' }, 'Ready-made texts and emails for pricing, timelines, your service area and follow-ups. They show as buttons in each job’s Messages box. {first} = customer’s first name, {company}, {phone}, {job} = job number, {trade} = type of work.'),
+      tplList,
+      el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' },
+        el('button', { type: 'button', class: 'ghost', onclick: () => { tpl.push({ id: 't-' + Date.now().toString(36), name: 'New template', channel: 'text', body: 'Hi {first}, ' }); drawTpl(); } }, '+ Add a template'),
+        el('button', { type: 'button', onclick: async () => {
+          const clean = tpl.filter((x) => String(x.name).trim() && String(x.body).trim()).map((x) => ({ id: x.id, name: String(x.name).trim().slice(0, 40), channel: x.channel === 'email' ? 'email' : 'text', body: String(x.body).trim().slice(0, 1500) }));
+          settings = await api.settings.save({ templates: clean }); tpl = clean.map((x) => ({ ...x })); drawTpl(); tplSaved.hidden = false; setTimeout(() => { tplSaved.hidden = true; }, 1600);
+        } }, 'Save templates'),
+        el('button', { type: 'button', class: 'link small', onclick: () => { tpl = TH.DEFAULT_TEMPLATES.map((x) => ({ ...x })); drawTpl(); } }, 'Start over with the suggested ones')));
+    return [form, tplCard, agingCard, records, backupCard];
   }
 
   // Editable list of steps: name, percent, and when it's due. Used for customer payments and crew pay.

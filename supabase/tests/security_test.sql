@@ -655,6 +655,22 @@ select t.ok((select crew_token from public.job_private p join public.jobs j on j
 select t.ok((select count(*) from public.job_costs) = 0, 'still no crew pay for the salesperson');
 select public.log_call((select id from public.jobs where contact_name = 'Kim Caller'), 'Left voicemail', 'Try Monday');
 select t.ok(exists (select 1 from public.job_events where text = '📞 Call (Maria L): Left voicemail. Try Monday'), 'calls are logged with her name');
+select t.ok((select count(*) from public.job_messages where channel = 'call') = 1, 'the call shows in the job''s messages');
+select t.ok((select first_contact_at from public.jobs where contact_name = 'Kim Caller') is not null, 'first call sets the speed-to-lead time');
+select public.log_message((select id from public.jobs where contact_name = 'Kim Caller'), 'text', 'out', 'Hi Kim, see you Monday');
+select public.log_message((select id from public.jobs where contact_name = 'Kim Caller'), 'text', 'in', 'Great, thanks');
+select t.ok((select count(*) from public.job_messages) = 3, 'salesperson saves texts on her clients');
+update public.jobs set source = 'angi', homeowner = true, lost_reason = '', do_not_contact = true where contact_name = 'Kim Caller';
+select t.ok(exists (select 1 from public.job_events where text = '🚫 Customer asked not to be contacted'), 'do-not-contact is logged');
+do $$ begin
+  begin perform public.log_message((select id from public.jobs where contact_name = 'Kim Caller'), 'text', 'out', 'one more'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'no texts to a do-not-contact customer'); end;
+  begin insert into public.job_messages (job_id, channel, dir, body) select id, 'text', 'out', 'x' from public.jobs where contact_name = 'Kim Caller'; perform t.ok(false, 'x');
+  exception when insufficient_privilege then perform t.ok(true, 'messages are only written through the app functions'); end;
+  begin perform public.log_message(current_setting('t.pjob')::uuid, 'text', 'out', 'x'); perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'salesperson cannot text on jobs that are not hers'); end;
+end $$;
+update public.jobs set do_not_contact = false where contact_name = 'Kim Caller';
 insert into public.documents (job_id, type, items) select id, 'estimate', '[{"desc":"Trim","qty":1,"price":900}]' from public.jobs where contact_name = 'Kim Caller';
 update public.documents set status = 'sent' where number like 'E-%' and job_id = (select id from public.jobs where contact_name = 'Kim Caller');
 select t.ok(exists (select 1 from public.documents where status = 'sent' and job_id = (select id from public.jobs where contact_name = 'Kim Caller')), 'salesperson can create and send estimates');
@@ -674,6 +690,7 @@ reset role;
 select set_config('request.jwt.claim.sub', :'F', false);
 set role authenticated;
 select t.ok((select count(*) from public.jobs) = 0 and (select count(*) from public.documents) = 0 and (select count(*) from public.job_events) = 0, 'other salespeople see none of her clients');
+select t.ok((select count(*) from public.job_messages) = 0, 'other salespeople cannot read her messages');
 select t.ok((select count(*) from storage.objects) = 0, 'other salespeople cannot open her files');
 reset role;
 
@@ -684,6 +701,7 @@ do $$ begin
   begin perform public.log_call(current_setting('t.job')::uuid, 'Talked', ''); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'customers cannot log calls'); end;
 end $$;
+select t.ok((select count(*) from public.job_messages) = 0, 'customers cannot read the office''s message log');
 reset role;
 
 -- Owner sees everything, including who did what

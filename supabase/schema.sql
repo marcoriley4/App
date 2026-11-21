@@ -28,7 +28,7 @@ end $$;
 
 -- ---------- clean slate for re-runs ----------
 drop trigger if exists on_auth_user_created on auth.users;
-drop table if exists public.design_dreams, public.job_materials, public.crew_bills, public.payment_reports, public.design_versions, public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
+drop table if exists public.job_messages, public.design_dreams, public.job_materials, public.crew_bills, public.payment_reports, public.design_versions, public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
 drop function if exists public.handle_new_user, public.is_staff, public.new_crew_token, public.owns_job,
   public.customer_can_read, public.crew_token_active, public.create_job, public.add_customer_file, public.my_jobs,
   public.crew_job, public.crew_add_file, public.jobs_after_insert, public.jobs_before_update, public.jobs_after_update,
@@ -42,7 +42,7 @@ drop function if exists public.handle_new_user, public.is_staff, public.new_crew
   public.sales_invite_info, public.claim_sales_invite, public.office_crew_list,
   public.authorize_permit, public.can_design, public.permit_label, public.report_payment, public.resolve_payment_report, public.crew_bill, public.staff_crew_bill, public.crew_halfway,
   public.crew_material_add, public.crew_material_delivered, public.job_materials_log, public.sign_document, public.office_ask_review, public.customer_review,
-  public.crew_my_insurance, public.crew_set_insurance, public.crew_owns_insurance_path cascade;
+  public.crew_my_insurance, public.crew_set_insurance, public.crew_owns_insurance_path, public.log_message cascade;
 
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
@@ -175,6 +175,13 @@ create table public.jobs (
   started_at timestamptz,
   halfway_at timestamptz,            -- contractor tapped "I'm halfway done" (unlocks the halfway crew bill)
   finished_at timestamptz,
+  -- Lead details (office and sales): where it came from, qualifying answers, why it didn't close, do-not-contact.
+  source text not null default '' check (source = '' or source ~ '^[a-z_]{2,20}$'),
+  homeowner boolean,
+  decision_makers text not null default '' check (length(decision_makers) <= 200),
+  lost_reason text not null default '' check (length(lost_reason) <= 200),
+  do_not_contact boolean not null default false,
+  first_contact_at timestamptz,      -- first call/text/email to the customer (speed to lead)
   created_at timestamptz not null default now(),
   check (buyer_id is not null or length(trim(contact_name)) > 0)
 );
@@ -284,6 +291,19 @@ create table public.crew_notes (
   created_at timestamptz not null default now()
 );
 create index on public.crew_notes (job_id);
+
+-- Texts, emails and calls with the customer. Written only through log_message / log_call.
+create table public.job_messages (
+  id uuid primary key default gen_random_uuid(),
+  job_id uuid not null references public.jobs(id) on delete cascade,
+  at timestamptz not null default now(),
+  by_name text not null default '',
+  by_user uuid references auth.users(id) on delete set null,
+  channel text not null check (channel in ('text', 'email', 'call')),
+  dir text not null check (dir in ('in', 'out')),
+  body text not null check (length(body) between 1 and 2000)
+);
+create index on public.job_messages (job_id, at);
 
 -- ---------- activity history (written by the database, so it can't be skipped) ----------
 create function public.log_event(j uuid, msg text) returns void
@@ -419,6 +439,18 @@ begin
   if new.permit_number is distinct from old.permit_number and new.permit_number <> '' then
     perform public.log_event(new.id, '📋 Permit # ' || new.permit_number);
   end if;
+  if new.source is distinct from old.source then
+    perform public.log_event(new.id, 'Lead source → ' || case when new.source = '' then 'not set' else new.source end);
+  end if;
+  if new.homeowner is distinct from old.homeowner then
+    perform public.log_event(new.id, 'Homeowner → ' || case when new.homeowner is null then 'not asked' when new.homeowner then 'yes' else 'no (renter / other)' end);
+  end if;
+  if new.lost_reason is distinct from old.lost_reason and new.lost_reason <> '' then
+    perform public.log_event(new.id, 'Why it didn’t close: ' || new.lost_reason);
+  end if;
+  if new.do_not_contact is distinct from old.do_not_contact then
+    perform public.log_event(new.id, case when new.do_not_contact then '🚫 Customer asked not to be contacted' else 'OK to contact again' end);
+  end if;
   if new.visit_at is distinct from old.visit_at then
     perform public.log_event(new.id, case when new.visit_at is null then '🤝 Rep visit cleared'
       else '🤝 Rep visit booked for ' || to_char(new.visit_at, 'Mon FMDD, YYYY FMHH12:MI AM') end);
@@ -480,6 +512,8 @@ alter table public.job_private enable row level security;
 alter table public.job_events enable row level security;
 alter table public.job_files enable row level security;
 alter table public.crew_notes enable row level security;
+alter table public.job_messages enable row level security;
+create policy "office read" on public.job_messages for select to authenticated using (public.can_access_job(job_id));
 
 create policy "own profile or staff" on public.profiles for select to authenticated
   using (id = auth.uid() or public.is_staff() or (public.my_sales() is not null and public.office_can_see_profile(id)));
@@ -511,6 +545,8 @@ revoke update on public.profiles from authenticated;
 grant update (name, phone) on public.profiles to authenticated;
 revoke insert, delete on public.profiles from authenticated;
 revoke insert, update, delete on public.job_events from authenticated;
+revoke all on public.job_messages from anon;
+revoke insert, update, delete on public.job_messages from authenticated;
 
 -- ---------- what customers can do ----------
 create function public.owns_job(j text) returns boolean
@@ -527,8 +563,8 @@ begin
   if length(trim(coalesce(p_address, ''))) = 0 then raise exception 'Please enter the address where the work is.'; end if;
   if upper(trim(coalesce(p_state, ''))) !~ '^[A-Z]{2}$' then raise exception 'Pick the state the project is in.'; end if;
   return query
-    insert into public.jobs as j (buyer_id, trade, description, address, zip, state, timeframe, budget, style)
-    values (auth.uid(), left(p_trade, 40), left(trim(p_description), 4000), left(trim(p_address), 300),
+    insert into public.jobs as j (buyer_id, source, trade, description, address, zip, state, timeframe, budget, style)
+    values (auth.uid(), 'website', left(p_trade, 40), left(trim(p_description), 4000), left(trim(p_address), 300),
             left(trim(coalesce(p_zip, '')), 10), case when upper(trim(coalesce(p_state, ''))) ~ '^[A-Z]{2}$' then upper(trim(p_state)) else '' end,
             left(coalesce(p_timeframe, ''), 40), left(coalesce(p_budget, ''), 40),
             case when coalesce(p_style, '') ~ '^[a-z]{2,20}/[a-z]{2,20}$' then p_style else '' end)
@@ -1241,6 +1277,25 @@ begin
   if length(trim(coalesce(p_outcome, ''))) = 0 then raise exception 'Pick how the call went.'; end if;
   select name into who from public.profiles where id = auth.uid();
   perform public.log_event(p_job, '📞 Call (' || coalesce(who, 'office') || '): ' || left(trim(p_outcome), 40) || case when note <> '' then '. ' || note else '' end);
+  insert into public.job_messages (job_id, by_name, by_user, channel, dir, body)
+    values (p_job, coalesce(who, 'Office'), auth.uid(), 'call', 'out', left(trim(p_outcome), 40) || case when note <> '' then '. ' || note else '' end);
+  update public.jobs set first_contact_at = now() where id = p_job and first_contact_at is null;
+end $$;
+
+-- Office or salesperson: save a text or email to the job's conversation (sent from their phone, or the customer's reply).
+create function public.log_message(p_job uuid, p_channel text, p_dir text, p_body text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare who text; b text := left(trim(coalesce(p_body, '')), 2000);
+begin
+  if not public.can_access_job(p_job) then raise exception 'Job not found.'; end if;
+  if p_channel not in ('text', 'email', 'call') or p_dir not in ('in', 'out') then raise exception 'Bad message.'; end if;
+  if b = '' then raise exception 'Type the message first.'; end if;
+  if p_dir = 'out' and (select do_not_contact from public.jobs where id = p_job) then raise exception 'This customer asked not to be contacted.'; end if;
+  select name into who from public.profiles where id = auth.uid();
+  insert into public.job_messages (job_id, by_name, by_user, channel, dir, body) values (p_job, coalesce(who, 'Office'), auth.uid(), p_channel, p_dir, b);
+  if p_dir = 'out' then update public.jobs set first_contact_at = now() where id = p_job and first_contact_at is null; end if;
+  perform public.log_event(p_job, case p_channel when 'email' then '✉️ Email' when 'call' then '📞 Call' else '💬 Text' end
+    || case when p_dir = 'in' then ' from the customer' else ' sent by ' || coalesce(who, 'office') end);
 end $$;
 
 -- Customer: "apply for my building permit". Their typed full name is the signature.
@@ -1409,7 +1464,7 @@ grant execute on function public.is_staff(), public.owns_job(text), public.custo
   public.staff_invite_crew(uuid), public.staff_revoke_crew(uuid), public.claim_crew_invite(text),
   public.crew_my_jobs(), public.crew_set_progress(uuid, text, text), public.crew_respond(uuid, text, text),
   public.crew_can_read_customer(text), public.my_sales(), public.can_access_job(uuid), public.office_can_see_profile(uuid),
-  public.office_can_access_path(text), public.log_call(uuid, text, text), public.staff_invite_sales(uuid), public.staff_revoke_sales(uuid),
+  public.office_can_access_path(text), public.log_call(uuid, text, text), public.log_message(uuid, text, text, text), public.staff_invite_sales(uuid), public.staff_revoke_sales(uuid),
   public.claim_sales_invite(text), public.office_crew_list(), public.authorize_permit(uuid, text), public.can_design(uuid),
   public.report_payment(uuid, numeric, text, text, text, text), public.resolve_payment_report(uuid, boolean),
   public.crew_bill(uuid, int, numeric, text, text[], text), public.crew_my_insurance(), public.crew_set_insurance(text, text, date), public.crew_owns_insurance_path(text), public.staff_crew_bill(uuid, text, text, date, text), public.crew_halfway(uuid) to authenticated;
