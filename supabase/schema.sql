@@ -562,7 +562,7 @@ language sql stable security definer set search_path = '' as $$
     'rep_name', case when j.status = 'hot' and j.visit_at is not null then split_part(sp.name, ' ', 1) end,
     'pm_name', case when j.status <> 'lost' and sp.active then sp.name end,
     'pm_phone', case when j.status <> 'lost' and sp.active then sp.phone end,
-    'contractor_name', case when j.status in ('scheduled', 'in_progress', 'completed') then c.name end,
+    'contractor_name', case when j.status <> 'lost' then c.name end,   -- the customer sees who's assigned
     'shared_files', (select coalesce(jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'kind', f.kind, 'size', f.size,
                        'path', f.path, 'uploaded_at', f.uploaded_at, 'source', f.source, 'mime', f.mime, 'stage', f.stage, 'design_group', f.design_group) order by f.uploaded_at), '[]'::jsonb)
                      from public.job_files f where f.job_id = j.id and f.shared)

@@ -926,7 +926,7 @@
             review: j.review ? { requestedAt: j.review.requestedAt || null, rating: j.review.rating || null, comment: j.review.comment || '', at: j.review.at || null } : null,
             repName: j.status === 'hot' && j.visitAt ? ((d.team || []).find((x) => x.id === j.salesId)?.name || '').split(' ')[0] || null : null,
             pm: (() => { const sp = j.status !== 'lost' && (d.team || []).find((x) => x.id === j.salesId && x.active !== false); return sp ? { name: sp.name, phone: sp.phone || '' } : null; })(),
-            contractorName: c && ['scheduled', 'in_progress', 'completed'].includes(j.status) ? c.name : null,
+            contractorName: c && j.status !== 'lost' ? c.name : null, // the customer sees who's assigned
             stage: j.stage || null,
             sharedFiles: j.files.filter((f) => f.shared).length,
           };

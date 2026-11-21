@@ -1015,3 +1015,5 @@ label.dream-pick { display: flex; align-items: center; justify-content: center; 
 .summary .mini-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .summary .mini-field input { width: 100%; min-width: 0; }
 @media (max-width: 520px) { .summary .date-pair { grid-template-columns: 1fr; } }
+.job-meter .meter-team { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.job-meter .meter-team > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: 12px; background: var(--surface-2); min-width: 0; }
