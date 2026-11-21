@@ -581,7 +581,17 @@
         el('li', {}, el('span', { class: 'fi' }, '📍'), el('a', { href: 'https://maps.google.com/?q=' + encodeURIComponent(addrOf(j)), target: '_blank', rel: 'noopener' }, addrOf(j))),
         el('li', {}, el('span', { class: 'fi' }, '🗺'), el('select', { class: 'inline-select' + (j.state ? '' : ' warn'), 'aria-label': 'State', onchange: (e) => update({ state: e.target.value }) }, ...stateOptions(j.state, 'No state set'))),
         j.visitAt ? el('li', {}, el('span', { class: 'fi' }, '🤝'), el('span', {}, `Rep visit ${fmtWhen(j.visitAt)}${salesName(j.salesId) ? ' · ' + salesName(j.salesId) : ''}`)) : null,
-        el('li', {}, el('span', { class: 'fi' }, '📅'), j.scheduledFor ? el('span', {}, fmtWhen(j.scheduledFor)) : el('span', { class: 'muted' }, 'Crew not scheduled yet')),
+        // Start date (and expected finish) right on the customer card: change it here, saved right away.
+        el('li', {}, el('span', { class: 'fi' }, '📅'), el('span', { class: 'date-pair' },
+          el('label', { class: 'mini-field' }, el('span', { class: 'muted small' }, 'Start date'),
+            el('input', { type: 'datetime-local', class: 'inline-select', 'aria-label': 'Start date', value: j.scheduledFor || '', onchange: (e) => {
+              const patch = { scheduledFor: e.target.value || null };
+              if (patch.scheduledFor && j.contractorId && ['new', 'qualifying', 'hot'].includes(j.status)) patch.status = 'scheduled';
+              update(patch); } })),
+          el('label', { class: 'mini-field' }, el('span', { class: 'muted small' }, 'End date'),
+            el('input', { type: 'date', class: 'inline-select', 'aria-label': 'End date', value: j.endDate || '', min: (j.scheduledFor || '').slice(0, 10), onchange: (e) => {
+              if (e.target.value && j.scheduledFor && e.target.value < j.scheduledFor.slice(0, 10)) { errorBox.textContent = 'The end date can’t be before the start date.'; errorBox.hidden = false; e.target.value = j.endDate || ''; return; }
+              update({ endDate: e.target.value || null }); } })))),
         j.startedAt ? el('li', {}, el('span', { class: 'fi' }, '⏱'), el('span', {},
           `Started ${new Date(j.startedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
           j.finishedAt ? ` · finished after ${(() => { const m = Math.round((j.finishedAt - j.startedAt) / 60000); return m < 60 ? m + ' min' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm'; })()}` : '')) : null,
