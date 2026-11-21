@@ -389,6 +389,11 @@ begin
   if tg_op = 'UPDATE' and new.sales_id is distinct from old.sales_id then
     raise exception 'Only the office can change the salesperson.';
   end if;
+  -- Lead details are the office's (owner's request).
+  if tg_op = 'UPDATE' and (new.source, new.homeowner, new.decision_makers, new.lost_reason, new.do_not_contact)
+       is distinct from (old.source, old.homeowner, old.decision_makers, old.lost_reason, old.do_not_contact) then
+    raise exception 'Only the office can change lead details.';
+  end if;
   return new;
 end $$;
 create trigger jobs_sales_guard before insert or update on public.jobs
@@ -513,7 +518,7 @@ alter table public.job_events enable row level security;
 alter table public.job_files enable row level security;
 alter table public.crew_notes enable row level security;
 alter table public.job_messages enable row level security;
-create policy "office read" on public.job_messages for select to authenticated using (public.can_access_job(job_id));
+create policy "office read" on public.job_messages for select to authenticated using (public.is_staff());
 
 create policy "own profile or staff" on public.profiles for select to authenticated
   using (id = auth.uid() or public.is_staff() or (public.my_sales() is not null and public.office_can_see_profile(id)));
@@ -1287,6 +1292,7 @@ create function public.log_message(p_job uuid, p_channel text, p_dir text, p_bod
 language plpgsql security definer set search_path = '' as $$
 declare who text; b text := left(trim(coalesce(p_body, '')), 2000);
 begin
+  if not public.is_staff() then raise exception 'Only the office can do that.'; end if;
   if not public.can_access_job(p_job) then raise exception 'Job not found.'; end if;
   if p_channel not in ('text', 'email', 'call') or p_dir not in ('in', 'out') then raise exception 'Bad message.'; end if;
   if b = '' then raise exception 'Type the message first.'; end if;

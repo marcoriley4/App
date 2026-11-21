@@ -994,11 +994,13 @@
       },
       // Texts, emails and calls with the customer, oldest first (office and the job's salesperson).
       async messages(id) {
+        await requireStaff();
         const { j } = await officeJob(id);
         return (j.messages || []).slice().sort((a, b) => a.at - b.at);
       },
       // Save a text or email (sent from your phone, or the customer's reply) to the job's conversation.
       async addMessage(id, m) {
+        await requireStaff();
         const { d, u, j } = await officeJob(id);
         const channel = ['text', 'email', 'call'].includes(m.channel) ? m.channel : 'text';
         const dir = m.dir === 'in' ? 'in' : 'out';
@@ -1012,8 +1014,9 @@
       },
       // Office inbox: the newest messages on every job you can see.
       async recentMessages(limit = 60) {
-        const { d, isStaff, salesId } = await requireOffice();
-        return d.jobs.filter((j) => isStaff || j.salesId === salesId)
+        await requireStaff();
+        const d = await db();
+        return d.jobs
           .flatMap((j) => (j.messages || []).map((m) => ({ ...m, jobId: j.id })))
           .sort((a, b) => b.at - a.at).slice(0, limit);
       },
@@ -1035,6 +1038,7 @@
         if (!j) throw new Error('Job not found.');
         // Salespeople run their own jobs (crew, date, progress); crew pay and reassigning stay with the owner/office.
         if (!isStaff && ['crewPay', 'salesId', 'crewPaid'].some((k) => k in patch)) throw new Error('Only the office can set crew pay or change the salesperson.');
+        if (!isStaff && ['source', 'homeowner', 'decisionMakers', 'lostReason', 'doNotContact'].some((k) => k in patch)) throw new Error('Only the office can change lead details.');
         if ('crewPaid' in patch) {
           const cp = patch.crewPaid;
           if (cp && !/^\d{4}-\d{2}-\d{2}$/.test(cp.date || '')) throw new Error('Pick the date you paid the crew.');

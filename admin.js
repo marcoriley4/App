@@ -81,7 +81,7 @@
   // Sales and Contractors are one tab, "Team", with a switch inside (owner's request).
   const MAIN_TABS = [['today', 'Today', '📅'], ['jobs', 'Jobs', '🗂️'], ['inbox', 'Inbox', '💬'], ['team', 'Team', '👥'], ['reports', 'Reports', '📊'], ['business', 'Payments', '💳']];
   let teamPart = 'sales'; // which half of Team is showing: 'sales' or 'crew'
-  const SALES_TABS = [['today', 'Today', '📅'], ['jobs', 'My clients', '🗂️'], ['inbox', 'Inbox', '💬']];
+  const SALES_TABS = [['today', 'Today', '📅'], ['jobs', 'My clients', '🗂️']];
   if (MAIN_TABS.some(([id]) => id === location.hash.slice(1))) tab = location.hash.slice(1);
   if (['sales', 'crew'].includes(location.hash.slice(1))) { tab = 'team'; teamPart = location.hash.slice(1); } // old links
   const salesName = (id) => team.find((x) => x.id === id)?.name;
@@ -140,7 +140,7 @@
     return [
       { id: 'new', icon: '🔔', title: 'New leads: call with a phone estimate', why: 'Go over their photos and measurements and give them a price.', call: true,
         list: open.filter((j) => j.status === 'new').sort((a, b) => a.created - b.created),
-        line: (j) => `${tradeOf(j.trade).label} · ${srcLabel(j.source)} · ${j.firstContactAt ? 'came in ' + ago(j.created) : '⏱ waiting ' + fmtDur(Date.now() - j.created)}` },
+        line: (j) => isStaff ? `${tradeOf(j.trade).label} · ${srcLabel(j.source)} · ${j.firstContactAt ? 'came in ' + ago(j.created) : '⏱ waiting ' + fmtDur(Date.now() - j.created)}` : `${tradeOf(j.trade).label} · came in ${ago(j.created)}` },
       { id: 'replies', icon: '↩️', title: 'Customers waiting on a reply', why: 'They texted or emailed back. Answer from the job’s Messages box.',
         list: open.filter(needsReply), line: (j) => `“${j.lastMessage.body.slice(0, 70)}” · ${ago(j.lastMessage.at)}` },
       { id: 'hotbook', icon: '🔥', title: 'Hot leads: book the rep visit', why: 'They agreed to the price. Send a rep out for the walkthrough.',
@@ -196,7 +196,7 @@
     ];
   }
   // Salespeople only see what's theirs to act on: calls to make and estimates waiting.
-  const SALES_BUCKETS = ['new', 'replies', 'hotbook', 'visits', 'followup', 'declined', 'schedule', 'invoice', 'permits', 'materials', 'notes', 'waiting', 'soon', 'reviews', 'newreviews'];
+  const SALES_BUCKETS = ['new', 'hotbook', 'visits', 'followup', 'declined', 'schedule', 'invoice', 'permits', 'materials', 'notes', 'waiting', 'soon', 'reviews', 'newreviews'];
   // Salespeople run their own projects; the owner oversees. These are the rep's job when the project has a salesperson.
   const REP_BUCKETS = ['hotbook', 'visits', 'followup', 'declined', 'schedule', 'invoice', 'permits', 'materials', 'notes', 'waiting', 'soon', 'reviews'];
   const myBuckets = () => buckets().filter((b) => isStaff || SALES_BUCKETS.includes(b.id))
@@ -848,7 +848,7 @@
     if (tabName) leadTab = tabName; else if (openId !== id) leadTab = 'overview';
     openId = id;
     releaseUrls();
-    const [files, history, jobDocs, crewNotes, designs, messages] = await Promise.all([api.files.list(j.id), api.jobs.log(j.id), api.docs.list(j.id), api.jobs.crewNotes(j.id), api.designs.list(j.id).catch(() => []), api.jobs.messages(j.id).catch(() => [])]);
+    const [files, history, jobDocs, crewNotes, designs, messages] = await Promise.all([api.files.list(j.id), api.jobs.log(j.id), api.docs.list(j.id), api.jobs.crewNotes(j.id), api.designs.list(j.id).catch(() => []), (isStaff ? api.jobs.messages(j.id) : Promise.resolve([])).catch(() => [])]);
     j.crewNotesSeenAt = Date.now(); // opened → no longer "new"
     fileUrls = [...files.map((f) => f.url), ...designs.map((v) => v.url)].filter(Boolean);
     const t = tradeOf(j.trade);
@@ -897,7 +897,7 @@
         el('button', { type: 'button', class: 'ghost small', onclick: () => { callBox.hidden = !callBox.hidden; } }, '📝 Log call'),
         b.phone && !j.doNotContact ? el('a', { class: 'btn ghost small', href: smsHref(b.phone) }, '💬 Text') : null,
         b.email && !j.doNotContact ? el('a', { class: 'btn ghost small', href: `mailto:${b.email}?subject=${encodeURIComponent('Your ' + t.label.toLowerCase() + ' request with Top Hat Contracting')}` }, '✉️ Email') : null,
-        (b.phone || b.email) && !j.doNotContact ? el('button', { type: 'button', class: 'ghost small', onclick: () => { leadTab = 'overview'; renderTab(); document.getElementById('convo')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, '📋 Templates') : null),
+        isStaff && (b.phone || b.email) && !j.doNotContact ? el('button', { type: 'button', class: 'ghost small', onclick: () => { leadTab = 'overview'; renderTab(); document.getElementById('convo')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, '📋 Templates') : null),
       callBox,
       el('ul', { class: 'facts' },
         isStaff ? el('li', {}, el('span', { class: 'fi' }, '💼'), team.length
@@ -938,10 +938,10 @@
         el('li', {}, el('span', { class: 'fi' }, '💲'), j.price != null
           ? el('span', {}, `${money(j.price)} ${['new', 'qualifying'].includes(j.status) ? 'phone estimate' : j.status === 'hot' ? 'agreed price' : 'customer price'}`, j.crewPay != null ? el('span', { class: 'muted' }, ` · ${money(j.price - j.crewPay)} profit`) : null)
           : el('span', { class: 'muted' }, 'No price yet'))),
-      leadBox(j, update),
+      isStaff ? leadBox(j, update) : null,
       askedFor(),
     );
-    const convo = convoBox(j, messages, async () => { await load(); openLead(j.id); });
+    const convo = isStaff ? convoBox(j, messages, async () => { await load(); openLead(j.id); }) : null;
 
     // What the customer asked for
     // Design studio: the customer's AI pictures, and the one they picked.
@@ -1021,7 +1021,7 @@
       j.progressAt ? el('p', { class: 'small last-update' + (j.progressByCrew ? ' crew' : '') },
         `Last update: ${progressText(j)} · ${j.progressByCrew ? `${j.progressBy} (crew)` : j.progressBy || 'office'} · ${ago(j.progressAt)}`) : null,
       el('div', { class: 'row' },
-        j.status === 'lost' ? el('div', { class: 'stack', style: 'gap:6px;flex-basis:100%' }, el('b', { class: 'small' }, 'Why didn’t it close?'),
+        isStaff && j.status === 'lost' ? el('div', { class: 'stack', style: 'gap:6px;flex-basis:100%' }, el('b', { class: 'small' }, 'Why didn’t it close?'),
           el('div', { class: 'stage-chips' }, ...TH.LOST_REASONS.map((r) => el('button', { type: 'button', class: 'chip', 'aria-pressed': String(j.lostReason === r), onclick: () => update({ lostReason: r }) }, r)))) : null,
         el('p', { class: 'muted small', style: 'flex:1' }, j.status === 'lost' ? 'Closed as “Not a fit”. Tap a step to reopen.' : `The customer sees: “${j.stage ? stageOf(j.stage).buyer : statusOf(j.status).buyer}”`),
         j.status !== 'lost' ? el('button', { type: 'button', class: 'link small', style: 'color:var(--bad)', onclick: () => { if (confirm('Close this job as “Not a fit”?')) update({ status: 'lost' }); } }, 'Not a fit') : null,
@@ -1389,7 +1389,7 @@
       tabsBar.replaceChildren(...TABS.map(([id, icon, label, sub]) => el('button', { type: 'button', role: 'tab', 'data-tab': id, 'aria-selected': String(leadTab === id), 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } },
         el('span', { class: 'tab-ic', 'aria-hidden': 'true' }, icon), el('span', { class: 'tab-txt' }, el('b', {}, label), el('span', {}, sub)))));
       const content = {
-        overview: [dreamFirst ? designCard : null, nextCard, LEAD_OPEN.includes(j.status) || needsReply(j) ? convo : null, reviewCard, progress, LEAD_OPEN.includes(j.status) || needsReply(j) ? null : convo, materialsCard, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, dreamFirst ? null : designCard, permitCard,
+        overview: [dreamFirst ? designCard : null, nextCard, isStaff && (LEAD_OPEN.includes(j.status) || needsReply(j)) ? convo : null, reviewCard, progress, isStaff && (LEAD_OPEN.includes(j.status) || needsReply(j)) ? null : convo, materialsCard, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, dreamFirst ? null : designCard, permitCard,
           !setupWanted && ['new', 'qualifying', 'hot'].includes(j.status) ? el('button', { type: 'button', class: 'link small', style: 'align-self:flex-start', onclick: focusSetup }, '👷 Assign a contractor & date now (skip the visit)') : null],
         money: [scheduleCard, crewBillsCard, docsCard, moneyCard],
         files: [filesCard],
@@ -1619,10 +1619,10 @@
         el('label', { class: 'field' }, 'Name', nameIn),
         el('div', { class: 'two' }, el('label', { class: 'field' }, 'Phone', phoneIn), el('label', { class: 'field' }, 'Email', emailIn)),
         matchBox,
-        el('div', { class: 'two' },
+        !isStaff ? null : el('div', { class: 'two' },
           el('label', { class: 'field' }, 'Where did they find us?', el('select', { name: 'source' }, ...TH.LEAD_SOURCES.map((x) => el('option', { value: x.id, selected: x.id === (pre.source || 'phone') }, x.label)))),
           el('label', { class: 'field' }, 'Homeowner?', el('select', { name: 'homeowner' }, el('option', { value: '' }, 'Didn’t ask'), el('option', { value: 'yes' }, 'Yes'), el('option', { value: 'no' }, 'No (renter / other)')))),
-        el('label', { class: 'field' }, 'Who decides', el('input', { name: 'decisionMakers', maxlength: '200', autocomplete: 'off', placeholder: 'Optional, e.g. husband and wife together' }))),
+        !isStaff ? null : el('label', { class: 'field' }, 'Who decides', el('input', { name: 'decisionMakers', maxlength: '200', autocomplete: 'off', placeholder: 'Optional, e.g. husband and wife together' }))),
       el('section', { class: 'card stack' },
         el('h3', {}, '2. The job'),
         el('label', { class: 'field' }, 'Type of work', tradeSel),

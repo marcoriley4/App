@@ -288,16 +288,16 @@
         must(await sb.rpc('log_call', { p_job: id, p_outcome: outcome, p_note: note || '' }));
       },
       async messages(id) {
-        await requireOffice();
+        await requireStaff();
         const rows = must(await sb.from('job_messages').select('*').eq('job_id', id).order('at'));
         return rows.map(mapMsg);
       },
       async addMessage(id, m) {
-        await requireOffice();
+        await requireStaff();
         must(await sb.rpc('log_message', { p_job: id, p_channel: m.channel || 'text', p_dir: m.dir === 'in' ? 'in' : 'out', p_body: m.body || '' }));
       },
       async recentMessages(limit = 60) {
-        await requireOffice();
+        await requireStaff();
         const rows = must(await sb.from('job_messages').select('*').order('at', { ascending: false }).limit(limit));
         return rows.map((r) => ({ ...mapMsg(r), jobId: r.job_id }));
       },
