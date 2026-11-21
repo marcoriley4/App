@@ -999,6 +999,10 @@
         const cname = (cid) => d.contractors.find((c) => c.id === cid)?.name || 'nobody';
         const staffUser = await me();
         if ('status' in patch || 'stage' in patch) applyProgress(j, { status: patch.status, stage: patch.stage }, staffUser.name, false);
+        if ('contractorId' in patch && patch.contractorId && patch.contractorId !== j.contractorId) {
+          const cc = d.contractors.find((c) => c.id === patch.contractorId);
+          if (cc && cc.insurance && cc.insurance.expires && cc.insurance.expires < isoDay(Date.now())) throw new Error(`${cc.name}’s insurance ran out. They can’t be assigned until they upload a current one.`);
+        }
         if ('contractorId' in patch && patch.contractorId !== j.contractorId) {
           j.log.push({ at: Date.now(), text: `Assigned to ${cname(patch.contractorId)}` });
           // New crew → new upload link, so the previous crew's link stops working.

@@ -1021,3 +1021,13 @@ label.dream-pick { display: flex; align-items: center; justify-content: center; 
 .job-details { display: flex; flex-direction: column; gap: 4px; }
 .onway-alert { background: var(--gold); color: var(--ink); border: 0; font-size: 1.05rem; animation: onway-pulse 1.6s ease-in-out 3; }
 @keyframes onway-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
+/* Owner command center */
+.company-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 420px) { .company-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.company-kpis .kpi b { font-size: 1.05rem; }
+.goal-row { display: flex; flex-direction: column; gap: 4px; }
+.goal-bar { position: relative; height: 14px; border-radius: 99px; background: var(--border); overflow: visible; }
+.goal-bar span { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--gold), var(--good)); }
+.goal-bar i { position: absolute; top: -4px; bottom: -4px; width: 3px; margin-left: -1.5px; background: var(--text); border-radius: 2px; }
+.alerts-card { border-color: var(--gold); }
+.alert-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; width: 100%; background: var(--surface-2); border: 1.5px solid var(--border); border-radius: 12px; padding: 10px 12px; color: var(--text); }

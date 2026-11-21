@@ -310,7 +310,7 @@
       ...open.map((j) => el('option', { value: j.id }, `${j.buyer.name} · ${jobNo(j)} · ${tradeOf(j.trade).label}`)));
     const time = el('input', { type: 'time', value: '09:00', 'aria-label': 'Time' });
     const crewSel = el('select', { 'aria-label': 'Contractor' }, el('option', { value: '' }, 'No contractor'),
-      ...crew.filter((c) => c.active).sort((a, c) => a.name.localeCompare(c.name)).map((c) => el('option', { value: c.id }, `${c.name}${c.state ? ` · ${c.state}` : ''}`)));
+      ...crew.filter((c) => c.active).sort((a, c) => a.name.localeCompare(c.name)).map((c) => el('option', { value: c.id, disabled: insuranceExpired(c.id) }, `${c.name}${c.state ? ` · ${c.state}` : ''}${insuranceExpired(c.id) ? ' (insurance ran out)' : ''}`)));
     const repSel = isStaff ? el('select', { 'aria-label': 'Sales rep' }, el('option', { value: '' }, 'No sales rep'),
       ...team.filter((x) => x.active !== false).map((x) => el('option', { value: x.id }, x.name))) : null;
     const notes = el('textarea', { rows: 3, maxlength: '1000', placeholder: 'What’s happening? e.g. measure the deck, bring tile samples', 'aria-label': 'Notes' });
@@ -357,6 +357,83 @@
     document.body.append(dlg); dlg.showModal();
   }
 
+
+  /* ---------- owner command center (office checklist 1.1–1.3) ---------- */
+  const WON = ['scheduled', 'in_progress', 'completed'];
+  const paymentsOf = () => jobs.flatMap((j) => liveInvoices(j).flatMap((d) => (d.payments || []).map((p) => ({ j, date: String(p.date || '').slice(0, 10), amount: Number(p.amount) || 0 }))));
+  const isKitchen = (j) => String(j.style || '').startsWith('kitchen/') || /kitchen/i.test(j.description || '');
+  const soldAt = (j) => j.scheduledFor ? Date.parse(j.scheduledFor) : j.created; // when it became a sale (best guess)
+  // Insurance problems: ran out, runs out within 30 days, or none on file (only the office sees insurance).
+  const insuranceIssues = () => crew.filter((c) => c.active && 'insurance' in c).map((c) => {
+    const ins = c.insurance; const t = dayKey(Date.now()); const soon = dayKey(Date.now() + 30 * 864e5);
+    if (!ins) return { c, kind: 'none', text: 'no proof of insurance' };
+    if (ins.expires && ins.expires < t) return { c, kind: 'out', text: `insurance ran out ${docs.fmtDate(ins.expires)}` };
+    if (ins.expires && ins.expires <= soon) return { c, kind: 'soon', text: `insurance runs out ${docs.fmtDate(ins.expires)}` };
+    return null; }).filter(Boolean);
+  const insuranceExpired = (cid) => { const c = crew.find((x) => x.id === cid); return !!(c && c.insurance && c.insurance.expires && c.insurance.expires < dayKey(Date.now())); };
+  // No update in 7 days on a job that should be moving.
+  const stalledJobs = () => jobs.filter((j) => ['scheduled', 'in_progress', 'hot', 'qualifying'].includes(j.status)
+    && Date.now() - (j.progressAt || j.created) > 7 * 864e5 && !(j.status === 'scheduled' && j.scheduledFor && Date.parse(j.scheduledFor) > Date.now()));
+
+  function companyCard() {
+    const now = new Date(); const y = now.getFullYear(); const ym = dayKey(Date.now()).slice(0, 7);
+    const q = Math.floor(now.getMonth() / 3); const inQ = (k) => k.slice(0, 4) === String(y) && Math.floor((Number(k.slice(5, 7)) - 1) / 3) === q;
+    const pays = paymentsOf();
+    const collected = (f) => pays.filter((p) => f(p.date)).reduce((t, p) => t + p.amount, 0);
+    const wonThisYear = jobs.filter((j) => WON.includes(j.status) && new Date(soldAt(j)).getFullYear() === y);
+    const finished = jobs.filter((j) => j.status === 'completed' && j.price != null && j.crewPay != null);
+    const profit = finished.reduce((t, j) => t + (j.price - j.crewPay - (j.crewBills || []).filter((b) => b.step == null && ['approved', 'paid'].includes(b.status)).reduce((s, b) => s + Number(b.amount), 0)), 0);
+    const profitPct = finished.reduce((t, j) => t + j.price, 0) ? Math.round(profit / finished.reduce((t, j) => t + j.price, 0) * 100) : null;
+    const leads7 = jobs.filter((j) => Date.now() - j.created < 7 * 864e5).length;
+    const decided = jobs.filter((j) => WON.includes(j.status) || j.status === 'lost');
+    const closeRate = decided.length ? Math.round(jobs.filter((j) => WON.includes(j.status)).length / decided.length * 100) : null;
+    const rated = jobs.filter((j) => j.review && j.review.rating);
+    const avg = rated.length ? (rated.reduce((t, j) => t + j.review.rating, 0) / rated.length).toFixed(1) : null;
+    // Goal: settings goalCount (e.g. 100 kitchens) and goalRevenue (e.g. $500k) for the year.
+    const gCount = Number(settings.goalCount) || 100, gWhat = settings.goalWhat || 'kitchens', gRev = Number(settings.goalRevenue) || 500000;
+    const countOf = (list) => (/kitchen/i.test(gWhat) ? list.filter(isKitchen) : list).length;
+    const soldRev = (list) => list.reduce((t, j) => t + (Number(j.price) || 0), 0);
+    const inMonth = wonThisYear.filter((j) => dayKey(soldAt(j)).slice(0, 7) === ym), inQuarter = wonThisYear.filter((j) => inQ(dayKey(soldAt(j))));
+    const dayOfYear = Math.floor((now - new Date(y, 0, 1)) / 864e5) + 1; const pace = dayOfYear / (y % 4 ? 365 : 366);
+    const bar = (have, goal) => el('div', { class: 'goal-bar' }, el('span', { style: `width:${Math.min(100, Math.round(have / goal * 100))}%` }), el('i', { style: `left:${Math.min(100, Math.round(pace * 100))}%`, title: 'Where you should be today' }));
+    const goalRow = (label, have, goal, fmt) => el('div', { class: 'goal-row' },
+      el('div', { class: 'row' }, el('b', {}, label), el('span', { class: 'spacer' }), el('span', {}, `${fmt(have)} of ${fmt(goal)}`)),
+      bar(have, goal),
+      el('span', { class: 'muted small' }, have >= goal * pace ? `✓ On pace (${fmt(Math.round(goal * pace))} by today)` : `Behind pace: ${fmt(Math.round(goal * pace))} by today`));
+    const tile = (v, k) => el('div', { class: 'kpi' }, el('b', {}, v), el('span', {}, k));
+    return el('section', { class: 'card stack company-card' },
+      el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, '🎩 Company'), el('span', { class: 'muted small' }, String(y))),
+      el('div', { class: 'kpis company-kpis' },
+        tile(money(collected((d) => d.slice(0, 7) === ym)), 'Collected this month'),
+        tile(money(collected((d) => d.slice(0, 4) === String(y))), 'Collected this year'),
+        tile(money(profit) + (profitPct != null ? ` · ${profitPct}%` : ''), 'Profit on finished jobs'),
+        tile(money(jobs.reduce((t, j) => t + owedOn(j), 0)), 'Owed to you'),
+        tile(String(jobs.filter((j) => j.status === 'in_progress').length), 'Jobs in progress'),
+        tile(String(leads7), 'Leads this week'),
+        tile(closeRate == null ? '—' : closeRate + '%', 'Close rate'),
+        tile(avg ? `${avg} ★` : '—', `Average rating${rated.length ? ` (${rated.length})` : ''}`),
+        tile('—', 'Cash in bank (connect bank)')),
+      el('h3', {}, `🎯 Goal: ${gCount} ${gWhat} · ${money(gRev)}`),
+      goalRow(`${gWhat[0].toUpperCase() + gWhat.slice(1)} sold this year`, countOf(wonThisYear), gCount, String),
+      goalRow('Sold this year', soldRev(wonThisYear), gRev, money),
+      el('div', { class: 'two' },
+        el('div', { class: 'kpi' }, el('b', {}, `${countOf(inMonth)} · ${money(soldRev(inMonth))}`), el('span', {}, `This month (goal ${Math.round(gCount / 12)} · ${money(Math.round(gRev / 12))})`)),
+        el('div', { class: 'kpi' }, el('b', {}, `${countOf(inQuarter)} · ${money(soldRev(inQuarter))}`), el('span', {}, `This quarter (goal ${Math.round(gCount / 4)} · ${money(Math.round(gRev / 4))})`))),
+      el('p', { class: 'muted small', style: 'margin:0' }, 'Change the goal on the Payments tab. Profit = customer price − crew pay − approved extras, on finished jobs.'));
+  }
+
+  // Alerts the owner wants: stalled jobs and contractor insurance (overdue invoices and new leads are already in the lists below).
+  function alertsCard() {
+    const stalled = stalledJobs(); const ins = insuranceIssues().filter((x) => x.kind !== 'none' || jobs.some((j) => j.contractorId === x.c.id && WON.includes(j.status) && j.status !== 'completed'));
+    if (!stalled.length && !ins.length) return null;
+    return el('section', { class: 'card stack alerts-card' },
+      el('h3', {}, '⚠️ Needs a look'),
+      ...stalled.slice(0, 8).map((j) => el('button', { type: 'button', class: 'alert-row', onclick: () => openLead(j.id, 'overview') },
+        el('b', {}, `🐢 ${j.buyer.name} · ${jobNo(j)}`), el('span', { class: 'muted small' }, `No update in ${Math.floor((Date.now() - (j.progressAt || j.created)) / 864e5)} days · ${find(STATUSES, j.status)?.label || j.status}`))),
+      ...ins.map((x) => el('button', { type: 'button', class: 'alert-row', onclick: () => { tab = 'team'; teamPart = 'crew'; render(); } },
+        el('b', {}, `${x.kind === 'out' ? '⛔' : '🛡'} ${x.c.name}`), el('span', { class: 'muted small' }, x.text))));
+  }
+
   function todayView() {
     const bs = myBuckets();
     const today = dayKey(Date.now()), weekEnd = dayKey(Date.now() + 7 * 86400e3);
@@ -384,6 +461,8 @@
       isStaff ? el('div', { class: 'kpis three' }, kpi(bs[0].list.length, 'New leads'), kpi(thisWeek, 'Jobs this week'), kpi(money(jobs.reduce((t, j) => t + owedOn(j), 0)), 'Owed to you'))
         : el('div', { class: 'kpis three' }, kpi(jobs.filter((j) => ['new', 'qualifying'].includes(j.status)).length, 'Open leads'),
           kpi(jobs.filter((j) => estWith(j, 'sent')).length, 'Estimates out'), kpi(money(soldTotal(jobs)), 'Sold')),
+      isStaff ? companyCard() : null,
+      isStaff ? alertsCard() : null,
       calendarCard(),
       isStaff ? oversightCard() : null,
       ...(sections.length ? sections : [el('div', { class: 'card caught-up' },
@@ -574,7 +653,7 @@
             el('option', { value: '' }, 'Assign a contractor'),
             ...crew.filter((c) => c.active || c.id === j.contractorId)
               .sort((a, c) => ((!!j.state && c.state === j.state) - (!!j.state && a.state === j.state)) || (TH.doesTrade(c, j.trade) - TH.doesTrade(a, j.trade)) || a.name.localeCompare(c.name))
-              .map((c) => el('option', { value: c.id, selected: c.id === j.contractorId }, `${TH.doesTrade(c, j.trade) ? '★ ' : ''}${c.name}${c.state ? ` · ${c.state}` : ''}`))),
+              .map((c) => el('option', { value: c.id, selected: c.id === j.contractorId, disabled: insuranceExpired(c.id) && c.id !== j.contractorId }, `${TH.doesTrade(c, j.trade) ? '★ ' : ''}${c.name}${c.state ? ` · ${c.state}` : ''}${insuranceExpired(c.id) ? ' (insurance ran out)' : ''}`))),
           assigned && j.status === 'scheduled' ? el('span', { class: 'small ' + (j.crewResponse === 'declined' ? 'bad-text' : 'muted') },
             j.crewResponse === 'confirmed' ? '✓ confirmed' : j.crewResponse === 'declined' ? `can’t make it: “${j.crewResponseNote}”` : 'not confirmed yet') : null)),
         lastCall ? el('li', {}, el('span', { class: 'fi' }, '📞'), el('span', { class: 'muted' }, `${lastCall.text.replace(/^📞 Call /, 'Last call ')} · ${ago(lastCall.at)}`)) : null,
@@ -696,7 +775,7 @@
       .sort((a, c) => (sameSt(c) - sameSt(a)) || (TH.doesTrade(c, j.trade) - TH.doesTrade(a, j.trade)) || a.name.localeCompare(c.name));
     const crewSel = el('select', { name: 'contractorId' },
       el('option', { value: '' }, '— Not assigned —'),
-      ...sortedCrew.map((c) => el('option', { value: c.id, selected: c.id === j.contractorId }, `${TH.doesTrade(c, j.trade) ? '★ ' : ''}${c.name}${c.state ? ` · ${c.state}` : ''}${j.state && c.state && c.state !== j.state ? ' (other state)' : ''}`)));
+      ...sortedCrew.map((c) => el('option', { value: c.id, selected: c.id === j.contractorId, disabled: insuranceExpired(c.id) && c.id !== j.contractorId }, `${insuranceExpired(c.id) ? '⛔ ' : ''}${TH.doesTrade(c, j.trade) ? '★ ' : ''}${c.name}${c.state ? ` · ${c.state}` : ''}${j.state && c.state && c.state !== j.state ? ' (other state)' : ''}`)));
     const whenInput = el('input', { type: 'datetime-local', name: 'scheduledFor', value: j.scheduledFor || '' });
     const endInput = el('input', { type: 'date', name: 'endDate', value: j.endDate || '' }); // expected finish: the customer sees it
     const crewLink = j.crewToken ? new URL(`crew.html?t=${j.crewToken}`, location.href).href : null;
@@ -1248,7 +1327,7 @@
       [...crewSel.options].forEach((o) => { const c = crew.find((x) => x.id === o.value); if (c) o.textContent = `${TH.doesTrade(c, tr) ? '★ ' : ''}${c.name}`; });
     } }, ...TRADES.map((t) => el('option', { value: t.id }, `${t.icon} ${t.label}`)));
     const crewSel = el('select', { name: 'contractorId' }, el('option', { value: '' }, '— Decide later —'),
-      ...sortedCrew.map((c) => el('option', { value: c.id }, `${TH.doesTrade(c, TRADES[0].id) ? '★ ' : ''}${c.name}`)));
+      ...sortedCrew.map((c) => el('option', { value: c.id, disabled: insuranceExpired(c.id) }, `${TH.doesTrade(c, TRADES[0].id) ? '★ ' : ''}${c.name}${insuranceExpired(c.id) ? ' (insurance ran out)' : ''}`)));
 
     const form = el('form', { class: 'panel-body', novalidate: true, onsubmit: async (e) => {
       e.preventDefault();
@@ -1517,6 +1596,9 @@
       patch.crewPaySchedule = crewPlan.value();
       if (patch.cardPayLink && !/^https:\/\//i.test(patch.cardPayLink)) { errorBox.textContent = 'The card payment link must start with https://'; errorBox.hidden = false; return; }
       patch.taxRate = Number(patch.taxRate) || 0;
+      patch.goalCount = Math.max(0, Math.round(Number(patch.goalCount) || 0)) || 100;
+      patch.goalRevenue = Math.max(0, Number(patch.goalRevenue) || 0) || 500000;
+      patch.goalWhat = patch.goalWhat || 'kitchens';
       patch.dueDays = Math.max(0, Math.round(Number(patch.dueDays) || 0));
       patch.showCrewPay = fd.get('showCrewPay') === 'on';
       try { settings = await api.settings.save(patch); saved.hidden = false; setTimeout(() => { saved.hidden = true; }, 1600); }
@@ -1529,6 +1611,9 @@
       el('div', { class: 'two' }, f('phone', 'Phone', { type: 'tel' }), f('email', 'Email', { type: 'email' })),
       f('address', 'Address', { rows: 2 }),
       f('license', 'License # (optional)'),
+      el('h3', {}, '🎯 Yearly goal'),
+      el('div', { class: 'two' }, f('goalCount', 'How many', { type: 'number', min: '0', inputmode: 'numeric', placeholder: '100' }), f('goalWhat', 'Of what', { placeholder: 'kitchens' })),
+      f('goalRevenue', 'Sales goal ($)', { type: 'number', min: '0', inputmode: 'numeric', placeholder: '500000' }),
       el('h3', { style: 'margin-top:8px' }, 'Defaults'),
       el('div', { class: 'two' }, f('taxRate', 'Tax rate (%)', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01' }), f('dueDays', 'Invoices due in (days)', { type: 'number', inputmode: 'numeric', min: '0', step: '1' })),
       el('label', { class: 'row', style: 'font-weight:600;align-items:flex-start' },
@@ -1578,7 +1663,32 @@
           .sort((a, b) => String(a[0]).localeCompare(String(b[0])))])) }, '⬇ Crew payouts'),
       el('button', { type: 'button', class: 'ghost block', onclick: customersList }, '📁 Customer folders'),
     );
-    return [form, records];
+    // Money owed by age (office checklist 5.2): how late each unpaid invoice is.
+    const agingCard = (() => {
+      const today = docs.todayKey();
+      const rows = jobs.flatMap((j) => liveInvoices(j).filter((d) => docs.owed(d) > 0).map((d) => {
+        const late = d.dueDate ? Math.floor((Date.parse(today) - Date.parse(d.dueDate)) / 864e5) : 0;
+        return { j, d, owed: docs.owed(d), late }; }));
+      const B = [['Not due yet', (x) => x.late <= 0], ['1–30 days late', (x) => x.late >= 1 && x.late <= 30], ['31–60 days late', (x) => x.late >= 31 && x.late <= 60],
+        ['61–90 days late', (x) => x.late >= 61 && x.late <= 90], ['Over 90 days late', (x) => x.late > 90]];
+      return el('section', { class: 'card stack' },
+        el('h3', {}, '⏳ Money owed by age'),
+        rows.length ? el('div', { class: 'aging' }, ...B.map(([label, test]) => { const list = rows.filter(test); const sum = list.reduce((t, x) => t + x.owed, 0);
+          return el('details', { class: 'aging-row' + (label.includes('late') && sum ? ' late' : '') },
+            el('summary', {}, el('span', {}, label), el('span', { class: 'spacer' }), el('b', {}, money(sum)), el('span', { class: 'muted small' }, ` · ${list.length}`)),
+            ...list.sort((a, b) => b.late - a.late).map((x) => el('button', { type: 'button', class: 'alert-row', onclick: () => openLead(x.j.id, 'money') },
+              el('b', {}, `${x.j.buyer.name} · ${x.d.number}`), el('span', { class: 'muted small' }, `${money(x.owed)} owed${x.d.dueDate ? ' · due ' + docs.fmtDate(x.d.dueDate) : ''}`)))); }))
+          : el('p', { class: 'muted small' }, 'Nobody owes you anything right now.'));
+    })();
+    // Back up everything (office checklist 13.2): one file with every job, customer, invoice, contractor and setting.
+    const backupCard = el('section', { class: 'card stack' },
+      el('h3', {}, '💾 Back up everything'),
+      el('p', { class: 'muted small', style: 'margin:0' }, 'Downloads one file with all your jobs, customers, estimates, invoices, payments, contractors, sales team and settings (photos and documents stay in the app). Keep a copy somewhere safe.'),
+      el('button', { type: 'button', class: 'ghost block', onclick: async () => {
+        const data = { exportedAt: new Date().toISOString(), settings, jobs, contractors: crew, salesTeam: team };
+        TH.download(`top-hat-backup-${docs.todayKey()}.json`, JSON.stringify(data, (k, v) => (k === 'url' ? undefined : v), 2), 'application/json');
+      } }, '⬇ Download backup'));
+    return [form, agingCard, records, backupCard];
   }
 
   // Editable list of steps: name, percent, and when it's due. Used for customer payments and crew pay.
