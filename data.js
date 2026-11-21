@@ -1970,7 +1970,7 @@
         ...parts.map((x) => x.links), ...above, el('b', { class: 'small' }, title), ...parts.map((x) => x.box));
       n = 0;
     }
-    return el('div', { class: 'stack', style: 'gap:10px' }, el('b', { class: 'small' }, title),
+    return el('div', { class: 'stack', style: 'gap:10px' }, title ? el('b', { class: 'small' }, title) : null,
       ...groups.flatMap((g) => g.before && g.after.length ? g.after.map((a) => slider(g.before, a, ++n))
         : [el('div', { class: 'ba-row' }, ...(g.before ? [single(g.before, 'Before')] : []), ...g.after.map((f) => single(f, 'After')))]),
       n ? tip() : null);
