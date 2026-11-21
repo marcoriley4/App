@@ -1940,7 +1940,7 @@
 
   // Saved designs as Before → After, grouped by the photo they started from. files: [{ url, name, stage, group }]
   // infoFirst: the links, the slide tip and any `above` nodes go ABOVE the picture (used in sign-up), title right over the picture.
-  function beforeAfter(files, { title = '🎨 Before & after', infoFirst = false, above = [] } = {}) {
+  function beforeAfter(files, { title = '🎨 Before & after', infoFirst = false, above = [], showTip = true } = {}) {
     const list = (files || []).filter((f) => f.url);
     if (!list.length) return null;
     const groups = [];
@@ -1974,7 +1974,7 @@
     return el('div', { class: 'stack', style: 'gap:10px' }, title ? el('b', { class: 'small' }, title) : null,
       ...groups.flatMap((g) => g.before && g.after.length ? g.after.map((a) => slider(g.before, a, ++n))
         : [el('div', { class: 'ba-row' }, ...(g.before ? [single(g.before, 'Before')] : []), ...g.after.map((f) => single(f, 'After')))]),
-      n ? tip() : null);
+      n && showTip ? tip() : null);
   }
 
   // Materials list on a job, shared by every screen.

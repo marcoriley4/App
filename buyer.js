@@ -653,7 +653,7 @@
           // Owner's order: the steps first, then the before & after, then the rest.
           j.status === 'lost' ? el('p', { class: 'muted small' }, 'This request was closed. Questions? Just request a new job and mention it.')
             : meter(j),
-          TH.beforeAfter(docs[j.id].filter((f) => f.source === 'design'), { title: '' }), // owner: no title here
+          TH.beforeAfter(docs[j.id].filter((f) => f.source === 'design'), { title: '', showTip: false }), // owner: no title, no "slide right" line
           // Details: what the customer told us, in their own words (without the automatic "… look (…)" line).
           (() => { const look = TH.styleOf(j.style);
             const lookLine = look ? `${look.room.label} remodel, ${look.style.name} look (${look.style.desc.toLowerCase()})` : null;
