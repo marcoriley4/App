@@ -444,7 +444,12 @@
       const m = (draft.measurements || '').trim();
       // The job description, from the design step: the look they picked or what they want done, their notes, and measurements.
       const look = TH.styleOf(draft.style); const tr = find(TRADES, draft.trade);
-      const what = [look ? `${look.room.label} remodel, ${look.style.name} look (${look.style.desc.toLowerCase()})` : '', (draft.dreamText || '').trim(), (draft.description || '').trim()].filter(Boolean).join('. ');
+      // Kept as separate paragraphs so the customer's card can show just their own description and measurements:
+      // the look line, "Their design: …" (design box words), then what they wrote in "Describe your project".
+      const lookLine = look ? `${look.room.label} remodel, ${look.style.name} look (${look.style.desc.toLowerCase()})` : '';
+      const designWords = (draft.dreamText || '').trim();
+      const projectWords = (draft.description || '').trim();
+      const what = [lookLine, designWords ? `Their design: ${designWords}` : '', projectWords].filter(Boolean).join('\n\n');
       // Logged-in customers can give a different phone or email on Details: the office sees it on the job.
       const acct = await api.auth.me().catch(() => null);
       const reach = acct && ((draft.phone && draft.phone !== acct.phone) || (draft.email && draft.email !== acct.email)) ? `Reach me at: ${[draft.phone, draft.email].filter(Boolean).join(' · ')}` : '';
@@ -651,9 +656,12 @@
           TH.beforeAfter(docs[j.id].filter((f) => f.source === 'design'), { title: '' }), // owner: no title here
           // Details: what the customer told us, in their own words (without the automatic "… look (…)" line).
           (() => { const look = TH.styleOf(j.style);
-            let txt = String(j.description || '');
-            if (look) txt = txt.replace(`${look.room.label} remodel, ${look.style.name} look (${look.style.desc.toLowerCase()})`, '').replace(/^[.\s]+/, '');
-            txt = txt.trim();
+            const lookLine = look ? `${look.room.label} remodel, ${look.style.name} look (${look.style.desc.toLowerCase()})` : null;
+            // Only "Describe your project" and the measurements: drop the look line, the design-box words and "Reach me at".
+            const txt = String(j.description || '').split(/\n\n+/).map((x) => x.trim())
+              .filter((x) => x && x !== lookLine && !/^Their design: /.test(x) && !/^Reach me at: /.test(x)
+                && !(lookLine && x.startsWith(lookLine)) && !/^[A-Z][\w &]+ project$/.test(x))
+              .join('\n\n');
             return txt ? el('div', { class: 'job-details' }, el('b', {}, 'Details'), el('p', { class: 'small', style: 'white-space:pre-wrap;margin:0' }, txt)) : null; })(),
           TH.styleOf(j.style) ? el('div', { class: 'style-chosen' }, el('img', { src: TH.styleOf(j.style).img, alt: '' }),
             el('span', {}, el('span', { class: 'muted small' }, 'The look you picked'), el('b', {}, TH.styleOf(j.style).label))) : null,
