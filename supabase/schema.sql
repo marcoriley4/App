@@ -563,6 +563,8 @@ language sql stable security definer set search_path = '' as $$
     'pm_name', case when j.status <> 'lost' and sp.active then sp.name end,
     'pm_phone', case when j.status <> 'lost' and sp.active then sp.phone end,
     'contractor_name', case when j.status <> 'lost' then c.name end,   -- the customer sees who's assigned
+    -- The contractor's progress, so the customer's meter and alerts follow every tap they make.
+    'crew_confirmed', j.crew_response = 'confirmed', 'halfway_at', j.halfway_at, 'progress_at', j.progress_at,
     'shared_files', (select coalesce(jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'kind', f.kind, 'size', f.size,
                        'path', f.path, 'uploaded_at', f.uploaded_at, 'source', f.source, 'mime', f.mime, 'stage', f.stage, 'design_group', f.design_group) order by f.uploaded_at), '[]'::jsonb)
                      from public.job_files f where f.job_id = j.id and f.shared)

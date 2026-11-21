@@ -169,6 +169,7 @@
           id: j.id, number: j.number, trade: j.trade, status: j.status, created: ms(j.created_at),
           description: j.description, address: j.address, zip: j.zip || '', state: j.state || '', timeframe: j.timeframe, budget: j.budget, photos: [],
           scheduledFor: local16(j.scheduled_for), endDate: j.end_date || null, contractorName: j.contractor_name || null, stage: j.stage || null,
+          crewConfirmed: !!j.crew_confirmed, halfwayAt: ms(j.halfway_at), progressAt: ms(j.progress_at),
           visitAt: local16(j.visit_at), repName: j.rep_name || null,
           pm: j.pm_name ? { name: j.pm_name, phone: j.pm_phone || '' } : null,
           permit: { status: j.permit_status || 'none', number: j.permit_number || '', authorizedBy: j.permit_authorized_by || '', authorizedAt: ms(j.permit_authorized_at) || null },

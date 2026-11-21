@@ -588,6 +588,8 @@
   }
 
   let dbPromise = null;
+  // Another tab (say the contractor's) saved changes: forget our copy so the next read sees them.
+  addEventListener('storage', (e) => { if (e.key === DB_KEY) dbPromise = null; });
   function db() {
     if (!dbPromise) dbPromise = (async () => {
       let d = readDb();
@@ -927,6 +929,8 @@
             repName: j.status === 'hot' && j.visitAt ? ((d.team || []).find((x) => x.id === j.salesId)?.name || '').split(' ')[0] || null : null,
             pm: (() => { const sp = j.status !== 'lost' && (d.team || []).find((x) => x.id === j.salesId && x.active !== false); return sp ? { name: sp.name, phone: sp.phone || '' } : null; })(),
             contractorName: c && j.status !== 'lost' ? c.name : null, // the customer sees who's assigned
+            // The contractor's progress, so the customer's meter and alerts follow every tap they make.
+            crewConfirmed: j.crewResponse === 'confirmed', halfwayAt: j.halfwayAt || null, progressAt: j.progressAt || null,
             stage: j.stage || null,
             sharedFiles: j.files.filter((f) => f.shared).length,
           };

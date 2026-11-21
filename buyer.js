@@ -539,13 +539,25 @@
   const TRACK_LABELS = ['Received', 'Scheduled', 'Site visit', 'Done'];
   const trackStep = (status) => ({ new: 0, qualifying: 1, hot: 2, scheduled: 2, in_progress: 2, completed: 3 })[status] ?? 0;
   // Job completion meter (owner: one meter instead of step bars).
-  const PERCENT = { new: 10, qualifying: 25, hot: 40, scheduled: 55, in_progress: 75, completed: 100 };
-  const NOW_TEXT = { new: 'Received', qualifying: 'Scheduled', hot: 'Site visit', scheduled: 'Work scheduled', in_progress: 'Work in progress', completed: 'Done' };
-  const meter = (j) => { const pct = PERCENT[j.status] ?? 0;
+  // Every tap the contractor makes moves it: confirmed, on the way, started, paused, halfway, finished.
+  const progressOf = (j) => {
+    const who = (j.contractorName || 'Your contractor').split(' ')[0];
+    if (j.status === 'new') return [10, 'Received'];
+    if (j.status === 'qualifying') return [25, 'Scheduled'];
+    if (j.status === 'hot') return [40, 'Site visit'];
+    if (j.status === 'scheduled') return j.stage === 'on_the_way' ? [62, `${who} is on the way`] : j.crewConfirmed ? [58, `${who} confirmed the job`] : [55, 'Work scheduled'];
+    if (j.status === 'in_progress') {
+      const pct = j.halfwayAt ? 85 : j.stage === 'return_visit' ? 80 : 70;
+      return [pct, j.stage === 'waiting_parts' ? 'Paused while we get materials' : j.stage === 'return_visit' ? 'We’ll be back to finish' : j.halfwayAt ? 'Halfway done' : `${who} started the work`];
+    }
+    if (j.status === 'completed') return [100, 'Done'];
+    return [0, ''];
+  };
+  const meter = (j) => { const [pct, nowText] = progressOf(j);
     return el('div', { class: 'job-meter', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pct), 'aria-label': 'Job completion' },
       el('div', { class: 'row' }, el('b', {}, 'Job completion'), el('span', { class: 'spacer' }), el('b', { class: 'pct' }, `${pct}%`)),
       el('div', { class: 'bar' }, el('span', { style: `width:${pct}%` })),
-      el('span', { class: 'muted small' }, `Now: ${NOW_TEXT[j.status] || ''}`),
+      el('span', { class: 'muted small' }, `Now: ${nowText}`, j.progressAt ? ` · updated ${ago(j.progressAt)}` : ''),
       // Agreed start date (the booked work day) and the expected finish the office set.
       el('div', { class: 'meter-dates' },
         el('div', {}, el('span', { class: 'muted small' }, 'Start date'),
@@ -558,10 +570,20 @@
         return el('div', { class: 'meter-team one' }, el('div', {}, el('span', { class: 'muted small' }, '👤 Project manager'), el('b', {}, pm ? pm.name : 'Being assigned'),
           tel ? el('span', { class: 'small' }, el('a', { href: `tel:${tel}` }, 'Call'), ' · ', el('a', { href: `sms:${tel}` }, 'Text')) : null)); })()); };
   const fmtDay = (v) => new Date(v.length === 10 ? v + 'T12:00' : v).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  // My jobs checks for updates every minute, so the meter and "on the way" alert show up without a reload.
+  let jobsWatch = null;
+  const jobsSig = (list) => JSON.stringify(list.map((j) => [j.id, j.status, j.stage, j.progressAt, j.halfwayAt, j.crewConfirmed, j.scheduledFor, j.endDate, j.contractorName, j.pm && j.pm.name]));
   async function myJobs() {
     const me = await api.auth.me();
     if (!me) return go('login?next=jobs');
     const jobs = await api.jobs.mine();
+    clearInterval(jobsWatch);
+    const sig = jobsSig(jobs);
+    jobsWatch = setInterval(async () => {
+      if (!location.hash.startsWith('#/jobs')) { clearInterval(jobsWatch); return; }
+      if (document.hidden) return;
+      try { if (jobsSig(await api.jobs.mine()) !== sig) { clearInterval(jobsWatch); route(); } } catch (e) { /* try again next time */ }
+    }, 60000);
     const docs = Object.fromEntries(await Promise.all(jobs.map(async (j) => [j.id, j.sharedFiles ? await api.files.forCustomer(j.id) : []])));
     const [paper, company] = await Promise.all([api.docs.mine(), api.settings.get()]);
     const D = TH.docs;
@@ -650,6 +672,9 @@
             el('span', { style: 'font-size:1.6rem' }, trade.icon),
             el('div', { class: 't' }, el('h3', {}, trade.label), el('p', { class: 'muted small' }, `Job TH-${j.number} · ${j.address}${j.state ? ", " + j.state : ""} · requested ${ago(j.created)}`)),
             el('span', { class: `pill s-${j.status}` }, st.buyer)),
+          j.status === 'scheduled' && j.stage === 'on_the_way' ? el('div', { class: 'callout onway-alert', role: 'status' },
+            el('b', {}, `🚚 ${(j.contractorName || 'Your contractor').split(' ')[0]} is on the way!`),
+            j.progressAt ? el('span', { class: 'small' }, ` Since ${new Date(j.progressAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}.`) : null) : null,
           // Owner's order: the steps first, then the before & after, then the rest.
           j.status === 'lost' ? el('p', { class: 'muted small' }, 'This request was closed. Questions? Just request a new job and mention it.')
             : meter(j),
@@ -671,7 +696,7 @@
           j.scheduledFor && ['scheduled', 'in_progress'].includes(j.status)
             ? el('div', { class: 'callout' }, '📅 ', el('b', {}, fmtWhen(j.scheduledFor)), j.contractorName ? ` · ${j.contractorName} from Top Hat is coming out.` : '')
             : null,
-          j.stage && (TH.STAGES || []).find((x) => x.id === j.stage)
+          j.stage && j.stage !== 'on_the_way' && (TH.STAGES || []).find((x) => x.id === j.stage)
             ? el('div', { class: 'callout stage' }, `${TH.STAGES.find((x) => x.id === j.stage).icon} ${TH.STAGES.find((x) => x.id === j.stage).buyer}`)
             : null,
           ...(paper[j.id] || []).filter((dc) => dc.type === 'estimate' && dc.status === 'sent').map((dc) =>

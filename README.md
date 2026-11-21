@@ -64,6 +64,9 @@ Today shows each stage: new leads to call, **🔥 hot leads that need a rep visi
 
 **Office tabs:** Today · Jobs · **Team** · Payments. Team holds both the **💼 Sales** team and the **👷 Contractors** (switch at the top). Old links to `#sales` / `#crew` open the right half.
 
+
+**Contractor updates reach the customer.** Every tap the contractor makes moves the customer's job completion meter and its "Now:" line: confirmed (58%), **On my way** (62%, plus a gold "🚚 Ray is on the way!" alert at the top of the customer's job), started (70%), paused for materials / needs another visit, halfway (85%), finished (100%). The customer's My jobs page checks for updates every minute, so it changes without a reload. (Live: `my_jobs` returns `crew_confirmed`, `halfway_at`, `progress_at`. These are in-app alerts; text/push messages would need an SMS service.)
+
 ## How it works
 
 **Customers** (`index.html`)
