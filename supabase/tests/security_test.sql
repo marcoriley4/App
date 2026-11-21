@@ -26,6 +26,11 @@ select t.ok((select number from ids) = 1001, 'first job number is 1001');
 select t.ok((select count(*) from public.jobs) = 0, 'customer cannot read jobs table directly');
 select t.ok((select count(*) from public.job_private) = 0, 'customer cannot read prices/notes');
 select t.ok((select count(*) from public.job_events) = 0, 'customer cannot read activity');
+select t.ok((select count(*) from public.office_records) = 0, 'customer cannot read office records');
+do $$ begin
+  begin insert into public.office_records (kind, data) values ('vendor', '{"name":"x"}'); perform t.ok(false, 'x');
+  exception when insufficient_privilege or check_violation then perform t.ok(true, 'customer cannot add office records'); end;
+end $$;
 select t.ok((select count(*) from public.contractors) = 0, 'customer cannot read crew list');
 select t.ok(jsonb_array_length(public.my_jobs()) = 1, 'customer sees own job via my_jobs');
 do $$ begin
@@ -656,6 +661,13 @@ select t.ok((select count(*) from public.job_costs) = 0, 'still no crew pay for 
 select public.log_call((select id from public.jobs where contact_name = 'Kim Caller'), 'Left voicemail', 'Try Monday');
 select t.ok(exists (select 1 from public.job_events where text = '📞 Call (Maria L): Left voicemail. Try Monday'), 'calls are logged with her name');
 select t.ok((select count(*) from public.job_messages) = 0, 'salesperson cannot read the message log (office only)');
+select t.ok((select count(*) from public.office_records) = 0, 'salesperson cannot read office records');
+do $$ begin
+  begin insert into public.office_records (kind, data) values ('price_item', '{"name":"x","cost":1}'); perform t.ok(false, 'x');
+  exception when insufficient_privilege or check_violation then perform t.ok(true, 'salesperson cannot add office records'); end;
+  begin insert into public.documents (job_id, type, items, change_order) select id, 'estimate', '[{"desc":"Extra","qty":1,"price":50}]', true from public.jobs where contact_name = 'Kim Caller'; perform t.ok(false, 'x');
+  exception when raise_exception then perform t.ok(true, 'salesperson cannot write change orders'); end;
+end $$;
 do $$ begin
   begin perform public.log_message((select id from public.jobs where contact_name = 'Kim Caller'), 'text', 'out', 'Hi'); perform t.ok(false, 'x');
   exception when raise_exception then perform t.ok(true, 'salesperson cannot use office texting'); end;
@@ -714,6 +726,18 @@ do $$ begin
   exception when raise_exception then perform t.ok(true, 'no texts to a do-not-contact customer'); end;
 end $$;
 update public.jobs set do_not_contact = false where contact_name = 'Kim Caller';
+-- Office records (price book, expenses, suppliers…)
+insert into public.office_records (kind, job_id, data, by_name) select 'expense', id, '{"amount":120,"category":"Materials"}', 'Office' from public.jobs where contact_name = 'Kim Caller';
+insert into public.office_records (kind, data) values ('price_item', '{"name":"Cabinet install","cost":80,"price":140}');
+select t.ok((select count(*) from public.office_records) = 2, 'office keeps its own records');
+-- Change orders add to the agreed price
+update public.documents set status = 'approved' where number like 'E-%' and job_id = (select id from public.jobs where contact_name = 'Kim Caller');
+select t.ok((select price from public.job_private p join public.jobs j on j.id = p.job_id where j.contact_name = 'Kim Caller') = 900, 'approved estimate sets the price');
+insert into public.documents (job_id, type, items, change_order) select id, 'estimate', '[{"desc":"Extra trim","qty":1,"price":200}]', true from public.jobs where contact_name = 'Kim Caller';
+select t.ok(exists (select 1 from public.documents where number like 'CO-%'), 'change orders are numbered CO-');
+update public.documents set status = 'sent' where number like 'CO-%';
+update public.documents set status = 'approved' where number like 'CO-%';
+select t.ok((select price from public.job_private p join public.jobs j on j.id = p.job_id where j.contact_name = 'Kim Caller') = 1100, 'approved change order adds to the price');
 select public.staff_revoke_sales(current_setting('t.maria')::uuid);
 reset role;
 select set_config('request.jwt.claim.sub', :'E', false);

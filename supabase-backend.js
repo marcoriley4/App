@@ -22,6 +22,7 @@
   const mapMaterial = (m) => ({ id: m.id, name: m.name, qty: m.qty || '', note: m.note || '', status: m.status, eta: m.eta || null, by: m.added_by || '', updatedBy: m.updated_by || '' });
   const mapBill = (b) => ({ id: b.id, step: b.step ?? null, label: b.label, amount: Number(b.amount), note: b.note || '', status: b.status, reason: b.reason || '',
     paidDate: b.paid_date || null, paidMethod: b.paid_method || '', by: b.by_name || '', at: Date.parse(b.created_at) || null, photos: Number(b.photos) || 0, invoice: !!b.invoice });
+  const mapRecord = (r) => ({ ...(r.data || {}), id: r.id, kind: r.kind, jobId: r.job_id || null, by: r.by_name || '', at: ms(r.created_at), updatedAt: ms(r.updated_at) });
   const mapMsg = (m) => ({ id: m.id, at: ms(m.at), by: m.by_name || '', channel: m.channel, dir: m.dir, body: m.body });
   const mapDesign = (v) => v && ({ id: v.id, parentId: v.parent_id || null, source: v.source, prompt: v.prompt || '', by: v.by_name || '', at: Date.parse(v.created_at) || Date.now(), chosen: !!v.chosen, saved: !!v.saved, url: v.url || null });
   async function designCall(body) {
@@ -79,7 +80,7 @@
     id: r.id, type: r.type, number: r.number, status: r.status, items: r.items || [], taxRate: Number(r.tax_rate) || 0,
     notes: r.notes || '', dueDate: r.due_date || null, payLink: r.pay_link || '', payments: r.payments || [],
     created: ms(r.created_at), sentAt: ms(r.sent_at), respondedAt: ms(r.responded_at), respondedBy: r.responded_by || '',
-    fromEstimateId: r.from_estimate || null,
+    fromEstimateId: r.from_estimate || null, changeOrder: !!r.change_order,
     scheduleStep: r.schedule_step ?? null, scheduleBase: r.schedule_base == null ? null : Number(r.schedule_base),
     signature: r.signature ? { name: r.signature.name, image: r.signature.image, at: Date.parse(r.signature.at) || null, inPerson: !!r.signature.in_person, witness: r.signature.witness || '' } : null,
     reports: (r.reports || []).map((x) => ({ id: x.id, amount: Number(x.amount), method: x.method, note: x.note || '', by: x.reported_by || '', at: Date.parse(x.created_at) || null, status: x.status,
@@ -415,6 +416,26 @@
       },
     },
 
+    records: {
+      async list(kind, jobId) {
+        await requireStaff();
+        let q = sb.from('office_records').select('*').order('created_at');
+        if (kind) q = q.eq('kind', kind);
+        if (jobId !== undefined) q = jobId ? q.eq('job_id', jobId) : q.is('job_id', null);
+        return must(await q).map(mapRecord);
+      },
+      async save(kind, rec, jobId = null) {
+        const u = await requireStaff();
+        const { id, kind: _k, jobId: _j, by: _b, at: _a, updatedAt: _u, ...data } = rec || {};
+        if (id) return mapRecord(must(await sb.from('office_records').update({ data, updated_at: new Date().toISOString() }).eq('id', id).select().single()));
+        return mapRecord(must(await sb.from('office_records').insert({ kind, job_id: jobId || null, data, by_name: u.name || 'Office' }).select().single()));
+      },
+      async remove(id) {
+        await requireStaff();
+        must(await sb.from('office_records').delete().eq('id', id));
+      },
+    },
+
     docs: {
       async list(jobId) {
         await requireOffice();
@@ -429,7 +450,7 @@
         if (row.pay_link && !/^https:\/\//i.test(row.pay_link)) throw new Error('The card payment link must start with https://');
         if (doc.id) return mapDoc(must(await sb.from('documents').update(row).eq('id', doc.id).select().single()));
         const step = doc.type === 'invoice' && Number.isInteger(doc.scheduleStep) ? doc.scheduleStep : null;
-        return mapDoc(must(await sb.from('documents').insert({ ...row, job_id: jobId, type: doc.type, from_estimate: doc.fromEstimateId || null, number: 'pending',
+        return mapDoc(must(await sb.from('documents').insert({ ...row, job_id: jobId, type: doc.type, change_order: doc.type === 'estimate' && !!doc.changeOrder, from_estimate: doc.fromEstimateId || null, number: 'pending',
           schedule_step: step, schedule_base: step == null ? null : Number(doc.scheduleBase) || 0 }).select().single()));
       },
       async send(jobId, docId) {

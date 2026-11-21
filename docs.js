@@ -110,9 +110,9 @@
           el('div', { class: 'doc-logo' }, el('b', {}, company.name || 'Top Hat Contracting')),
           ...lines([company.address, company.phone, company.email, company.license ? `License #${company.license}` : ''].filter(Boolean).join('\n'))),
         el('div', { class: 'doc-title' },
-          el('h1', {}, isInv ? 'Invoice' : 'Estimate'),
+          el('h1', {}, isInv ? 'Invoice' : doc.changeOrder ? 'Change order' : 'Estimate'),
           el('dl', {},
-            el('dt', {}, isInv ? 'Invoice #' : 'Estimate #'), el('dd', {}, doc.number),
+            el('dt', {}, isInv ? 'Invoice #' : doc.changeOrder ? 'Change order #' : 'Estimate #'), el('dd', {}, doc.number),
             el('dt', {}, 'Date'), el('dd', {}, fmtDate(doc.sentAt || doc.created)),
             isInv && doc.dueDate ? el('dt', {}, 'Due') : null, isInv && doc.dueDate ? el('dd', {}, fmtDate(doc.dueDate)) : null,
             el('dt', {}, 'Job'), el('dd', {}, `TH-${job.number}`)))),
@@ -136,6 +136,7 @@
       // The payment schedule: on estimates, and on each invoice that is one of its payments.
       (() => {
         const base = isInv ? Number(doc.scheduleBase) || 0 : t.total;
+        if (doc.changeOrder) return el('section', { class: 'doc-notes' }, el('h4', {}, 'Change order'), el('div', {}, `This is extra work on job TH-${job.number}. Once approved, ${usd(t.total)} is added to the job total and billed with the remaining payments.`));
         if (!base || st === 'declined' || st === 'void' || (isInv && doc.scheduleStep == null)) return null;
         const plan = schedule(company, base);
         return el('section', { class: 'doc-notes doc-schedule' },

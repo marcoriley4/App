@@ -638,7 +638,7 @@
           return area;
         });
         acts.push((close) => el('button', { class: 'ghost block', onclick: async (e) => {
-          if (!confirm('Decline this estimate? You can still call us with questions.')) return;
+          if (!confirm(`Decline this ${dc.changeOrder ? 'change order' : 'estimate'}? You can still call us with questions.`)) return;
           e.currentTarget.disabled = true;
           try { await api.docs.respond(dc.id, false); close(); route(); } catch (err) { alert(err.message); e.currentTarget.disabled = false; }
         } }, 'Decline'));
@@ -700,7 +700,7 @@
             ? el('div', { class: 'callout stage' }, `${TH.STAGES.find((x) => x.id === j.stage).icon} ${TH.STAGES.find((x) => x.id === j.stage).buyer}`)
             : null,
           ...(paper[j.id] || []).filter((dc) => dc.type === 'estimate' && dc.status === 'sent').map((dc) =>
-            el('button', { type: 'button', class: 'gold block', onclick: () => openPaper(j, dc, { sign: true }) }, `✍️ Review & sign estimate · ${D.usd(D.totals(dc).total)}`)),
+            el('button', { type: 'button', class: 'gold block', onclick: () => openPaper(j, dc, { sign: true }) }, `✍️ Review & sign ${dc.changeOrder ? 'change order' : 'estimate'} · ${D.usd(D.totals(dc).total)}`)),
           ...(paper[j.id] || []).filter((dc) => needsSig(dc) && D.owed(dc) <= 0).map((dc) =>
             el('button', { type: 'button', class: 'gold block', onclick: () => openPaper(j, dc, { sign: true }) }, `✍️ Sign ${dc.type === 'invoice' ? 'invoice' : 'estimate'} ${dc.number}`)),
           ...(paper[j.id] || []).filter((dc) => D.owed(dc) > 0).map((dc) =>
@@ -717,7 +717,7 @@
           (paper[j.id] || []).length ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Estimates & invoices'),
             el('div', { class: 'doc-list' }, ...paper[j.id].map((dc) => el('button', { type: 'button', class: 'doc-row', onclick: () => openPaper(j, dc) },
               el('span', { class: 'ic' }, dc.type === 'invoice' ? '🧾' : '📝'),
-              el('span', { class: 'body' }, el('b', {}, `${dc.type === 'invoice' ? 'Invoice' : 'Estimate'} ${dc.number}`),
+              el('span', { class: 'body' }, el('b', {}, `${dc.type === 'invoice' ? 'Invoice' : dc.changeOrder ? 'Change order' : 'Estimate'} ${dc.number}`),
                 el('span', { class: 'muted small' }, dc.type === 'invoice' && D.owed(dc) > 0 ? `${D.usd(D.owed(dc))} due${dc.dueDate ? ' by ' + D.fmtDate(dc.dueDate) : ''}` : D.usd(D.totals(dc).total))),
               el('span', { class: `pill ${D.pillClass(dc)}` }, dc.type === 'estimate' && dc.status === 'sent' ? 'Needs your OK' : D.label(dc)))))) : null,
           docs[j.id].some((f) => f.source !== 'design') ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Documents from Top Hat'),

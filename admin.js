@@ -13,6 +13,7 @@
   let crew = [];
   let settings = {};
   let team = [];
+  let records = []; // office-only: price book, templates, tasks, expenses, suppliers, staff, licenses, tickets, how-to, equipment
   let meUser = null;
   let isStaff = true; // false for salespeople
   const docs = TH.docs;
@@ -71,7 +72,8 @@
     if (!(isStaff ? MAIN_TABS : SALES_TABS).some(([id]) => id === tab)) tab = 'today';
     render();
   }
-  async function load() { [jobs, crew, settings, team] = await Promise.all([api.jobs.all(), api.contractors.list(), api.settings.get(), api.team.list()]); }
+  async function load() { [jobs, crew, settings, team, records] = await Promise.all([api.jobs.all(), api.contractors.list(), api.settings.get(), api.team.list(), isStaff ? api.records.list().catch(() => []) : Promise.resolve([])]); }
+  const recs = (kind, jobId) => records.filter((r) => r.kind === kind && (jobId === undefined || r.jobId === jobId));
 
   function loginView(me, note) {
     view.replaceChildren(TH.loginForm({ note: note || (me ? `You're signed in as ${me.email}, which isn't a staff account. Log in with a staff account, or open your own area.` : '') }));
@@ -79,7 +81,7 @@
 
   /* ---------- main ---------- */
   // Sales and Contractors are one tab, "Team", with a switch inside (owner's request).
-  const MAIN_TABS = [['today', 'Today', '📅'], ['jobs', 'Jobs', '🗂️'], ['inbox', 'Inbox', '💬'], ['team', 'Team', '👥'], ['reports', 'Reports', '📊'], ['business', 'Payments', '💳']];
+  const MAIN_TABS = [['today', 'Today', '📅'], ['jobs', 'Jobs', '🗂️'], ['inbox', 'Inbox', '💬'], ['team', 'Team', '👥'], ['reports', 'Office', '🏢'], ['business', 'Payments', '💳']];
   let teamPart = 'sales'; // which half of Team is showing: 'sales' or 'crew'
   const SALES_TABS = [['today', 'Today', '📅'], ['jobs', 'My clients', '🗂️']];
   if (MAIN_TABS.some(([id]) => id === location.hash.slice(1))) tab = location.hash.slice(1);
@@ -99,8 +101,10 @@
   const estWith = (j, st) => (j.docs || []).find((d) => d.type === 'estimate' && d.status === st);
   const liveInvoices = (j) => (j.docs || []).filter((d) => d.type === 'invoice' && d.status !== 'void');
   // Payment schedule on a job: the total it's based on, and each payment with its invoice once made.
-  const approvedEstOf = (j) => (j.docs || []).filter((d) => d.type === 'estimate' && d.status === 'approved').at(-1);
-  const jobTotal = (j) => { const e = approvedEstOf(j); return e ? docs.totals(e).total : Number(j.price) || 0; };
+  const approvedEstOf = (j) => (j.docs || []).filter((d) => d.type === 'estimate' && d.status === 'approved' && !d.changeOrder).at(-1);
+  // Approved change orders add to the job total.
+  const changeOrdersTotal = (j) => (j.docs || []).filter((d) => d.changeOrder && d.status === 'approved').reduce((t, d) => t + docs.totals(d).total, 0);
+  const jobTotal = (j) => { const e = approvedEstOf(j); return e ? docs.totals(e).total + changeOrdersTotal(j) : Number(j.price) || 0; };
   // When each kind of payment shows as due. A "stage" payment is billed when that part of the work is done (tap it on the job); it nags once the job is finished.
   const DUE_FROM = { insurance: ['scheduled', 'in_progress', 'completed'], sold: ['scheduled', 'in_progress', 'completed'], start: ['in_progress', 'completed'], stage: ['completed'], mid: ['in_progress', 'completed'], done: ['completed'] };
   function planOf(j) {
@@ -240,7 +244,7 @@
       ...[['sales', '💼 Sales'], ['crew', '👷 Contractors']].map(([id, label]) => el('button', { type: 'button', 'aria-pressed': String(teamPart === id),
         class: teamPart === id ? 'on' : '', onclick: () => { teamPart = id; render(); } }, label)));
     const body = tab === 'today' ? todayView() : tab === 'jobs' ? leadsView()
-      : tab === 'inbox' ? inboxView() : tab === 'reports' ? reportsView()
+      : tab === 'inbox' ? inboxView() : tab === 'reports' ? officeView()
       : tab === 'team' ? [teamSwitch(), ...[].concat(teamPart === 'crew' ? crewView() : salesTeamView())] : businessView();
     view.replaceChildren(tabs, el('div', { class: 'stack', style: 'margin:16px 0' }, ...[].concat(body)));
     if (tab === 'today') fillDreams();
@@ -386,7 +390,7 @@
     const collected = (f) => pays.filter((p) => f(p.date)).reduce((t, p) => t + p.amount, 0);
     const wonThisYear = jobs.filter((j) => WON.includes(j.status) && new Date(soldAt(j)).getFullYear() === y);
     const finished = jobs.filter((j) => j.status === 'completed' && j.price != null && j.crewPay != null);
-    const profit = finished.reduce((t, j) => t + (j.price - j.crewPay - (j.crewBills || []).filter((b) => b.step == null && ['approved', 'paid'].includes(b.status)).reduce((s, b) => s + Number(b.amount), 0)), 0);
+    const profit = finished.reduce((t, j) => t + (j.price - j.crewPay - expensesOf(j.id) - (j.crewBills || []).filter((b) => b.step == null && ['approved', 'paid'].includes(b.status)).reduce((s, b) => s + Number(b.amount), 0)), 0);
     const profitPct = finished.reduce((t, j) => t + j.price, 0) ? Math.round(profit / finished.reduce((t, j) => t + j.price, 0) * 100) : null;
     const leads7 = jobs.filter((j) => Date.now() - j.created < 7 * 864e5).length;
     const decided = jobs.filter((j) => WON.includes(j.status) || j.status === 'lost');
@@ -423,23 +427,29 @@
       el('div', { class: 'two' },
         el('div', { class: 'kpi' }, el('b', {}, `${countOf(inMonth)} · ${money(soldRev(inMonth))}`), el('span', {}, `This month (goal ${Math.round(gCount / 12)} · ${money(Math.round(gRev / 12))})`)),
         el('div', { class: 'kpi' }, el('b', {}, `${countOf(inQuarter)} · ${money(soldRev(inQuarter))}`), el('span', {}, `This quarter (goal ${Math.round(gCount / 4)} · ${money(Math.round(gRev / 4))})`))),
-      el('p', { class: 'muted small', style: 'margin:0' }, 'Change the goal on the Payments tab. Profit = customer price − crew pay − approved extras, on finished jobs.'));
+      el('p', { class: 'muted small', style: 'margin:0' }, 'Change the goal on the Payments tab. Profit = customer price − crew pay − approved extras − job expenses, on finished jobs.'));
   }
 
   // Alerts the owner wants: stalled jobs and contractor insurance (overdue invoices and new leads are already in the lists below).
   function alertsCard() {
     const stalled = stalledJobs(); const ins = insuranceIssues().filter((x) => x.kind !== 'none' || jobs.some((j) => j.contractorId === x.c.id && WON.includes(j.status) && j.status !== 'completed'));
-    if (!stalled.length && !ins.length) return null;
+    const oa = isStaff ? officeAlerts() : [];
+    if (!stalled.length && !ins.length && !oa.length) return null;
     return el('section', { class: 'card stack alerts-card' },
       el('h3', {}, '⚠️ Needs a look'),
       ...stalled.slice(0, 8).map((j) => el('button', { type: 'button', class: 'alert-row', onclick: () => openLead(j.id, 'overview') },
         el('b', {}, `🐢 ${j.buyer.name} · ${jobNo(j)}`), el('span', { class: 'muted small' }, `No update in ${Math.floor((Date.now() - (j.progressAt || j.created)) / 864e5)} days · ${find(STATUSES, j.status)?.label || j.status}`))),
       ...ins.map((x) => el('button', { type: 'button', class: 'alert-row', onclick: () => { tab = 'team'; teamPart = 'crew'; render(); } },
-        el('b', {}, `${x.kind === 'out' ? '⛔' : '🛡'} ${x.c.name}`), el('span', { class: 'muted small' }, x.text))));
+        el('b', {}, `${x.kind === 'out' ? '⛔' : '🛡'} ${x.c.name}`), el('span', { class: 'muted small' }, x.text))),
+      ...oa.map((x) => el('button', { type: 'button', class: 'alert-row', onclick: () => { tab = 'reports'; officePart = x.part; history.replaceState(null, '', '#reports'); render(); } },
+        el('b', {}, `${x.icon} ${x.title}`), el('span', { class: 'muted small' }, x.text))));
   }
 
   /* ---------- leads, messages & reports (CRM checklist 1, 2, 14 · office checklist 2, 6) ---------- */
   const LEAD_OPEN = ['new', 'qualifying', 'hot'];
+  const JOB_EXPENSE_CATS = ['Materials', 'Permits & fees', 'Dumpster / disposal', 'Equipment rental', 'Extra labor', 'Fuel & delivery', 'Other'];
+  const OVERHEAD_CATS = ['Rent / office', 'Trucks & fuel', 'Insurance', 'Angi / lead fees', 'Marketing & ads', 'Software & phone', 'Payroll (office)', 'Tools & equipment', 'Accounting & legal', 'Other'];
+  const expensesOf = (jid) => recs('expense', jid).reduce((t, x) => t + (Number(x.amount) || 0), 0);
   const srcLabel = (id) => TH.sourceLabel(id);
   const normAddr = (j) => String(j.address || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const fmtDur = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 1440)} days`; };
@@ -645,7 +655,7 @@
     // 6. Profit by month and by type of work (finished jobs).
     const done = jobs.filter((j) => j.status === 'completed' && inYear(j.finishedAt || soldAt(j)));
     const extras = (j) => (j.crewBills || []).filter((b) => b.step == null && ['approved', 'paid'].includes(b.status)).reduce((s, b) => s + Number(b.amount), 0);
-    const pl = (l) => { const rev = l.reduce((t, j) => t + valueOf(j), 0); const cost = l.reduce((t, j) => t + (Number(j.crewPay) || 0) + extras(j), 0); return [l.length, money(rev), money(cost), money(rev - cost), pct(rev - cost, rev)]; };
+    const pl = (l) => { const rev = l.reduce((t, j) => t + valueOf(j), 0); const cost = l.reduce((t, j) => t + (Number(j.crewPay) || 0) + extras(j) + expensesOf(j.id), 0); return [l.length, money(rev), money(cost), money(rev - cost), pct(rev - cost, rev)]; };
     const plMonth = MONTHS.map((m, i) => [m, ...pl(done.filter((j) => new Date(j.finishedAt || soldAt(j)).getMonth() === i))]).filter((r) => r[1]);
     const plTrade = [...new Set(done.map((j) => j.trade))].map((t) => [tradeOf(t).label, ...pl(done.filter((j) => j.trade === t))]);
 
@@ -685,12 +695,206 @@
         ['Source', 'Leads', 'Sold', 'Close rate', 'Sold $', 'Spent', 'Per lead', 'Per sale', 'Return'], srcRows, null, spendForm),
       section('Sales reps', 'Leads that came in this year, by who owns them.', ['Rep', 'Leads', 'Sold', 'Close rate', 'Sold $', 'Speed to lead'], repRows),
       section('Speed to lead', 'Time from a lead coming in to the first call, text or email.', ['', ''], speedRows),
-      section('Profit by month', 'Finished jobs. Cost = crew pay plus approved extras.', ['Month', 'Jobs', 'Revenue', 'Cost', 'Profit', 'Margin'], plMonth),
+      section('Profit by month', 'Finished jobs. Cost = crew pay, approved extras and job expenses (materials, permits…).', ['Month', 'Jobs', 'Revenue', 'Cost', 'Profit', 'Margin'], plMonth),
+      (() => { const oh = recs('expense', null).filter((x) => String(x.date).slice(0, 4) === String(y));
+        const rows = MONTHS.map((m, i) => { const jobsP = done.filter((j) => new Date(j.finishedAt || soldAt(j)).getMonth() === i).reduce((t, j) => t + valueOf(j) - (Number(j.crewPay) || 0) - extras(j) - expensesOf(j.id), 0);
+          const ov = oh.filter((x) => Number(String(x.date).slice(5, 7)) === i + 1).reduce((t, x) => t + (Number(x.amount) || 0), 0); return [m, money(jobsP), money(ov), money(jobsP - ov)]; });
+        return section('Net profit by month (after overhead)', 'Profit on finished jobs minus overhead (rent, trucks, Angi fees… on the Office tab → Expenses & bills).', ['Month', 'Job profit', 'Overhead', 'Net profit'], rows); })(),
+      section('Overhead by category', null, ['Category', 'Spent'], OVERHEAD_CATS.map((c) => [c, recs('expense', null).filter((x) => x.category === c && String(x.date).slice(0, 4) === String(y)).reduce((t, x) => t + (Number(x.amount) || 0), 0)]).filter((r) => r[1]).map((r) => [r[0], money(r[1])])),
       section('Profit by type of work', null, ['Work', 'Jobs', 'Revenue', 'Cost', 'Profit', 'Margin'], plTrade),
       section('Why leads didn’t close', 'Pick a reason when you close a lead as “Not a fit”.', ['Reason', 'Leads', 'Share'], lostRows),
       section('Sales tax collected', 'The tax part of each invoice payment received.', ['Month', 'Payments', 'Sales tax'], taxRows),
       section('Contractor payments (1099)', 'Paid to each contractor this year. $600 or more needs a 1099-NEC by January 31.', ['Contractor', 'Phone', 'Paid', '1099'], tenRows),
     ];
+  }
+
+  /* ---------- Office tab (office only): reports + the company's own records (office checklist 3, 4, 5, 7, 8, 9, 10, 11) ---------- */
+  let officePart = 'reports';
+  const OFFICE_PARTS = [['reports', '📊 Reports'], ['bills', '💸 Expenses & bills'], ['pricebook', '📗 Price book'], ['commission', '💼 Commission'], ['vendors', '🏪 Suppliers'],
+    ['staff', '👥 Office staff'], ['compliance', '📜 Licenses & insurance'], ['tickets', '🛠 Tickets'], ['sops', '📘 How-to'], ['assets', '🚚 Equipment']];
+  const dueSoon = (k, days) => k && k <= dayKey(Date.now() + days * 864e5);
+  const isPast = (k) => k && k < dayKey(Date.now());
+  // Bills to pay: any expense with a due date that isn't paid yet (supplier bills, overhead).
+  const billsDue = () => recs('expense').filter((x) => x.dueDate && !x.paidDate).sort((a, b) => String(a.dueDate).localeCompare(b.dueDate));
+  // Company paperwork / equipment dates coming up within 30 days (or already passed).
+  const officeAlerts = () => [
+    ...recs('company_doc').filter((x) => x.expires && dueSoon(x.expires, 30)).map((x) => ({ icon: isPast(x.expires) ? '⛔' : '📜', title: `${x.name}${x.number ? ' #' + x.number : ''}`, text: `${isPast(x.expires) ? 'ran out' : 'runs out'} ${docs.fmtDate(x.expires)}`, part: 'compliance' })),
+    ...recs('asset').filter((x) => x.dueDate && dueSoon(x.dueDate, 30)).map((x) => ({ icon: '🚚', title: x.name, text: `${x.dueWhat || 'renewal'} ${isPast(x.dueDate) ? 'was due' : 'due'} ${docs.fmtDate(x.dueDate)}`, part: 'assets' })),
+    ...billsDue().filter((x) => dueSoon(x.dueDate, 7)).map((x) => ({ icon: '💸', title: `${x.vendor || x.category} · ${money(Number(x.amount) || 0)}`, text: `bill ${isPast(x.dueDate) ? 'overdue since' : 'due'} ${docs.fmtDate(x.dueDate)}`, part: 'bills' })),
+    ...(recs('ticket').filter((x) => x.status !== 'closed').length ? [{ icon: '🛠', title: `${recs('ticket').filter((x) => x.status !== 'closed').length} open ticket(s)`, text: 'complaints, warranty or callbacks waiting', part: 'tickets' }] : []),
+  ];
+
+  // A simple list + form for one kind of office record. fields: [{ k, label, type, options, hint, full }]
+  function recordSection(kind, cfg) {
+    const errBox = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const holder = el('div');
+    const list = (cfg.list ? cfg.list() : recs(kind)).slice().sort(cfg.sort || ((a, b) => String(a.name || a.title || '').localeCompare(String(b.name || b.title || ''))));
+    const form = (rec) => {
+      const inputs = {};
+      const f = el('form', { class: 'card stack record-form', onsubmit: async (e) => {
+        e.preventDefault();
+        const out = { ...(rec || {}) };
+        for (const fd of cfg.fields) {
+          const i = inputs[fd.k];
+          out[fd.k] = fd.type === 'check' ? i.checked : fd.type === 'number' ? (i.value === '' ? null : Number(i.value)) : String(i.value || '').trim();
+        }
+        const missing = cfg.fields.find((fd) => fd.required && !out[fd.k] && out[fd.k] !== 0);
+        if (missing) { errBox.textContent = `Fill in “${missing.label}”.`; errBox.hidden = false; return; }
+        try { await api.records.save(kind, cfg.beforeSave ? cfg.beforeSave(out) : out, cfg.jobOf ? cfg.jobOf(out) : (rec && rec.jobId) || null); await load(); render(); }
+        catch (err) { errBox.textContent = err.message; errBox.hidden = false; }
+      } },
+        el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, rec ? `Edit ${cfg.noun}` : `New ${cfg.noun}`), el('button', { type: 'button', class: 'link small', onclick: () => holder.replaceChildren() }, 'Close')),
+        errBox,
+        el('div', { class: 'record-grid' }, ...cfg.fields.map((fd) => {
+          const v = rec ? rec[fd.k] : fd.default;
+          const input = fd.type === 'select' ? el('select', { name: fd.k }, ...(typeof fd.options === 'function' ? fd.options() : fd.options).map((o) => { const [val, lab] = Array.isArray(o) ? o : [o, o]; return el('option', { value: val, selected: String(val) === String(v ?? '') }, lab); }))
+            : fd.type === 'textarea' ? el('textarea', { name: fd.k, rows: fd.rows || 4, value: v ?? '', maxlength: '20000' })
+            : fd.type === 'check' ? el('input', { type: 'checkbox', name: fd.k, checked: rec && rec[fd.k] != null ? !!rec[fd.k] : !!fd.default })
+            : el('input', { name: fd.k, type: fd.type || 'text', value: v ?? '', ...(fd.type === 'number' ? { inputmode: 'decimal', step: 'any', min: '0' } : {}), ...(fd.list ? { list: fd.list } : {}), placeholder: fd.placeholder || '' });
+          inputs[fd.k] = input;
+          return fd.type === 'check' ? el('label', { class: 'dnc-row small' + (fd.full ? ' full' : '') }, input, el('span', {}, fd.label))
+            : el('label', { class: 'field' + (fd.full || fd.type === 'textarea' ? ' full' : '') }, fd.label, fd.hint ? el('span', { class: 'hint' }, fd.hint) : null, input);
+        })),
+        el('datalist', { id: 'vendorNames' }, ...recs('vendor').map((v) => el('option', { value: v.name }))),
+        el('div', { class: 'row', style: 'gap:8px' }, el('button', { type: 'submit', style: 'flex:1' }, 'Save'),
+          rec ? el('button', { type: 'button', class: 'ghost', style: 'color:var(--bad)', onclick: async () => { if (!confirm(`Delete this ${cfg.noun}?`)) return; await api.records.remove(rec.id); await load(); render(); } }, 'Delete') : null));
+      holder.replaceChildren(f); f.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    };
+    return el('section', { class: 'card stack' },
+      el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, cfg.title), el('button', { type: 'button', class: 'gold small', onclick: () => form(null) }, `+ ${cfg.addLabel || 'Add'}`)),
+      cfg.intro ? el('p', { class: 'muted small', style: 'margin:0' }, cfg.intro) : null,
+      cfg.top || null,
+      holder,
+      ...(list.length ? list.map((r) => { const [t1, t2, flag] = cfg.line(r); return el('button', { type: 'button', class: 'alert-row', onclick: () => form(r) },
+        el('b', {}, t1, flag ? el('span', { class: 'flag' + (/⛔|overdue|ran out/i.test(flag) ? ' hot' : ''), style: 'margin-left:6px' }, flag) : null), t2 ? el('span', { class: 'muted small' }, t2) : null); })
+        : [el('p', { class: 'muted small' }, cfg.empty || 'Nothing here yet.')]),
+      cfg.csv && list.length ? el('button', { type: 'button', class: 'ghost small', style: 'align-self:flex-start', onclick: () => TH.download(`top-hat-${kind}-${docs.todayKey()}.csv`, TH.csv([cfg.fields.map((fd) => fd.label), ...list.map((r) => cfg.fields.map((fd) => r[fd.k] ?? ''))])) }, '⬇ CSV') : null);
+  }
+
+  // Commission (CRM 11.4 · office 4.1–4.2): a rule per rep, earned on finished jobs, and what's been paid.
+  function commissionView() {
+    const y = reportYear;
+    const ruleOf = (sid) => recs('commission_rule').find((r) => r.salesId === sid);
+    const profitOf = (j) => jobTotal(j) - crewOwedTotal(j) - expensesOf(j.id);
+    const earnedOn = (j, rule) => Math.round((rule.basis === 'profit' ? Math.max(0, profitOf(j)) : jobTotal(j)) * (Number(rule.pct) || 0)) / 100;
+    const paidOn = (sid, jid) => recs('commission_paid').filter((p) => p.salesId === sid && p.jobId === jid).reduce((t, p) => t + (Number(p.amount) || 0), 0);
+    return [
+      el('p', { class: 'muted small' }, 'Office only. Set each rep’s rate, then pay commission on finished jobs. Reps don’t see this.'),
+      ...team.map((x) => {
+        const rule = ruleOf(x.id) || { salesId: x.id, pct: '', basis: 'sale' };
+        const pctIn = el('input', { type: 'number', min: '0', max: '100', step: '0.5', inputmode: 'decimal', value: rule.pct ?? '', 'aria-label': `${x.name} commission percent`, style: 'width:90px' });
+        const basisSel = el('select', { 'aria-label': `${x.name} commission basis` }, el('option', { value: 'sale', selected: rule.basis !== 'profit' }, '% of the sale'), el('option', { value: 'profit', selected: rule.basis === 'profit' }, '% of the profit'));
+        const done = jobs.filter((j) => j.salesId === x.id && j.status === 'completed' && new Date(j.finishedAt || soldAt(j)).getFullYear() === y);
+        const rows = rule.pct ? done.map((j) => { const earned = earnedOn(j, rule); const paid = paidOn(x.id, j.id); return { j, earned, paid }; }) : [];
+        const owed = rows.reduce((t, r) => t + Math.max(0, r.earned - r.paid), 0);
+        return el('section', { class: 'card stack' },
+          el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, `💼 ${x.name}`), rule.pct ? el('b', {}, `${money(owed)} owed`) : null),
+          el('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap;align-items:center' }, pctIn, el('span', {}, '%'), basisSel,
+            el('button', { type: 'button', class: 'ghost small', onclick: async () => { await api.records.save('commission_rule', { ...rule, salesId: x.id, pct: Number(pctIn.value) || 0, basis: basisSel.value }); await load(); render(); } }, 'Save rate')),
+          rule.pct ? el('div', { class: 'report-scroll' }, el('table', { class: 'report-table' },
+            el('thead', {}, el('tr', {}, ...['Job', 'Customer', rule.basis === 'profit' ? 'Profit' : 'Sale', 'Earned', 'Paid', ''].map((h) => el('th', {}, h)))),
+            el('tbody', {}, ...rows.map((r) => el('tr', {}, el('td', {}, jobNo(r.j)), el('td', {}, r.j.buyer.name), el('td', {}, money(rule.basis === 'profit' ? profitOf(r.j) : jobTotal(r.j))),
+              el('td', {}, money(r.earned)), el('td', {}, money(r.paid)),
+              el('td', {}, r.earned - r.paid > 0.005 ? el('button', { type: 'button', class: 'ghost small', onclick: async () => {
+                await api.records.save('commission_paid', { salesId: x.id, jobId: r.j.id, amount: Math.round((r.earned - r.paid) * 100) / 100, date: docs.todayKey() }, r.j.id); await load(); render(); } }, 'Mark paid') : '✓')))),
+            el('tfoot', {}, el('tr', {}, el('td', {}, 'Total'), el('td', {}, `${rows.length} jobs`), el('td', {}, ''), el('td', {}, money(rows.reduce((t, r) => t + r.earned, 0))), el('td', {}, money(rows.reduce((t, r) => t + r.paid, 0))), el('td', {}, ''))))) : el('p', { class: 'muted small' }, 'No rate set yet.'),
+          rule.pct && rows.length ? el('button', { type: 'button', class: 'ghost small', style: 'align-self:flex-start', onclick: () => TH.download(`commission-${x.name.replace(/\W+/g, '-').toLowerCase()}-${y}.csv`,
+            TH.csv([['Job', 'Customer', 'Finished', rule.basis === 'profit' ? 'Profit' : 'Sale', 'Rate %', 'Earned', 'Paid', 'Owed'],
+              ...rows.map((r) => [jobNo(r.j), r.j.buyer.name, r.j.finishedAt ? dayKey(r.j.finishedAt) : '', rule.basis === 'profit' ? profitOf(r.j) : jobTotal(r.j), rule.pct, r.earned, r.paid, Math.max(0, r.earned - r.paid)])])) }, '⬇ Commission statement (CSV)') : null);
+      }),
+      team.length ? null : el('p', { class: 'muted' }, 'Add salespeople on the Team tab first.'),
+    ];
+  }
+
+  function officeView() {
+    const switcher = el('div', { class: 'office-switch', role: 'group', 'aria-label': 'Office sections' }, ...OFFICE_PARTS.map(([id, label]) =>
+      el('button', { type: 'button', class: 'chip', 'aria-pressed': String(officePart === id), onclick: () => { officePart = id; render(); } }, label)));
+    const yes = (v) => (v ? 'Yes' : 'No');
+    const parts = {
+      reports: () => reportsView(),
+      commission: () => commissionView(),
+      bills: () => {
+        const bills = billsDue();
+        const overhead = recs('expense', null);
+        return [
+          el('section', { class: 'card stack' }, el('h3', {}, `💸 Bills to pay (${bills.length})`),
+            el('p', { class: 'muted small', style: 'margin:0' }, 'Supplier and other bills with a due date that aren’t paid yet. Contractor bills are on each job and on Today.'),
+            ...(bills.length ? bills.map((x) => { const jb = x.jobId && jobs.find((q) => q.id === x.jobId); return el('div', { class: 'task-row' },
+              el('span', { style: 'flex:1' }, el('b', {}, `${money(Number(x.amount) || 0)} · ${x.vendor || x.category}`),
+                el('span', { class: 'small ' + (isPast(x.dueDate) ? 'bad-text' : 'muted'), style: 'display:block' }, `${isPast(x.dueDate) ? 'Overdue since' : 'Due'} ${docs.fmtDate(x.dueDate)}${jb ? ' · ' + jobNo(jb) : ' · overhead'}${x.invoiceNo ? ' · bill #' + x.invoiceNo : ''}`)),
+              el('button', { type: 'button', class: 'ghost small', onclick: async () => { await api.records.save('expense', { ...x, paidDate: docs.todayKey() }, x.jobId); await load(); render(); } }, 'Mark paid')); })
+              : [el('p', { class: 'small good-text' }, '✓ No bills waiting')])),
+          recordSection('expense', { title: '🏢 Overhead & company expenses', noun: 'expense', addLabel: 'Add expense', csv: true,
+            intro: 'Costs that aren’t for one job: rent, trucks, insurance, Angi fees, ads, software, office payroll. Job costs go on the job (Payments tab). Add a due date to track it as a bill to pay.',
+            list: () => overhead, sort: (a, b) => String(b.date).localeCompare(String(a.date)),
+            fields: [{ k: 'amount', label: 'Amount ($)', type: 'number', required: true }, { k: 'category', label: 'Category', type: 'select', options: OVERHEAD_CATS },
+              { k: 'vendor', label: 'Paid to', list: 'vendorNames', placeholder: 'e.g. Angi' }, { k: 'date', label: 'Date', type: 'date', default: docs.todayKey() },
+              { k: 'dueDate', label: 'Due date (if it’s a bill)', type: 'date' }, { k: 'paidDate', label: 'Paid on', type: 'date' },
+              { k: 'invoiceNo', label: 'Bill / invoice #' }, { k: 'recurring', label: 'Every month', type: 'check', default: false }, { k: 'note', label: 'Note', full: true }],
+            line: (x) => [`${money(Number(x.amount) || 0)} · ${x.category}`, [docs.fmtDate(x.date), x.vendor, x.recurring ? 'monthly' : '', x.note].filter(Boolean).join(' · '), x.dueDate && !x.paidDate ? (isPast(x.dueDate) ? 'overdue' : 'to pay') : ''] }),
+        ];
+      },
+      pricebook: () => [
+        recordSection('price_item', { title: '📗 Price book', noun: 'price book item', addLabel: 'Add item', csv: true,
+          intro: 'Your standard items with your cost and your price. Add them to any estimate in one tap (📗 Price book in the estimate). Costs are office only.',
+          fields: [{ k: 'name', label: 'Item', required: true, full: true, placeholder: 'e.g. Base cabinet install' }, { k: 'trade', label: 'Type of work', type: 'select', options: () => TRADES.map((t) => [t.id, t.label]) },
+            { k: 'unit', label: 'Unit', placeholder: 'each, sq ft, linear ft, hour' }, { k: 'cost', label: 'Your cost ($)', type: 'number' }, { k: 'price', label: 'Customer price ($)', type: 'number', required: true },
+            { k: 'category', label: 'Group', placeholder: 'e.g. Cabinets, Tile, Labor' }, { k: 'supplier', label: 'Supplier', list: 'vendorNames' }],
+          line: (x) => [x.name, `${money(Number(x.price) || 0)}${x.unit ? ' / ' + x.unit : ''} · cost ${money(Number(x.cost) || 0)}${Number(x.price) ? ` · ${Math.round((Number(x.price) - (Number(x.cost) || 0)) / Number(x.price) * 100)}% margin` : ''} · ${tradeOf(x.trade).label}${x.supplier ? ' · ' + x.supplier : ''}`] }),
+        recordSection('est_template', { title: '📋 Estimate templates (Good · Better · Best)', noun: 'template', addLabel: 'Add template',
+          intro: 'Ready-made estimates, e.g. Kitchen Good / Better / Best. Write one line per row as: description | qty | price | your cost. Start any estimate from one (📋 Template).',
+          beforeSave: (x) => ({ ...x, items: String(x.lines || '').split('\n').map((l) => l.split('|').map((p) => p.trim())).filter((p) => p[0]).map(([desc, qty, price, cost]) => ({ desc, qty: Number(qty) || 1, price: Number(String(price || '').replace(/[$,]/g, '')) || 0, cost: Number(String(cost || '').replace(/[$,]/g, '')) || 0 })) }),
+          fields: [{ k: 'name', label: 'Name', required: true, placeholder: 'e.g. Kitchen remodel' }, { k: 'trade', label: 'Type of work', type: 'select', options: () => TRADES.map((t) => [t.id, t.label]) },
+            { k: 'tier', label: 'Level', type: 'select', options: [['good', 'Good'], ['better', 'Better'], ['best', 'Best'], ['', 'One option']] },
+            { k: 'lines', label: 'Lines', type: 'textarea', rows: 6, hint: 'description | qty | price | your cost', placeholder: 'Demo & haul-away | 1 | 1800 | 900\nStock cabinets | 1 | 8500 | 6200' },
+            { k: 'scope', label: 'Scope of work', type: 'textarea', rows: 4 }],
+          line: (x) => [`${x.tier ? ({ good: '🥉 Good', better: '🥈 Better', best: '🥇 Best' }[x.tier]) + ' · ' : ''}${x.name}`, `${tradeOf(x.trade).label} · ${(x.items || []).length} lines · ${money((x.items || []).reduce((t, i) => t + i.qty * i.price, 0))}`] }),
+      ],
+      vendors: () => recordSection('vendor', { title: '🏪 Suppliers & vendors', noun: 'supplier', addLabel: 'Add supplier', csv: true,
+        intro: 'Who you buy from: account numbers, your rep, and payment terms. Bills you owe them show under Expenses & bills.',
+        fields: [{ k: 'name', label: 'Company', required: true }, { k: 'what', label: 'What they supply', placeholder: 'e.g. Lumber, cabinets, tile' },
+          { k: 'rep', label: 'Your rep' }, { k: 'phone', label: 'Phone', type: 'tel' }, { k: 'email', label: 'Email', type: 'email' }, { k: 'account', label: 'Account #' },
+          { k: 'terms', label: 'Payment terms', placeholder: 'e.g. Net 30, 2% 10' }, { k: 'website', label: 'Website / ordering link' }, { k: 'notes', label: 'Notes', type: 'textarea', rows: 3 }],
+        line: (x) => { const owe = billsDue().filter((b) => b.vendor === x.name).reduce((t, b) => t + (Number(b.amount) || 0), 0);
+          return [x.name, [x.what, x.rep, x.phone, x.account ? 'acct ' + x.account : '', x.terms].filter(Boolean).join(' · '), owe ? `${money(owe)} to pay` : '']; } }),
+      staff: () => recordSection('staff', { title: '👥 Office staff & employees', noun: 'person', addLabel: 'Add person', csv: true,
+        intro: 'Everyone who works for Top Hat besides sales reps and contractors (they’re on the Team tab). Don’t store Social Security numbers here: keep W-4 and I-9 forms with your payroll company.',
+        sort: (a, b) => (b.active !== false) - (a.active !== false) || String(a.name).localeCompare(b.name),
+        fields: [{ k: 'name', label: 'Name', required: true }, { k: 'title', label: 'Job title', placeholder: 'e.g. Office manager' }, { k: 'phone', label: 'Phone', type: 'tel' }, { k: 'email', label: 'Email', type: 'email' },
+          { k: 'start', label: 'Start date', type: 'date' }, { k: 'pay', label: 'Pay', type: 'select', options: ['Hourly', 'Salary', 'Owner', 'Contract'] }, { k: 'rate', label: 'Rate ($)', type: 'number' },
+          { k: 'emergency', label: 'Emergency contact' }, { k: 'onboarding', label: 'Onboarding checklist', type: 'textarea', rows: 4, default: '[ ] W-4 and I-9 sent to payroll\n[ ] App login\n[ ] Keys / truck\n[ ] Safety training\n[ ] Read the How-to library' },
+          { k: 'active', label: 'Works here now', type: 'check', default: true }, { k: 'notes', label: 'Notes', type: 'textarea', rows: 3 }],
+        line: (x) => [x.name, [x.title, x.phone, x.start ? 'since ' + docs.fmtDate(x.start) : '', x.pay].filter(Boolean).join(' · '), x.active === false ? 'former' : ''] }),
+      compliance: () => recordSection('company_doc', { title: '📜 Licenses, insurance & certifications', noun: 'license or policy', addLabel: 'Add', csv: true,
+        intro: 'Top Hat’s own contractor licenses, general liability, workers comp, bonds and certifications (like EPA lead-safe). You get a warning on Today 30 days before one runs out. Contractor insurance is on each contractor.',
+        sort: (a, b) => String(a.expires || '9999').localeCompare(String(b.expires || '9999')),
+        fields: [{ k: 'type', label: 'Type', type: 'select', options: ['Contractor license', 'General liability insurance', 'Workers comp insurance', 'Commercial auto insurance', 'Surety bond', 'EPA lead-safe (RRP) certification', 'Business registration', 'Other'] },
+          { k: 'name', label: 'Name', required: true, placeholder: 'e.g. Illinois roofing license' }, { k: 'number', label: 'Number / policy #' }, { k: 'state', label: 'State / city' },
+          { k: 'company', label: 'Issued by / insurer' }, { k: 'amount', label: 'Coverage ($)', type: 'number' }, { k: 'expires', label: 'Runs out', type: 'date' }, { k: 'notes', label: 'Notes', type: 'textarea', rows: 2 }],
+        line: (x) => [x.name, [x.type, x.number ? '#' + x.number : '', x.state, x.expires ? 'runs out ' + docs.fmtDate(x.expires) : ''].filter(Boolean).join(' · '), x.expires && isPast(x.expires) ? '⛔ ran out' : x.expires && dueSoon(x.expires, 30) ? 'renew soon' : ''] }),
+      tickets: () => recordSection('ticket', { title: '🛠 Complaints, warranty & callbacks', noun: 'ticket', addLabel: 'New ticket', csv: true,
+        intro: 'When a customer calls with a problem after or during a job. Track it until it’s fixed, and what the callback cost you.',
+        jobOf: (x) => x.jobId || null,
+        sort: (a, b) => (a.status === 'closed') - (b.status === 'closed') || b.at - a.at,
+        fields: [{ k: 'jobId', label: 'Job', type: 'select', options: () => [['', '— Pick the job —'], ...jobs.filter((q) => q.status !== 'lost').sort((a, b) => b.created - a.created).map((q) => [q.id, `${jobNo(q)} · ${q.buyer.name}`])] },
+          { k: 'type', label: 'Type', type: 'select', options: ['Complaint', 'Warranty claim', 'Callback / rework', 'Question'] }, { k: 'status', label: 'Status', type: 'select', options: [['open', 'Open'], ['scheduled', 'Fix scheduled'], ['closed', 'Fixed / closed']] },
+          { k: 'what', label: 'What’s wrong', type: 'textarea', rows: 3, required: true }, { k: 'fixDate', label: 'Fix date', type: 'date' }, { k: 'cost', label: 'Cost to fix ($)', type: 'number' }, { k: 'notes', label: 'Notes', type: 'textarea', rows: 2 }],
+        line: (x) => { const q = jobs.find((y) => y.id === x.jobId); return [`${x.type}${q ? ` · ${q.buyer.name} · ${jobNo(q)}` : ''}`, `${String(x.what || '').slice(0, 90)}${x.cost ? ' · cost ' + money(x.cost) : ''}`, x.status === 'closed' ? '' : x.status === 'scheduled' ? 'scheduled' : 'open']; } }),
+      sops: () => recordSection('sop', { title: '📘 How-to library', noun: 'guide', addLabel: 'Add guide',
+        intro: 'How Top Hat does things: step-by-step guides, the sales script and answers to objections, what the AI phone agent should say, and your company info sheet.',
+        sort: (a, b) => String(a.category).localeCompare(b.category) || String(a.title).localeCompare(b.title),
+        fields: [{ k: 'title', label: 'Title', required: true, full: true }, { k: 'category', label: 'Kind', type: 'select', options: ['How we do it (SOP)', 'Sales script', 'Objections & answers', 'AI phone agent', 'Company info', 'Training'] },
+          { k: 'body', label: 'Guide', type: 'textarea', rows: 10 }],
+        line: (x) => [x.title, `${x.category} · updated ${ago(x.updatedAt || x.at)}`] }),
+      assets: () => recordSection('asset', { title: '🚚 Trucks, tools & subscriptions', noun: 'item', addLabel: 'Add item', csv: true,
+        intro: 'Company vehicles, tools and equipment, and software you pay for. Put the next registration, service or renewal date to get a reminder.',
+        sort: (a, b) => String(a.type).localeCompare(b.type) || String(a.name).localeCompare(b.name),
+        fields: [{ k: 'type', label: 'Kind', type: 'select', options: ['Vehicle', 'Tool / equipment', 'Software subscription'] }, { k: 'name', label: 'Name', required: true, placeholder: 'e.g. 2019 F-250, Dewalt saw, QuickBooks' },
+          { k: 'detail', label: 'Plate / serial / login email' }, { k: 'who', label: 'Who has it' }, { k: 'cost', label: 'Cost ($)', type: 'number' }, { k: 'monthly', label: 'Monthly cost ($)', type: 'number' },
+          { k: 'dueDate', label: 'Next date', type: 'date' }, { k: 'dueWhat', label: 'What’s due', placeholder: 'registration, oil change, renewal' }, { k: 'notes', label: 'Notes', type: 'textarea', rows: 2 }],
+        line: (x) => [x.name, [x.type, x.detail, x.who, x.monthly ? money(x.monthly) + '/mo' : '', x.dueDate ? `${x.dueWhat || 'next'} ${docs.fmtDate(x.dueDate)}` : ''].filter(Boolean).join(' · '), x.dueDate && dueSoon(x.dueDate, 30) ? (isPast(x.dueDate) ? 'overdue' : 'due soon') : ''] }),
+    };
+    return [switcher, ...[].concat((parts[officePart] || parts.reports)())];
   }
 
   function todayView() {
@@ -1125,21 +1329,22 @@
     );
 
     // Estimates & invoices
-    const approvedEst = jobDocs.find((x) => x.type === 'estimate' && x.status === 'approved');
+    const approvedEst = jobDocs.find((x) => x.type === 'estimate' && x.status === 'approved' && !x.changeOrder);
     const invoiceBase = approvedEst && !jobDocs.some((x) => x.type === 'invoice' && x.fromEstimateId === approvedEst.id) ? approvedEst : null;
     const docsCard = el('section', { class: 'card stack' },
       el('h3', {}, 'Estimates & invoices'),
       jobDocs.length ? el('div', { class: 'doc-list' }, ...jobDocs.map((dc) => {
         const tt = docs.totals(dc);
         return el('button', { type: 'button', class: 'doc-row', onclick: () => openDoc(j.id, dc.id) },
-          el('span', { class: 'ic' }, dc.type === 'invoice' ? '🧾' : '📝'),
-          el('span', { class: 'body' }, el('b', {}, dc.number),
+          el('span', { class: 'ic' }, dc.type === 'invoice' ? '🧾' : dc.changeOrder ? '➕' : '📝'),
+          el('span', { class: 'body' }, el('b', {}, dc.changeOrder ? `Change order ${dc.number}` : dc.number),
             el('span', { class: 'muted small' }, dc.type === 'invoice' && !['draft', 'void'].includes(dc.status) ? `${docs.usd(tt.total)} · ${docs.usd(Math.max(0, tt.balance))} due` : docs.usd(tt.total))),
           el('span', { class: `pill ${docs.pillClass(dc)}` }, docs.label(dc)));
       })) : el('p', { class: 'muted small' }, 'None yet. They’re filled in with this job’s details. Crew pay never appears on them.'),
       el('div', { class: 'row' },
         el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: () => openDoc(j.id, null, 'estimate') }, '+ Estimate'),
         el('button', { type: 'button', class: 'ghost', style: 'flex:1', onclick: () => openDoc(j.id, null, 'invoice', invoiceBase) }, '+ Invoice')),
+      isStaff && (approvedEst || ['scheduled', 'in_progress', 'completed'].includes(j.status)) ? el('button', { type: 'button', class: 'ghost', onclick: () => openDoc(j.id, null, 'estimate', null, null, { changeOrder: true }) }, '➕ Change order (extra work the customer signs)') : null,
     );
 
     // Files: this job's folder
@@ -1375,6 +1580,71 @@
           : [el('p', { class: 'muted small' }, 'The job is finished. Ask the customer how it went: they can rate it in the app' + (settings.reviewLink ? ' and post a Google review.' : '.')), askBtn(`⭐ Ask ${first} for a review`, 'gold')]) : null;
     const materialsCard = j.status !== 'lost' ? TH.materialsCard(j, { mode: 'office', onChange: async () => { await load(); openLead(j.id); } }) : null;
 
+    // ---------- office only: tasks & punch list, final walkthrough, expenses (CRM checklist 7.3, 7.7, 7.8, 11.3) ----------
+    const recSave = async (kind, rec) => { try { await api.records.save(kind, rec, j.id); await load(); flashSaved(); openLead(j.id); } catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; } };
+    const recDel = async (id) => { try { await api.records.remove(id); await load(); openLead(j.id); } catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; } };
+    const taskList = (punch) => {
+      const list = recs('task', j.id).filter((x) => !!x.punch === punch).sort((a, b) => (a.done - b.done) || a.at - b.at);
+      const input = el('input', { placeholder: punch ? 'e.g. Touch up paint by the window' : 'e.g. Order cabinets', 'aria-label': punch ? 'New punch list item' : 'New task', maxlength: '200' });
+      const add = () => input.value.trim() && recSave('task', { text: input.value.trim().slice(0, 200), punch, done: false });
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+      return el('div', { class: 'stack', style: 'gap:6px' },
+        el('b', {}, punch ? `🔧 Punch list (${list.filter((x) => !x.done).length} open)` : `✅ Tasks (${list.filter((x) => !x.done).length} to do)`),
+        ...list.map((x) => el('div', { class: 'task-row' + (x.done ? ' done' : '') },
+          el('input', { type: 'checkbox', checked: !!x.done, 'aria-label': x.text, onchange: (e) => recSave('task', { ...x, done: e.target.checked, doneBy: e.target.checked ? meUser.name : '', doneAt: e.target.checked ? Date.now() : null }) }),
+          el('span', { style: 'flex:1' }, x.text, x.done && x.doneBy ? el('span', { class: 'muted small' }, ` · ${x.doneBy}`) : null),
+          el('button', { type: 'button', class: 'link small', 'aria-label': `Remove ${x.text}`, onclick: () => recDel(x.id) }, '✕'))),
+        el('div', { class: 'row', style: 'gap:6px' }, input, el('button', { type: 'button', class: 'ghost small', onclick: add }, 'Add')));
+    };
+    const openPunch = recs('task', j.id).filter((x) => x.punch && !x.done).length;
+    const tasksCard = isStaff && j.status !== 'lost' ? el('section', { class: 'card stack' },
+      el('h3', {}, '📋 Tasks & punch list'),
+      el('p', { class: 'muted small', style: 'margin:0' }, 'Office only. Tasks are the steps to get the job done; the punch list is the small fixes before the final walkthrough.'),
+      taskList(false), taskList(true)) : null;
+    const walk = recs('walkthrough', j.id).at(-1);
+    const walkArea = el('div', { class: 'stack' });
+    const walkBtn = el('button', { type: 'button', class: 'gold', onclick: () => {
+      walkArea.replaceChildren(docs.signaturePad({ name: b.name || '', title: 'Final walkthrough', submitLabel: `Sign for ${first === 'the customer' ? 'the customer' : first}`,
+        agree: `By signing, the customer confirms they walked through the finished work on ${jobNo(j)} with us${openPunch ? ` and that ${openPunch} punch list item${openPunch === 1 ? ' is' : 's are'} still to be finished` : ' and it is complete'}.`,
+        onCancel: () => walkArea.replaceChildren(walkBtn),
+        onSign: async (sig) => recSave('walkthrough', { name: sig.name, image: sig.image, signedAt: Date.now(), witness: meUser.name, openPunch }) }));
+      walkArea.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    } }, '✍️ Final walkthrough: customer signs here');
+    walkArea.append(walkBtn);
+    const walkCard = isStaff && ['in_progress', 'completed'].includes(j.status) ? el('section', { class: 'card stack' },
+      el('h3', {}, '🏁 Final walkthrough'),
+      walk ? el('div', { class: 'stack', style: 'gap:6px' },
+        el('p', { class: 'small good-text', style: 'margin:0' }, `✅ Signed by ${walk.name} on ${new Date(walk.signedAt || walk.at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })} · with ${walk.witness}${walk.openPunch ? ` · ${walk.openPunch} punch item${walk.openPunch === 1 ? '' : 's'} open then` : ''}`),
+        walk.image ? el('img', { src: walk.image, alt: `Signature of ${walk.name}`, class: 'sig-img' }) : null)
+        : el('div', { class: 'stack' }, el('p', { class: 'muted small', style: 'margin:0' }, openPunch ? `⚠️ ${openPunch} punch list item${openPunch === 1 ? ' is' : 's are'} still open. You can still sign; it’s noted.` : 'Walk the finished job with the customer, then have them sign on your phone.'), walkArea)) : null;
+    // Expenses on this job: materials, permits, dumpster… They come off the job's profit in the reports.
+    const jobExp = recs('expense', j.id).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const expTotal = jobExp.reduce((t, x) => t + (Number(x.amount) || 0), 0);
+    const expForm = el('form', { class: 'stack', style: 'gap:6px', onsubmit: async (e) => {
+      e.preventDefault(); const f = new FormData(e.currentTarget);
+      const amount = Number(f.get('amount')); if (!(amount > 0)) { errorBox.textContent = 'Enter the amount.'; errorBox.hidden = false; return; }
+      let receipt = null; const file = f.get('receipt');
+      if (file && file.size) { try { const m = await api.files.upload(j.id, file, 'receipt'); receipt = (m && m.name) || file.name; } catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; return; } }
+      recSave('expense', { date: f.get('date') || docs.todayKey(), category: f.get('category'), vendor: String(f.get('vendor') || '').trim().slice(0, 80), amount, note: String(f.get('note') || '').trim().slice(0, 200), receipt });
+    } },
+      el('div', { class: 'two' },
+        el('label', { class: 'field' }, 'Amount ($)', el('input', { name: 'amount', type: 'number', inputmode: 'decimal', min: '0.01', step: '0.01', required: true })),
+        el('label', { class: 'field' }, 'Category', el('select', { name: 'category' }, ...JOB_EXPENSE_CATS.map((c) => el('option', {}, c))))),
+      el('div', { class: 'two' },
+        el('label', { class: 'field' }, 'Paid to', el('input', { name: 'vendor', list: 'vendorList', placeholder: 'e.g. Home Depot' })),
+        el('label', { class: 'field' }, 'Date', el('input', { name: 'date', type: 'date', value: docs.todayKey() }))),
+      el('datalist', { id: 'vendorList' }, ...recs('vendor').map((v) => el('option', { value: v.name }))),
+      el('label', { class: 'field' }, 'Note (optional)', el('input', { name: 'note', maxlength: '200' })),
+      el('label', { class: 'field' }, 'Receipt photo (optional)', el('input', { name: 'receipt', type: 'file', accept: 'image/*,application/pdf' })),
+      el('button', { type: 'submit', class: 'ghost' }, '+ Add expense'));
+    const expensesCard = isStaff ? el('section', { class: 'card stack' },
+      el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, '💸 Job expenses'), el('b', {}, money(expTotal))),
+      el('p', { class: 'muted small', style: 'margin:0' }, `Office only. Materials, permits, dumpster, rentals… ${j.price != null ? `Profit after crew pay and expenses: ${money(jobTotal(j) - crewOwedTotal(j) - expTotal)}.` : ''}`),
+      ...jobExp.map((x) => el('div', { class: 'task-row' }, el('span', { style: 'flex:1' }, el('b', {}, `${money(Number(x.amount) || 0)} · ${x.category}`),
+        el('span', { class: 'muted small', style: 'display:block' }, [docs.fmtDate(x.date), x.vendor, x.note, x.receipt ? '🧾 receipt in Files' : ''].filter(Boolean).join(' · '))),
+        el('button', { type: 'button', class: 'link small', 'aria-label': 'Remove expense', onclick: () => confirm('Remove this expense?') && recDel(x.id) }, '✕'))),
+      el('details', {}, el('summary', { class: 'small', style: 'cursor:pointer;font-weight:700' }, '+ Add an expense'), expForm)) : null;
+
     // Tabs keep the job short and easy to scan.
     // Each section says what's inside, so it's clear where a tap leads.
     const TABS = [
@@ -1389,9 +1659,9 @@
       tabsBar.replaceChildren(...TABS.map(([id, icon, label, sub]) => el('button', { type: 'button', role: 'tab', 'data-tab': id, 'aria-selected': String(leadTab === id), 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } },
         el('span', { class: 'tab-ic', 'aria-hidden': 'true' }, icon), el('span', { class: 'tab-txt' }, el('b', {}, label), el('span', {}, sub)))));
       const content = {
-        overview: [dreamFirst ? designCard : null, nextCard, isStaff && (LEAD_OPEN.includes(j.status) || needsReply(j)) ? convo : null, reviewCard, progress, isStaff && (LEAD_OPEN.includes(j.status) || needsReply(j)) ? null : convo, materialsCard, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, dreamFirst ? null : designCard, permitCard,
+        overview: [dreamFirst ? designCard : null, nextCard, walk || !['in_progress', 'completed'].includes(j.status) ? null : walkCard, isStaff && (LEAD_OPEN.includes(j.status) || needsReply(j)) ? convo : null, reviewCard, progress, isStaff && (LEAD_OPEN.includes(j.status) || needsReply(j)) ? null : convo, materialsCard, tasksCard, walk ? walkCard : null, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, dreamFirst ? null : designCard, permitCard,
           !setupWanted && ['new', 'qualifying', 'hot'].includes(j.status) ? el('button', { type: 'button', class: 'link small', style: 'align-self:flex-start', onclick: focusSetup }, '👷 Assign a contractor & date now (skip the visit)') : null],
-        money: [scheduleCard, crewBillsCard, docsCard, moneyCard],
+        money: [scheduleCard, crewBillsCard, docsCard, moneyCard, expensesCard],
         files: [filesCard],
         history: [notesCard, crewNotesCard(), log],
       }[leadTab] || [];
@@ -1657,7 +1927,7 @@
   }
 
   /* ---------- estimate / invoice editor ---------- */
-  async function openDoc(jobId, docId, type, fromEstimate, sched) {
+  async function openDoc(jobId, docId, type, fromEstimate, sched, opts = {}) {
     const j = jobs.find((x) => x.id === jobId);
     if (!j) return;
     const t = tradeOf(j.trade);
@@ -1673,6 +1943,8 @@
         dueDate: type === 'invoice' ? addDays(Number(settings.dueDays) || 14) : null,
         payLink: '', fromEstimateId: fromEstimate ? fromEstimate.id : null,
       };
+      if (opts.changeOrder && type === 'estimate') Object.assign(doc, { changeOrder: true, number: 'New change order', items: [{ desc: '', qty: 1, price: '' }],
+        notes: 'Extra work the customer asked for. Once approved, this amount is added to the job total and billed with the remaining payments.' });
       const p = sched && planOf(j)[sched.index];
       if (p) {
         const est = approvedEstOf(j);
@@ -1691,6 +1963,10 @@
     const reopen = async (id) => { await load(); openDoc(jobId, id); };
 
     const items = (doc.items || []).map((i) => ({ ...i }));
+    // Office only: your cost on each line (never printed or shown to the customer or sales), kept beside the estimate.
+    const showCost = isStaff && type === 'estimate';
+    const costRec = showCost && doc.id ? recs('est_cost').find((r) => r.docId === doc.id) : null;
+    if (showCost) items.forEach((it, i) => { if (it.cost == null) it.cost = costRec?.costs?.[i] ?? ''; });
     const taxInput = el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01', value: doc.taxRate ?? 0, disabled: !canEdit, oninput: () => renderTotals() });
     const notesInput = el('textarea', { rows: 3, value: doc.notes || '', disabled: !canEdit });
     const dueInput = isInv ? el('input', { type: 'date', value: doc.dueDate || '', disabled: !canEdit }) : null;
@@ -1706,7 +1982,13 @@
         el('dt', { class: 'big' }, 'Total'), el('dd', { class: 'big' }, docs.usd(tt.total)),
         isInv && tt.paid ? el('dt', {}, 'Paid') : null, isInv && tt.paid ? el('dd', {}, docs.usd(tt.paid)) : null,
         isInv && !isNew ? el('dt', { class: 'big' }, 'Balance due') : null, isInv && !isNew ? el('dd', { class: 'big' }, docs.usd(Math.max(0, tt.balance))) : null].filter(Boolean));
+      if (showCost) {
+        const cost = items.reduce((t, i) => t + (Number(i.qty) || 0) * (Number(i.cost) || 0), 0);
+        marginBox.textContent = cost ? `🔒 Office only · your cost ${docs.usd(cost)} · profit ${docs.usd(tt.subtotal - cost)} · margin ${tt.subtotal ? Math.round((tt.subtotal - cost) / tt.subtotal * 100) : 0}% · markup ${Math.round((tt.subtotal - cost) / cost * 100)}%`
+          : '🔒 Office only: add your cost on each line to see the profit and margin.';
+      }
     }
+    const marginBox = el('p', { class: 'small margin-box' });
     const itemsWrap = el('div', { class: 'items-edit' });
     function renderItems() {
       itemsWrap.replaceChildren(...[...items.map((it, idx) => {
@@ -1718,11 +2000,53 @@
           el('div', { class: 'item-nums' },
             el('label', {}, 'Qty', el('input', { type: 'number', inputmode: 'decimal', min: '0', step: 'any', value: it.qty, disabled: !canEdit, oninput: (e) => { it.qty = e.target.value; upd(); } })),
             el('label', {}, 'Price ($)', el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01', value: it.price, disabled: !canEdit, oninput: (e) => { it.price = e.target.value; upd(); } })),
+            showCost ? el('label', { class: 'cost-in' }, 'Your cost', el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01', value: it.cost ?? '', disabled: !canEdit, 'aria-label': `Line ${idx + 1} your cost`, oninput: (e) => { it.cost = e.target.value; renderTotals(); } })) : null,
             amt,
             canEdit && items.length > 1 ? el('button', { type: 'button', class: 'icon', 'aria-label': `Remove line ${idx + 1}`, onclick: () => { items.splice(idx, 1); renderItems(); renderTotals(); } }, '✕') : null));
       }), canEdit ? el('button', { type: 'button', class: 'ghost small', onclick: () => { items.push({ desc: '', qty: 1, price: '' }); renderItems(); renderTotals(); itemsWrap.querySelector('.item-row:last-of-type textarea').focus(); } }, '+ Add line') : null].filter(Boolean));
     }
     renderItems(); renderTotals();
+
+    // Office tools for estimates: price book, good/better/best templates, markup and a scope of work.
+    const toolBox = el('div', { class: 'stack' });
+    const estTools = showCost && canEdit ? (() => {
+      const markupIn = el('input', { type: 'number', inputmode: 'decimal', min: '0', step: '1', value: settings.defaultMarkup ?? 35, 'aria-label': 'Markup percent', style: 'width:80px' });
+      const pick = (title, rows) => toolBox.replaceChildren(el('div', { class: 'card stack est-pick' }, el('div', { class: 'row' }, el('b', { style: 'flex:1' }, title), el('button', { type: 'button', class: 'link small', onclick: () => toolBox.replaceChildren() }, 'Close')),
+        ...(rows.length ? rows : [el('p', { class: 'muted small' }, 'Nothing yet. Add them on the Office tab → Price book.')])));
+      const addLine = (it) => { if (items.length === 1 && !items[0].desc && !Number(items[0].price)) items.splice(0, 1); items.push(it); renderItems(); renderTotals(); };
+      return el('div', { class: 'est-tools stack' },
+        el('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' },
+          el('button', { type: 'button', class: 'ghost small', onclick: () => {
+            const search = el('input', { type: 'search', placeholder: 'Search the price book', 'aria-label': 'Search the price book' });
+            const list = el('div', { class: 'stack', style: 'gap:6px' });
+            const draw = () => list.replaceChildren(...recs('price_item').filter((p) => !search.value || `${p.name} ${p.category || ''}`.toLowerCase().includes(search.value.toLowerCase()))
+              .sort((a, b) => ((a.trade === j.trade) ? 0 : 1) - ((b.trade === j.trade) ? 0 : 1) || String(a.name).localeCompare(b.name))
+              .map((p) => el('button', { type: 'button', class: 'alert-row', onclick: () => addLine({ desc: p.name + (p.unit ? ` (per ${p.unit})` : ''), qty: 1, price: Number(p.price) || 0, cost: Number(p.cost) || 0 }) },
+                el('b', {}, p.name), el('span', { class: 'muted small' }, `${docs.usd(Number(p.price) || 0)}${p.unit ? ' per ' + p.unit : ''} · cost ${docs.usd(Number(p.cost) || 0)}${p.category ? ' · ' + p.category : ''}`))));
+            search.addEventListener('input', draw); draw();
+            pick('📗 Add from your price book', [search, list]);
+          } }, '📗 Price book'),
+          el('button', { type: 'button', class: 'ghost small', onclick: () => {
+            const ts = recs('est_template').sort((a, b) => ((a.trade === j.trade) ? 0 : 1) - ((b.trade === j.trade) ? 0 : 1) || String(a.name).localeCompare(b.name));
+            pick('📋 Start from a template', ts.map((tp) => el('button', { type: 'button', class: 'alert-row', onclick: () => {
+              if (items.some((i) => i.desc || Number(i.price)) && !confirm('Replace the lines on this estimate with the template?')) return;
+              items.splice(0, items.length, ...(tp.items || []).map((i) => ({ desc: i.desc, qty: Number(i.qty) || 1, price: Number(i.price) || 0, cost: Number(i.cost) || 0 })));
+              if (tp.scope) notesInput.value = `Scope of work:\n${tp.scope}\n\n${notesInput.value}`;
+              renderItems(); renderTotals(); toolBox.replaceChildren();
+            } }, el('b', {}, `${tp.tier ? ({ good: '🥉 Good', better: '🥈 Better', best: '🥇 Best' }[tp.tier] || tp.tier) + ' · ' : ''}${tp.name}`),
+              el('span', { class: 'muted small' }, `${tradeOf(tp.trade).label} · ${(tp.items || []).length} lines · ${docs.usd((tp.items || []).reduce((t, i) => t + (Number(i.qty) || 0) * (Number(i.price) || 0), 0))}`))));
+          } }, '📋 Template'),
+          el('button', { type: 'button', class: 'ghost small', onclick: () => {
+            const lines = items.filter((i) => i.desc).map((i) => `• ${String(i.desc).split('\n')[0]}${Number(i.qty) > 1 ? ` (${i.qty})` : ''}`);
+            const scope = [`${t.label} at ${addrOf(j)}.`, j.description ? `Customer request: ${String(j.description).split('\n\n')[0].slice(0, 300)}` : '', 'Work included:', ...lines,
+              'Includes labor, materials listed above, site protection and daily cleanup, and haul-away of debris.', 'Not included: anything not listed above. Hidden damage found during the work is quoted as a change order before we do it.'].filter(Boolean).join('\n');
+            notesInput.value = `Scope of work:\n${scope}\n\n${notesInput.value.replace(/^Scope of work:[\s\S]*?\n\n/, '')}`;
+            notesInput.scrollIntoView({ block: 'center' });
+          } }, '✍️ Write scope of work')),
+        el('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap;align-items:center' }, el('span', { class: 'small' }, 'Markup'), markupIn, el('span', { class: 'small' }, '%'),
+          el('button', { type: 'button', class: 'ghost small', onclick: () => { const m = Number(markupIn.value) || 0; items.forEach((i) => { if (Number(i.cost) > 0) i.price = Math.round(Number(i.cost) * (1 + m / 100) * 100) / 100; }); renderItems(); renderTotals(); } }, 'Price lines from my cost')),
+        toolBox);
+    })() : null;
 
     const ctx = () => ({ job: j, customer: j.buyer, company: settings });
     const first = (j.buyer.name || '').split(' ')[0] || 'there';
@@ -1732,6 +2056,11 @@
 
     async function save() {
       const saved = await api.docs.save(jobId, current());
+      if (showCost) {
+        const costs = items.map((i) => (i.cost === '' || i.cost == null ? null : Number(i.cost)));
+        const old = recs('est_cost').find((r) => r.docId === saved.id);
+        if (costs.some((c) => c != null) || old) await api.records.save('est_cost', { ...(old || {}), docId: saved.id, costs }, jobId);
+      }
       return saved;
     }
     const busy = async (btn, fn) => { btn.disabled = true; try { await fn(); } catch (err) { fail(err); } finally { btn.disabled = false; } };
@@ -1824,13 +2153,15 @@
     }
 
     const editor = el('section', { class: 'card stack' },
-      el('div', { class: 'row' }, el('h3', {}, isInv ? 'Invoice' : 'Estimate'), el('span', { class: 'spacer' }), isNew ? null : el('span', { class: `pill ${docs.pillClass(doc)}` }, docs.label(doc))),
+      el('div', { class: 'row' }, el('h3', {}, isInv ? 'Invoice' : doc.changeOrder ? 'Change order' : 'Estimate'), el('span', { class: 'spacer' }), isNew ? null : el('span', { class: `pill ${docs.pillClass(doc)}` }, docs.label(doc))),
       canEdit ? null : el('p', { class: 'muted small' }, doc.status === 'approved' ? `Approved${doc.respondedBy ? ' by ' + doc.respondedBy : ''}${doc.respondedAt ? ' on ' + docs.fmtDate(doc.respondedAt) : ''}. Locked so it matches what the customer agreed to.` : 'Locked. Payments have been recorded or it’s closed.'),
       el('p', { class: 'muted small' }, `For ${j.buyer.name} · ${jobNo(j)} · ${j.address}`),
+      estTools,
       itemsWrap,
       el('div', { class: 'two' }, el('label', { class: 'field' }, 'Tax rate (%)', taxInput), isInv ? el('label', { class: 'field' }, 'Due date', dueInput) : el('span')),
       totalsBox,
-      el('label', { class: 'field' }, isInv ? 'Notes on the invoice' : 'Terms on the estimate', notesInput),
+      showCost ? marginBox : null,
+      el('label', { class: 'field' }, isInv ? 'Notes on the invoice' : 'Scope & terms on the estimate', notesInput),
       isInv ? el('label', { class: 'field' }, 'Card payment link', el('span', { class: 'hint' }, 'Optional. Paste a Square or Stripe payment link to show a “Pay by card” button.'), linkInput) : null,
     );
 

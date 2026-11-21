@@ -28,7 +28,7 @@ end $$;
 
 -- ---------- clean slate for re-runs ----------
 drop trigger if exists on_auth_user_created on auth.users;
-drop table if exists public.job_messages, public.design_dreams, public.job_materials, public.crew_bills, public.payment_reports, public.design_versions, public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
+drop table if exists public.office_records, public.job_messages, public.design_dreams, public.job_materials, public.crew_bills, public.payment_reports, public.design_versions, public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
 drop function if exists public.handle_new_user, public.is_staff, public.new_crew_token, public.owns_job,
   public.customer_can_read, public.crew_token_active, public.create_job, public.add_customer_file, public.my_jobs,
   public.crew_job, public.crew_add_file, public.jobs_after_insert, public.jobs_before_update, public.jobs_after_update,
@@ -305,6 +305,22 @@ create table public.job_messages (
 );
 create index on public.job_messages (job_id, at);
 
+-- Office-only records (owner/office staff): price book, estimate templates and costs, job tasks and punch lists,
+-- walkthrough sign-offs, expenses and supplier bills, commission, suppliers, staff, company licenses and insurance,
+-- tickets, how-to guides and equipment. Sales, crews and customers can't see or change any of it.
+create table public.office_records (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null check (kind in ('price_item', 'est_template', 'est_cost', 'task', 'walkthrough', 'expense', 'commission_rule', 'commission_paid',
+                                     'vendor', 'staff', 'company_doc', 'ticket', 'sop', 'asset')),
+  job_id uuid references public.jobs(id) on delete cascade,
+  data jsonb not null default '{}' check (jsonb_typeof(data) = 'object' and length(data::text) <= 400000),
+  by_name text not null default '' check (length(by_name) <= 120),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index on public.office_records (kind);
+create index on public.office_records (job_id);
+
 -- ---------- activity history (written by the database, so it can't be skipped) ----------
 create function public.log_event(j uuid, msg text) returns void
 language sql security definer set search_path = '' as $$
@@ -518,6 +534,8 @@ alter table public.job_events enable row level security;
 alter table public.job_files enable row level security;
 alter table public.crew_notes enable row level security;
 alter table public.job_messages enable row level security;
+alter table public.office_records enable row level security;
+create policy "office only" on public.office_records for all to authenticated using (public.is_staff()) with check (public.is_staff());
 create policy "office read" on public.job_messages for select to authenticated using (public.is_staff());
 
 create policy "own profile or staff" on public.profiles for select to authenticated
@@ -551,6 +569,8 @@ grant update (name, phone) on public.profiles to authenticated;
 revoke insert, delete on public.profiles from authenticated;
 revoke insert, update, delete on public.job_events from authenticated;
 revoke all on public.job_messages from anon;
+revoke all on public.office_records from anon;
+grant select, insert, update, delete on public.office_records to authenticated;
 revoke insert, update, delete on public.job_messages from authenticated;
 
 -- ---------- what customers can do ----------
@@ -700,6 +720,8 @@ create table public.documents (
   -- Estimate signature: { name, image (PNG data URL), at, in_person, witness }. Set once, when approved.
   signature jsonb check (signature is null or (jsonb_typeof(signature) = 'object' and length(signature->>'name') between 3 and 120 and (signature->>'image') ~ '^data:image/png;base64,[A-Za-z0-9+/=]+$' and length(signature->>'image') <= 300000)),
   check (type = 'invoice' or schedule_step is null),
+  change_order boolean not null default false,   -- an estimate for extra work on a sold job; approving it adds to the price
+  check (type = 'estimate' or not change_order),
   created_at timestamptz not null default now(),
   sent_at timestamptz,
   responded_at timestamptz,
@@ -779,14 +801,15 @@ begin
     raise exception 'Payment amounts must be more than zero.';
   end if;
   if tg_op = 'INSERT' then
+    if new.change_order and not public.is_staff() then raise exception 'Only the office can write change orders.'; end if;
     select number into jn from public.jobs where id = new.job_id;
-    select count(*) + 1 into n from public.documents where job_id = new.job_id and type = new.type;
-    new.number := case when new.type = 'invoice' then 'INV-' else 'E-' end || jn || case when n > 1 then '-' || n else '' end;
+    select count(*) + 1 into n from public.documents where job_id = new.job_id and type = new.type and change_order = new.change_order;
+    new.number := case when new.type = 'invoice' then 'INV-' when new.change_order then 'CO-' else 'E-' end || jn || case when n > 1 then '-' || n else '' end;
     new.status := 'draft';
     new.payments := '[]';
     return new;
   end if;
-  new.job_id := old.job_id; new.type := old.type; new.number := old.number; new.created_at := old.created_at;
+  new.job_id := old.job_id; new.type := old.type; new.number := old.number; new.created_at := old.created_at; new.change_order := old.change_order;
   new.schedule_step := old.schedule_step; new.schedule_base := old.schedule_base;
   if new.signature is distinct from old.signature and not (
        (old.type = 'estimate' and old.status = 'sent' and new.status = 'approved' and old.signature is null)
@@ -837,8 +860,12 @@ begin
     else
       perform public.log_event(new.job_id, new.number || ' ' || new.status || coalesce(nullif(' by ' || new.responded_by, ' by '), ''));
     end if;
-    if new.status = 'approved' then
-      update public.job_private set price = total where job_id = new.job_id;
+    if new.status = 'approved' and new.change_order then
+      -- A change order adds to the price the customer already agreed to.
+      update public.job_private set price = coalesce(price, 0) + total where job_id = new.job_id;
+    elsif new.status = 'approved' then
+      update public.job_private set price = total + coalesce((select sum(public.doc_total(x.items, x.tax_rate)) from public.documents x
+        where x.job_id = new.job_id and x.change_order and x.status = 'approved'), 0) where job_id = new.job_id;
       -- Agreed to the price in writing: it's a hot lead, ready for a rep visit.
       update public.jobs set status = 'hot' where id = new.job_id and status in ('new', 'qualifying');
     end if;
@@ -873,7 +900,7 @@ language sql stable security definer set search_path = '' as $$
       'id', d.id, 'type', d.type, 'number', d.number, 'status', d.status, 'items', d.items, 'tax_rate', d.tax_rate,
       'notes', d.notes, 'due_date', d.due_date, 'pay_link', d.pay_link, 'payments', d.payments,
       'created_at', d.created_at, 'sent_at', d.sent_at, 'responded_at', d.responded_at,
-      'schedule_step', d.schedule_step, 'schedule_base', d.schedule_base, 'signature', d.signature,
+      'schedule_step', d.schedule_step, 'schedule_base', d.schedule_base, 'signature', d.signature, 'change_order', d.change_order,
       'reports', (select coalesce(jsonb_agg(jsonb_build_object('id', r.id, 'amount', r.amount, 'method', r.method, 'created_at', r.created_at, 'status', r.status, 'signature', r.signature) order by r.created_at), '[]'::jsonb)
                     from public.payment_reports r where r.doc_id = d.id)) order by d.created_at) as docs
     from public.documents d join public.jobs j on j.id = d.job_id

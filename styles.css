@@ -1055,3 +1055,15 @@ label.dream-pick { display: flex; align-items: center; justify-content: center; 
 .dnc-row { display: flex; align-items: center; gap: 10px; font-weight: 600; }
 .dnc-row input[type=checkbox] { flex: 0 0 auto; width: 22px; height: 22px; margin: 0; }
 .alert-row > span { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+.margin-box { margin: 0; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); font-weight: 600; }
+.est-tools { border: 1.5px dashed var(--border); border-radius: 12px; padding: 10px; }
+.cost-in input { border-style: dashed; }
+.task-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.task-row input[type=checkbox] { flex: 0 0 auto; width: 22px; height: 22px; margin: 0; }
+.task-row.done > span { text-decoration: line-through; color: var(--muted); }
+.sig-img { max-width: 260px; background: #fff; border-radius: 8px; border: 1px solid var(--border); }
+.office-switch { display: flex; flex-wrap: wrap; gap: 6px; }
+.record-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.record-grid > .full, .record-grid > .field:has(textarea) { grid-column: 1 / -1; }
+@media (max-width: 420px) { .record-grid { grid-template-columns: 1fr; } }
+.alert-row > b { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }

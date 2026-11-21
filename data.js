@@ -567,8 +567,35 @@
     d.nextNumber = 1001 + d.jobs.length;
   }
 
+  // Preview only: a starter price book, kitchen Good/Better/Best templates and a few office records to look at.
+  function sampleRecords() {
+    const now = Date.now(); const day = (n) => new Date(now + n * 864e5).toISOString().slice(0, 10);
+    const r = (kind, data) => ({ id: uid(), kind, jobId: null, by: 'Top Hat Office', at: now, updatedAt: now, ...data });
+    const kit = (tier, rows, scope) => r('est_template', { name: 'Kitchen remodel', trade: 'remodel', tier, scope,
+      lines: rows.map((x) => x.join(' | ')).join('\n'), items: rows.map(([desc, qty, price, cost]) => ({ desc, qty, price, cost })) });
+    return [
+      r('price_item', { name: 'Demo & haul-away (kitchen)', trade: 'remodel', unit: 'job', cost: 900, price: 1800, category: 'Labor' }),
+      r('price_item', { name: 'Stock cabinets, installed', trade: 'remodel', unit: 'linear ft', cost: 210, price: 340, category: 'Cabinets' }),
+      r('price_item', { name: 'Quartz countertop, installed', trade: 'remodel', unit: 'sq ft', cost: 52, price: 85, category: 'Countertops' }),
+      r('price_item', { name: 'Tile backsplash', trade: 'remodel', unit: 'sq ft', cost: 14, price: 28, category: 'Tile' }),
+      r('price_item', { name: 'Architectural shingles, installed', trade: 'roofing', unit: 'square', cost: 310, price: 520, category: 'Roofing' }),
+      r('price_item', { name: 'Composite decking, installed', trade: 'decks', unit: 'sq ft', cost: 24, price: 42, category: 'Decks' }),
+      kit('good', [['Demo & haul-away', 1, 1800, 900], ['Stock cabinets, installed', 1, 8500, 6200], ['Laminate countertops', 1, 2200, 1400], ['Sink & faucet install', 1, 650, 380]], 'Remove the old kitchen, install new stock cabinets, laminate tops, sink and faucet.'),
+      kit('better', [['Demo & haul-away', 1, 1800, 900], ['Semi-custom cabinets, installed', 1, 14500, 10400], ['Quartz countertops', 1, 4800, 2900], ['Tile backsplash', 1, 1400, 700], ['Sink & faucet install', 1, 650, 380]], 'Semi-custom cabinets, quartz tops and a tile backsplash.'),
+      kit('best', [['Demo & haul-away', 1, 2200, 1100], ['Custom cabinets, installed', 1, 26000, 18500], ['Quartz countertops with waterfall island', 1, 8200, 5100], ['Tile backsplash', 1, 2100, 1050], ['Under-cabinet lighting', 1, 1300, 650], ['Sink, faucet & disposal', 1, 900, 520]], 'Custom cabinets, waterfall quartz island, lighting and a full tile backsplash.'),
+      r('vendor', { name: 'Springfield Lumber & Supply', what: 'Lumber, decking, roofing', rep: 'Pat Kelly', phone: '(555) 410-2200', account: 'TH-55821', terms: 'Net 30' }),
+      r('expense', { amount: 1250, category: 'Angi / lead fees', vendor: 'Angi', date: day(-5), note: 'Monthly leads' }),
+      r('expense', { amount: 840, category: 'Materials', vendor: 'Springfield Lumber & Supply', date: day(-3), dueDate: day(4), invoiceNo: 'SL-30981', note: 'Account bill' }),
+      r('company_doc', { type: 'General liability insurance', name: 'General liability', number: 'GL-448120', company: 'State Farm', amount: 1000000, expires: day(21) }),
+      r('company_doc', { type: 'Contractor license', name: 'Illinois roofing license', number: '104.018822', state: 'IL', expires: day(240) }),
+      r('sop', { title: 'First call with a new lead', category: 'Sales script', body: '1. Thank them for reaching out and use their first name.\n2. Ask what they want done and when they want it finished.\n3. Ask if they own the home and who else decides.\n4. Give a ballpark range from the price book.\n5. Book the visit before you hang up.' }),
+      r('asset', { type: 'Vehicle', name: '2019 Ford F-250', detail: 'Plate TH-1', who: 'Office', dueDate: day(18), dueWhat: 'registration' }),
+    ];
+  }
+
   // Bring older preview data up to date.
   function migrate(d) {
+    if (!d.records) d.records = sampleDemo() || busyDemo() ? sampleRecords() : [];
     d.jobs.forEach((j) => { if (j.state == null) j.state = stateFromZip(j.zip); });
     d.contractors.forEach((c) => { if (c.state == null) c.state = ''; });
     // The old 3-payment default (50/25/25) moves to the 4-payment insurance schedule.
@@ -690,6 +717,9 @@
     if (u && u.role === 'sales') throw new Error('Your sales login is turned off. Ask the Top Hat office if this is a mistake.');
     throw new Error('Please log in as Top Hat staff.');
   }
+  // Approving an estimate sets the price (plus any approved change orders); approving a change order adds to it.
+  const priceAfterApproval = (j, rec) => rec.changeOrder ? (Number(j.price) || 0) + docTotal(rec)
+    : docTotal(rec) + j.docs.filter((x) => x.changeOrder && x.status === 'approved' && x !== rec).reduce((t, x) => t + docTotal(x), 0);
   async function officeJob(jobId) {
     const ctx = await requireOffice();
     const j = ctx.d.jobs.find((x) => x.id === jobId);
@@ -1029,6 +1059,7 @@
         for (const f of j.files || []) await blobs.del(f.id).catch(() => {});
         for (const v of j.designs || []) await blobs.del('design:' + v.id).catch(() => {});
         d.jobs = d.jobs.filter((x) => x.id !== id);
+        d.records = (d.records || []).filter((r) => r.jobId !== id);
         writeDb(d);
       },
       async update(id, patch) {
@@ -1165,6 +1196,31 @@
     },
 
     // Estimates & invoices. Crew pay is never part of these.
+    // Office-only records: price book, templates, tasks, expenses, suppliers, staff, licenses, tickets, how-to, equipment…
+    records: {
+      async list(kind, jobId) {
+        await requireStaff();
+        const d = await db();
+        return (d.records || []).filter((r) => (!kind || r.kind === kind) && (jobId === undefined || r.jobId === jobId)).map((r) => JSON.parse(JSON.stringify(r)));
+      },
+      async save(kind, rec, jobId = null) {
+        const u = await requireStaff();
+        if (!['price_item', 'est_template', 'est_cost', 'task', 'walkthrough', 'expense', 'commission_rule', 'commission_paid', 'vendor', 'staff', 'company_doc', 'ticket', 'sop', 'asset'].includes(kind)) throw new Error('Unknown record.');
+        const d = await db(); d.records ||= [];
+        const { id, kind: _k, jobId: _j, by: _b, at: _a, updatedAt: _u, ...data } = rec || {};
+        if (JSON.stringify(data).length > 400000) throw new Error('That’s too big to save.');
+        let r = id && d.records.find((x) => x.id === id);
+        if (r) { Object.keys(r).forEach((k) => { if (!['id', 'kind', 'jobId', 'by', 'at'].includes(k)) delete r[k]; }); Object.assign(r, data, { updatedAt: Date.now() }); }
+        else { r = { id: uid(), kind, jobId: jobId || null, by: u.name, at: Date.now(), updatedAt: Date.now(), ...data }; d.records.push(r); }
+        writeDb(d);
+        return JSON.parse(JSON.stringify(r));
+      },
+      async remove(id) {
+        await requireStaff();
+        const d = await db(); d.records = (d.records || []).filter((x) => x.id !== id); writeDb(d);
+      },
+    },
+
     docs: {
       async list(jobId) {
         const { j } = await officeJob(jobId);
@@ -1187,14 +1243,16 @@
           if (!(rec.status === 'draft' || (rec.status === 'sent' && !paid))) throw new Error('This document is locked and can’t be edited.');
           Object.assign(rec, fields);
         } else {
-          const prefix = doc.type === 'invoice' ? 'INV' : 'E';
-          const n = j.docs.filter((x) => x.type === doc.type).length + 1;
-          rec = { id: uid(), type: doc.type, number: `${prefix}-${j.number}${n > 1 ? '-' + n : ''}`, status: 'draft',
+          const co = doc.type === 'estimate' && !!doc.changeOrder;
+          if (co) await requireStaff();
+          const prefix = doc.type === 'invoice' ? 'INV' : co ? 'CO' : 'E';
+          const n = j.docs.filter((x) => x.type === doc.type && !!x.changeOrder === co).length + 1;
+          rec = { id: uid(), type: doc.type, changeOrder: co, number: `${prefix}-${j.number}${n > 1 ? '-' + n : ''}`, status: 'draft',
             payments: [], created: Date.now(), fromEstimateId: doc.fromEstimateId || null,
             scheduleStep: doc.type === 'invoice' && Number.isInteger(doc.scheduleStep) ? doc.scheduleStep : null,
             scheduleBase: doc.type === 'invoice' && Number.isInteger(doc.scheduleStep) ? Number(doc.scheduleBase) || 0 : null, ...fields };
           j.docs.push(rec);
-          j.log.push({ at: Date.now(), text: `${doc.type === 'invoice' ? 'Invoice' : 'Estimate'} ${rec.number} created` });
+          j.log.push({ at: Date.now(), text: `${doc.type === 'invoice' ? 'Invoice' : co ? 'Change order' : 'Estimate'} ${rec.number} created` });
         }
         writeDb(d);
         return JSON.parse(JSON.stringify(rec));
@@ -1224,7 +1282,7 @@
         if (!ok) throw new Error('That change isn’t allowed.');
         rec.status = status; rec.respondedAt = Date.now(); rec.respondedBy = signature ? `${signature.name} (signed in person)` : `${u.name} (${isStaff ? 'office' : 'sales'})`;
         if (signature) rec.signature = { ...signature, inPerson: true, witness: u.name };
-        if (status === 'approved') { j.price = docTotal(rec); j.log.push({ at: Date.now(), text: `Customer price → ${usd(j.price)} (from ${rec.number})` }); }
+        if (status === 'approved') { j.price = priceAfterApproval(j, rec); j.log.push({ at: Date.now(), text: `Customer price → ${usd(j.price)} (from ${rec.number})` }); }
         j.log.push({ at: Date.now(), text: `${rec.number} marked ${status} by ${u.name}` });
         if (status === 'approved' && ['new', 'qualifying'].includes(j.status)) applyProgress(j, { status: 'hot' }, u.name, false);
         writeDb(d);
@@ -1273,9 +1331,9 @@
         const out = {};
         d.jobs.filter((j) => j.buyerId === u.id).forEach((j) => {
           out[j.id] = j.docs.filter((x) => x.status !== 'draft').map((x) => {
-            const { id, type, number, status, items, taxRate, notes, dueDate, payLink, payments, created, sentAt, respondedAt, signature, scheduleStep, scheduleBase } = x;
+            const { id, type, number, status, items, taxRate, notes, dueDate, payLink, payments, created, sentAt, respondedAt, signature, scheduleStep, scheduleBase, changeOrder } = x;
             const reports = (x.reports || []).map(({ id: rid, amount, method, at, status: rs, signature: sg }) => ({ id: rid, amount, method, at, status: rs, signature: sg || null }));
-            return JSON.parse(JSON.stringify({ id, type, number, status, items, taxRate, notes, dueDate, payLink, payments, created, sentAt, respondedAt, signature, scheduleStep, scheduleBase, reports }));
+            return JSON.parse(JSON.stringify({ id, type, number, status, items, taxRate, notes, dueDate, payLink, payments, created, sentAt, respondedAt, signature, scheduleStep, scheduleBase, changeOrder: !!changeOrder, reports }));
           });
         });
         return out;
@@ -1334,7 +1392,7 @@
         const signature = approve ? checkSignature(sig) : null;
         rec.status = approve ? 'approved' : 'declined'; rec.respondedAt = Date.now(); rec.respondedBy = u.name;
         if (signature) rec.signature = { ...signature, inPerson: false };
-        if (approve) { j.price = docTotal(rec); j.log.push({ at: Date.now(), text: `Customer price → ${usd(j.price)} (from ${rec.number})` }); }
+        if (approve) { j.price = priceAfterApproval(j, rec); j.log.push({ at: Date.now(), text: `Customer price → ${usd(j.price)} (from ${rec.number})` }); }
         j.log.push({ at: Date.now(), text: `Customer ${approve ? 'approved' : 'declined'} ${rec.number}${signature ? ` (signed “${signature.name}”)` : ''}` });
         if (approve && ['new', 'qualifying'].includes(j.status)) applyProgress(j, { status: 'hot' }, u.name, false);
         writeDb(d);
