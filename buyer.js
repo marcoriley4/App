@@ -533,6 +533,14 @@
   // Owner's steps for customers: Received · Scheduled · Site visit · Done.
   const TRACK_LABELS = ['Received', 'Scheduled', 'Site visit', 'Done'];
   const trackStep = (status) => ({ new: 0, qualifying: 1, hot: 2, scheduled: 2, in_progress: 2, completed: 3 })[status] ?? 0;
+  // Job completion meter (owner: one meter instead of step bars).
+  const PERCENT = { new: 10, qualifying: 25, hot: 40, scheduled: 55, in_progress: 75, completed: 100 };
+  const NOW_TEXT = { new: 'Received', qualifying: 'Scheduled', hot: 'Site visit', scheduled: 'Work scheduled', in_progress: 'Work in progress', completed: 'Done' };
+  const meter = (j) => { const pct = PERCENT[j.status] ?? 0;
+    return el('div', { class: 'job-meter', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pct), 'aria-label': 'Job completion' },
+      el('div', { class: 'row' }, el('b', {}, 'Job completion'), el('span', { class: 'spacer' }), el('b', { class: 'pct' }, `${pct}%`)),
+      el('div', { class: 'bar' }, el('span', { style: `width:${pct}%` })),
+      el('span', { class: 'muted small' }, `Now: ${NOW_TEXT[j.status] || ''}`)); };
   async function myJobs() {
     const me = await api.auth.me();
     if (!me) return go('login?next=jobs');
@@ -627,7 +635,7 @@
             el('span', { class: `pill s-${j.status}` }, st.buyer)),
           // Owner's order: the steps first, then the before & after, then the rest.
           j.status === 'lost' ? el('p', { class: 'muted small' }, 'This request was closed. Questions? Just request a new job and mention it.')
-            : el('div', { class: 'track', 'aria-label': `Progress: ${st.buyer}` }, ...TRACK_LABELS.map((l, i) => el('div', { class: i <= reached ? 'on' : '' }, l))),
+            : meter(j),
           TH.beforeAfter(docs[j.id].filter((f) => f.source === 'design'), { title: '' }), // owner: no title, no description here
           TH.styleOf(j.style) ? el('div', { class: 'style-chosen' }, el('img', { src: TH.styleOf(j.style).img, alt: '' }),
             el('span', {}, el('span', { class: 'muted small' }, 'The look you picked'), el('b', {}, TH.styleOf(j.style).label))) : null,

@@ -1004,3 +1004,8 @@ label.dream-pick { display: flex; align-items: center; justify-content: center; 
 .team-switch { display: flex; gap: 0; border: 2px solid var(--border); border-radius: 12px; padding: 3px; background: var(--surface); }
 .team-switch button { flex: 1; border: 0; border-radius: 9px; padding: 10px 8px; font-weight: 800; font-size: 1rem; color: var(--muted); background: none; }
 .team-switch button.on { background: var(--gold); color: var(--ink); }
+/* Customer job card: job completion meter */
+.job-meter { display: flex; flex-direction: column; gap: 6px; }
+.job-meter .pct { color: var(--good); font-size: 1.15rem; }
+.job-meter .bar { height: 14px; border-radius: 99px; background: var(--border); overflow: hidden; }
+.job-meter .bar span { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--gold), var(--good)); transition: width .4s; }
