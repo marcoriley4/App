@@ -153,7 +153,7 @@ label.field .hint { font-weight: 400; color: var(--muted); font-size: 0.9rem; }
 .job-card { display: flex; flex-direction: column; gap: 10px; }
 .job-card .head { display: flex; align-items: flex-start; gap: 10px; }
 .job-card .head .t { flex: 1; min-width: 0; }
-.track { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.track { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
 .track div { font-size: 0.86rem; color: var(--muted); text-align: center; }
 .track div::before { content: ""; display: block; height: 5px; border-radius: 99px; background: var(--border); margin-bottom: 5px; }
 .track div.on { color: var(--text); font-weight: 650; }

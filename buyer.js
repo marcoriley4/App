@@ -530,8 +530,9 @@
   }
 
   /* ---------- my jobs ---------- */
-  const TRACK = ['new', 'qualifying', 'hot', 'scheduled', 'completed'];
-  const TRACK_LABELS = ['Received', 'Estimate call', 'Site visit', 'Scheduled', 'Done'];
+  // Owner's steps for customers: Received · Scheduled · Site visit · Done.
+  const TRACK_LABELS = ['Received', 'Scheduled', 'Site visit', 'Done'];
+  const trackStep = (status) => ({ new: 0, qualifying: 1, hot: 2, scheduled: 2, in_progress: 2, completed: 3 })[status] ?? 0;
   async function myJobs() {
     const me = await api.auth.me();
     if (!me) return go('login?next=jobs');
@@ -618,17 +619,19 @@
       ...jobs.map((j) => {
         const trade = find(TRADES, j.trade) || TRADES.at(-1);
         const st = find(STATUSES, j.status);
-        const reached = j.status === 'in_progress' ? 3 : TRACK.indexOf(j.status);
+        const reached = trackStep(j.status);
         return el('article', { class: 'card job-card' },
           el('div', { class: 'head' },
             el('span', { style: 'font-size:1.6rem' }, trade.icon),
             el('div', { class: 't' }, el('h3', {}, trade.label), el('p', { class: 'muted small' }, `Job TH-${j.number} · ${j.address}${j.state ? ", " + j.state : ""} · requested ${ago(j.created)}`)),
             el('span', { class: `pill s-${j.status}` }, st.buyer)),
+          // Owner's order: the steps first, then the before & after, then the rest.
+          j.status === 'lost' ? el('p', { class: 'muted small' }, 'This request was closed. Questions? Just request a new job and mention it.')
+            : el('div', { class: 'track', 'aria-label': `Progress: ${st.buyer}` }, ...TRACK_LABELS.map((l, i) => el('div', { class: i <= reached ? 'on' : '' }, l))),
+          TH.beforeAfter(docs[j.id].filter((f) => f.source === 'design'), { title: '🎨 Your design: before & after' }),
           el('p', { class: 'small' }, j.description),
           TH.styleOf(j.style) ? el('div', { class: 'style-chosen' }, el('img', { src: TH.styleOf(j.style).img, alt: '' }),
             el('span', {}, el('span', { class: 'muted small' }, 'The look you picked'), el('b', {}, TH.styleOf(j.style).label))) : null,
-          j.status === 'lost' ? el('p', { class: 'muted small' }, 'This request was closed. Questions? Just request a new job and mention it.')
-            : el('div', { class: 'track', 'aria-label': `Progress: ${st.buyer}` }, ...TRACK_LABELS.map((l, i) => el('div', { class: i <= reached ? 'on' : '' }, l))),
           j.status === 'hot' ? el('div', { class: 'callout' }, '🤝 ', j.visitAt
             ? [el('b', {}, fmtWhen(j.visitAt)), ` · ${j.repName || 'Your Top Hat project manager'} is coming out to measure and go over the details with you.`]
             : 'Thanks for agreeing to the estimate! We’ll call you to set up a time for your project manager to come out.') : null,
@@ -659,7 +662,6 @@
               el('span', { class: 'body' }, el('b', {}, `${dc.type === 'invoice' ? 'Invoice' : 'Estimate'} ${dc.number}`),
                 el('span', { class: 'muted small' }, dc.type === 'invoice' && D.owed(dc) > 0 ? `${D.usd(D.owed(dc))} due${dc.dueDate ? ' by ' + D.fmtDate(dc.dueDate) : ''}` : D.usd(D.totals(dc).total))),
               el('span', { class: `pill ${D.pillClass(dc)}` }, dc.type === 'estimate' && dc.status === 'sent' ? 'Needs your OK' : D.label(dc)))))) : null,
-          TH.beforeAfter(docs[j.id].filter((f) => f.source === 'design'), { title: '🎨 Your design: before & after' }),
           docs[j.id].some((f) => f.source !== 'design') ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Documents from Top Hat'),
             el('ul', { class: 'docs' }, ...docs[j.id].filter((f) => f.source !== 'design').map((f) => el('li', {},
               el('a', { href: f.url, target: '_blank', rel: 'noopener' }, (find(FILE_KINDS, f.kind) || FILE_KINDS.at(-1)).icon + ' ', f.name,
