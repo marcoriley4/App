@@ -907,6 +907,39 @@
     return [switcher, ...[].concat((parts[officePart] || parts.reports)())];
   }
 
+  // Today's to-do list (office and sales): everything waiting, in the order to do it.
+  const TODO_ORDER = [
+    ['declined', 'Find another contractor or date for'], ['replies', 'Reply to'], ['new', 'Call new lead'], ['reported', 'Confirm the payment from'],
+    ['visits', 'Rep visit with'], ['soon', 'On the schedule:'], ['hotbook', 'Book the rep visit for'], ['schedule', 'Schedule the contractor for'],
+    ['crewbills', 'Approve the contractor bill on'], ['paycrew', 'Pay the contractor for'], ['invoice', 'Send the next invoice to'], ['crewpay', 'Set contractor pay for'],
+    ['notes', 'Read the crew update on'], ['permits', 'Apply for the permit for'], ['materials', 'Order materials for'], ['followup', 'Follow up with'],
+    ['waiting', 'Check on the estimate with'], ['unpaid', 'Collect payment from'], ['reviews', 'Ask for a review from'],
+  ];
+  function todayTodo() {
+    const today = dayKey(Date.now());
+    const bs = Object.fromEntries(myBuckets().map((b) => [b.id, b]));
+    const items = [];
+    for (const [id, verb] of TODO_ORDER) {
+      const b = bs[id]; if (!b) continue;
+      let list = b.list;
+      // Appointments: only today's go on today's list, earliest first.
+      if (id === 'visits') list = list.filter((j) => (j.visitAt || '').slice(0, 10) === today).sort((a, c) => a.visitAt.localeCompare(c.visitAt));
+      if (id === 'soon') list = list.filter((j) => (j.scheduledFor || '').slice(0, 10) === today);
+      if (id === 'unpaid') list = list.filter((j) => liveInvoices(j).some((d) => docs.owed(d) > 0 && d.dueDate && d.dueDate < today)); // only overdue
+      for (const j of list) items.push({ key: `${id}:${j.id}`, icon: b.icon, text: `${verb} ${j.buyer.name}`, sub: `${jobNo(j)} · ${b.line(j)}`, open: () => openLead(j.id, 'overview'),
+        action: ['new', 'replies', 'followup'].includes(id) && j.buyer.phone && !j.doNotContact ? { label: '📞 Call', href: telHref(j.buyer.phone) } : null });
+    }
+    if (isStaff) {
+      jobs.filter(needsFollowUp).filter((j) => !items.some((x) => x.key.endsWith(':' + j.id) && x.key.startsWith('followup')))
+        .forEach((j) => items.push({ key: `touch:${j.id}`, icon: '🔁', text: `Follow up with ${j.buyer.name}`, sub: `${jobNo(j)} · no contact in ${Math.floor((Date.now() - lastTouch(j)) / 864e5)} days`, open: () => openLead(j.id, 'overview'),
+          action: j.buyer.phone && !j.doNotContact ? { label: '📞 Call', href: telHref(j.buyer.phone) } : null }));
+      stalledJobs().forEach((j) => items.push({ key: `stalled:${j.id}`, icon: '🐢', text: `Check on ${j.buyer.name}’s job`, sub: `${jobNo(j)} · no update in ${Math.floor((Date.now() - (j.progressAt || j.created)) / 864e5)} days`, open: () => openLead(j.id, 'overview') }));
+      officeAlerts().forEach((x, i) => items.push({ key: `office:${x.part}:${x.title}`, icon: x.icon, text: x.title, sub: x.text, open: () => { tab = 'reports'; officePart = x.part; history.replaceState(null, '', '#reports'); render(); } }));
+      insuranceIssues().filter((x) => x.kind !== 'none').forEach((x) => items.push({ key: `crew:${x.kind}:${x.c.id}`, icon: '🛡', text: `${x.c.name}: ${x.text}`, sub: 'Ask them to update it in their contractor login', open: () => { tab = 'team'; teamPart = 'crew'; render(); } }));
+    }
+    return TH.todoCard({ who: meUser.id, items });
+  }
+
   function todayView() {
     const bs = myBuckets();
     const today = dayKey(Date.now()), weekEnd = dayKey(Date.now() + 7 * 86400e3);
@@ -931,6 +964,7 @@
         el('div', { style: 'flex:1;min-width:0' }, el('h1', {}, h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'),
           el('p', { class: 'muted' }, new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }))),
         el('button', { class: 'gold', onclick: () => newJobForm() }, '+ New job')),
+      todayTodo(),
       isStaff ? el('div', { class: 'kpis three' }, kpi(bs[0].list.length, 'New leads'), kpi(thisWeek, 'Jobs this week'), kpi(money(jobs.reduce((t, j) => t + owedOn(j), 0)), 'Owed to you'))
         : el('div', { class: 'kpis three' }, kpi(jobs.filter((j) => ['new', 'qualifying'].includes(j.status)).length, 'Open leads'),
           kpi(jobs.filter((j) => estWith(j, 'sent')).length, 'Estimates out'), kpi(money(soldTotal(jobs)), 'Sold')),

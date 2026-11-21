@@ -389,7 +389,7 @@
     }
 
     view.replaceChildren(el('div', { class: 'stack', style: 'margin:20px 0' },
-      head, tabs,
+      head, crewTodo(me, jobs, company), tabs,
       showPay ? el('div', { class: 'kpis', style: 'grid-template-columns:1fr 1fr' },
         el('div', { class: 'kpi' }, el('b', {}, usd(pay(notDone))), el('span', {}, `Upcoming pay · ${notDone.length} job${notDone.length === 1 ? '' : 's'}`)),
         el('div', { class: 'kpi' }, el('b', {}, usd(pay(finished))), el('span', {}, `Earned · ${finished.length} completed`))) : null,
@@ -503,6 +503,39 @@
         el('b', { class: 'small' }, 'Dates you’re booked or away'), blockedList,
         el('div', { class: 'row', style: 'gap:6px' }, addDate, el('button', { type: 'button', class: 'ghost small', onclick: () => { if (addDate.value && !p.blocked.includes(addDate.value)) { p.blocked = [...p.blocked, addDate.value].sort(); drawBlocked(); addDate.value = ''; } } }, 'Add date')),
         el('button', { type: 'button', class: 'gold block', onclick: (e) => save(e.currentTarget) }, 'Save when I can work'))));
+  }
+
+  // Today's to-do list for the contractor: confirm jobs, today's jobs in time order with the next step, punch list, bills, lien waivers, paperwork.
+  function crewTodo(me, jobs, company) {
+    const box = el('div', {}, TH.todoCard({ who: me.id, items: [], title: 'Today’s to-do list', empty: 'Loading…' }));
+    (async () => {
+      const tk = todayKey(); const tmr = (() => { const d = new Date(Date.now() + 864e5); return new Date(d - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 10); })();
+      const items = []; const href = (j) => `#/job/${j.id}`;
+      const where = (j) => `TH-${j.number} · ${j.customerName ? j.customerName + ' · ' : ''}${j.address}`;
+      const open = jobs.filter((j) => j.status !== 'completed');
+      open.filter((j) => j.status === 'scheduled' && !j.crewResponse).forEach((j) => items.push({ key: `confirm:${j.id}`, icon: '👋', text: `Confirm the ${tradeOf(j.trade).label.toLowerCase()} job${j.scheduledFor ? ' on ' + new Date(j.scheduledFor).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : ''}`, sub: where(j), href: href(j) }));
+      const todays = open.filter((j) => j.status === 'in_progress' || (j.scheduledFor || '').slice(0, 10) <= tk && j.scheduledFor)
+        .sort((a, b) => String(a.scheduledFor || '').localeCompare(String(b.scheduledFor || '')));
+      todays.forEach((j) => {
+        const at = j.scheduledFor ? timeOf(j.scheduledFor) : '';
+        const step = j.status === 'in_progress' ? (j.stage === 'waiting_parts' ? '⏸ Waiting on materials: get them and keep going' : j.stage === 'return_visit' ? '🔁 Go back and finish' : '🔨 Keep working, tap Finish job when it’s done')
+          : j.stage === 'on_the_way' ? '▶ Start work when you get there' : `🚚 Head out${at ? ' for ' + at : ''}: tap On my way`;
+        items.push({ key: `today:${j.id}:${j.status}:${j.stage || ''}`, icon: '', text: step, sub: where(j), href: href(j), action: j.address ? { label: '🧭 Go', href: 'https://maps.google.com/?q=' + encodeURIComponent(TH.addrLine(j)) } : null });
+      });
+      // Punch list items on any of their jobs.
+      for (const j of jobs) {
+        const punch = await api.crewPortal.punch(j.id).catch(() => []);
+        punch.filter((x) => !x.done).forEach((x) => items.push({ key: `punch:${x.id}`, icon: '🔧', text: `Punch list: ${x.text}`, sub: where(j), href: href(j) }));
+      }
+      if (company.showCrewPay !== false) {
+        jobs.forEach((j) => readyToBill(j, company).forEach((p) => items.push({ key: `bill:${j.id}:${p.index}`, icon: '🧾', text: `Bill Top Hat: ${p.label} (${usd(p.amount)})`, sub: where(j), href: href(j) })));
+        jobs.forEach((j) => (j.crewBills || []).filter((b) => b.status === 'paid' && !b.lien).forEach((b) => items.push({ key: `lien:${b.id}`, icon: '✍️', text: `Sign the lien waiver for ${usd(b.amount)}`, sub: where(j), href: href(j) })));
+      }
+      (await paperworkIssues()).forEach((t, i) => items.push({ key: `paper:${t}`, icon: '🪪', text: t, sub: 'My info', href: '#/info' }));
+      open.filter((j) => (j.scheduledFor || '').slice(0, 10) === tmr).forEach((j) => items.push({ key: `tmr:${j.id}`, icon: '📅', text: `Get ready for tomorrow ${timeOf(j.scheduledFor)}: ${tradeOf(j.trade).label}`, sub: where(j), href: href(j) }));
+      box.replaceChildren(TH.todoCard({ who: me.id, items, title: 'Today’s to-do list' }));
+    })();
+    return box;
   }
 
   async function renderJob(id, message) {

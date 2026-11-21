@@ -2245,5 +2245,36 @@
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupTheme); else setupTheme();
 
-  window.TH = { dreamNoun, beforeAfter, dreamRequest, dreamRequestText, materialsCard, SKILLS, doesTrade, STYLE_ROOMS, STYLE_TRADES, roomFromText, styleOf, MATERIAL_STATUS, US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, connect: connectAi, disconnect: () => { try { localStorage.removeItem(AI_KEY); } catch (e) {} }, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, LEAD_SOURCES, LOST_REASONS, DEFAULT_TEMPLATES, sourceLabel, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+
+  // Today's to-do list: numbered, in order, first thing on the main page (office, sales and contractors).
+  // items: [{ key, icon, text, sub, open() or href, action: { label, href } }]. Ticking one off is remembered for today on this phone.
+  function todoCard({ who = 'me', items = [], empty = 'Nothing left to do today. Nice work!', title = 'Today’s to-do list' }) {
+    const day = (() => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 10); })();
+    const store = `tophat.todo.${who}.${day}`;
+    const read = () => { try { return new Set(JSON.parse(localStorage.getItem(store) || '[]')); } catch (e) { return new Set(); } };
+    const write = (set) => { try { localStorage.setItem(store, JSON.stringify([...set])); } catch (e) { /* this phone only */ } };
+    let showAll = false;
+    const box = el('section', { class: 'card todo-today', 'aria-label': title });
+    const draw = () => {
+      const done = read();
+      const open = items.filter((x) => !done.has(x.key)), closed = items.filter((x) => done.has(x.key));
+      const shown = showAll ? open : open.slice(0, 10);
+      const row = (x, i, isDone) => el('div', { class: 'tt-row' + (isDone ? ' done' : '') },
+        el('input', { type: 'checkbox', checked: isDone, 'aria-label': `Done: ${x.text}`, onchange: (e) => { const s2 = read(); if (e.target.checked) s2.add(x.key); else s2.delete(x.key); write(s2); draw(); } }),
+        el('span', { class: 'tt-n' }, isDone ? '✓' : String(i + 1)),
+        el(x.href ? 'a' : 'button', { class: 'tt-body', ...(x.href ? { href: x.href } : { type: 'button', onclick: x.open }) },
+          el('b', {}, `${x.icon ? x.icon + ' ' : ''}${x.text}`), x.sub ? el('span', { class: 'muted small' }, x.sub) : null),
+        x.action && !isDone ? el('a', { class: 'btn gold small', href: x.action.href }, x.action.label) : null);
+      box.replaceChildren(...[
+        el('div', { class: 'row' }, el('h2', { style: 'flex:1;margin:0' }, `✅ ${title}`),
+          el('span', { class: 'tt-count' }, items.length ? `${closed.length} of ${items.length} done` : '')),
+        items.length ? el('p', { class: 'muted small', style: 'margin:0' }, 'In order: start at the top. Tap one to open it; tick the box when it’s done.') : null,
+        ...(open.length ? shown.map((x, i) => row(x, i, false)) : [el('p', { class: 'tt-empty' }, `🎉 ${empty}`)]),
+        open.length > shown.length ? el('button', { type: 'button', class: 'link small', onclick: () => { showAll = true; draw(); } }, `Show all ${open.length}`) : null,
+        ...closed.map((x) => row(x, 0, true))].filter(Boolean));
+    };
+    draw();
+    return box;
+  }
+  window.TH = { todoCard, dreamNoun, beforeAfter, dreamRequest, dreamRequestText, materialsCard, SKILLS, doesTrade, STYLE_ROOMS, STYLE_TRADES, roomFromText, styleOf, MATERIAL_STATUS, US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, connect: connectAi, disconnect: () => { try { localStorage.removeItem(AI_KEY); } catch (e) {} }, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, LEAD_SOURCES, LOST_REASONS, DEFAULT_TEMPLATES, sourceLabel, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();
