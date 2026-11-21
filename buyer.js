@@ -547,11 +547,11 @@
           el('b', {}, j.scheduledFor ? fmtDay(j.scheduledFor) : 'To be agreed')),
         el('div', {}, el('span', { class: 'muted small' }, 'End date'),
           el('b', {}, j.endDate ? fmtDay(j.endDate) : 'To be set'))),
-      // Who's on their job: the sales rep (with call/text) and the contractor.
-      el('div', { class: 'meter-team' },
-        el('div', {}, el('span', { class: 'muted small' }, '💼 Sales rep'), el('b', {}, j.pm ? j.pm.name : 'Being assigned'),
-          j.pm && j.pm.phone ? el('span', { class: 'small' }, el('a', { href: `tel:${j.pm.phone.replace(/[^\d+]/g, '')}` }, 'Call'), ' · ', el('a', { href: `sms:${j.pm.phone.replace(/[^\d+]/g, '')}` }, 'Text')) : null),
-        el('div', {}, el('span', { class: 'muted small' }, '👷 Contractor'), el('b', {}, j.contractorName || 'Being assigned')))); };
+      // One "Project manager" for the customer: their sales rep, or the contractor if there's no rep yet.
+      (() => { const pm = j.pm ? { name: j.pm.name, phone: j.pm.phone } : j.contractorName ? { name: j.contractorName, phone: '' } : null;
+        const tel = pm && pm.phone ? pm.phone.replace(/[^\d+]/g, '') : '';
+        return el('div', { class: 'meter-team one' }, el('div', {}, el('span', { class: 'muted small' }, '👤 Project manager'), el('b', {}, pm ? pm.name : 'Being assigned'),
+          tel ? el('span', { class: 'small' }, el('a', { href: `tel:${tel}` }, 'Call'), ' · ', el('a', { href: `sms:${tel}` }, 'Text')) : null)); })()); };
   const fmtDay = (v) => new Date(v.length === 10 ? v + 'T12:00' : v).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   async function myJobs() {
     const me = await api.auth.me();
