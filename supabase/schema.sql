@@ -45,6 +45,13 @@ drop function if exists public.handle_new_user, public.is_staff, public.new_crew
   public.crew_my_insurance, public.crew_set_insurance, public.crew_owns_insurance_path, public.log_message,
   public.crew_my_profile, public.crew_set_profile, public.crew_set_w9, public.crew_sign_lien, public.crew_punch, public.crew_punch_done cascade;
 
+-- Let the app reach the tables (each one is locked down by row-level security below). Same as Supabase's
+-- "Grant API access to new tables automatically" option, so the setup works whether or not that box was ticked.
+grant usage on schema public to anon, authenticated;
+alter default privileges in schema public grant all on tables to anon, authenticated;
+alter default privileges in schema public grant all on sequences to anon, authenticated;
+alter default privileges in schema public grant execute on functions to anon, authenticated;
+
 -- ---------- helpers ----------
 create function public.new_crew_token() returns text
 language sql volatile set search_path = '' as $$
