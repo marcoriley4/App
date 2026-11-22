@@ -367,6 +367,7 @@
 
 
   /* ---------- owner command center (office checklist 1.1–1.3) ---------- */
+  const monthlyGoal = () => Number(settings.goalMonthly) || 300000; // sales goal per month
   const WON = ['scheduled', 'in_progress', 'completed'];
   const paymentsOf = () => jobs.flatMap((j) => liveInvoices(j).flatMap((d) => (d.payments || []).map((p) => ({ j, date: String(p.date || '').slice(0, 10), amount: Number(p.amount) || 0 }))));
   const isKitchen = (j) => String(j.style || '').startsWith('kitchen/') || /kitchen/i.test(j.description || '');
@@ -407,16 +408,19 @@
     const closeRate = decided.length ? Math.round(jobs.filter((j) => WON.includes(j.status)).length / decided.length * 100) : null;
     const rated = jobs.filter((j) => j.review && j.review.rating);
     const avg = rated.length ? (rated.reduce((t, j) => t + j.review.rating, 0) / rated.length).toFixed(1) : null;
-    // Goal: settings goalCount (e.g. 100 kitchens) and goalRevenue (e.g. $500k) for the year.
-    const gCount = Number(settings.goalCount) || 100, gWhat = settings.goalWhat || 'kitchens', gRev = Number(settings.goalRevenue) || 500000;
-    const countOf = (list) => (/kitchen/i.test(gWhat) ? list.filter(isKitchen) : list).length;
+    // Goal: monthly sales (owner's goal: $300,000 a month). Quarter = 3 months, year = 12.
+    const gMonth = monthlyGoal();
     const soldRev = (list) => list.reduce((t, j) => t + (Number(j.price) || 0), 0);
     const inMonth = wonThisYear.filter((j) => dayKey(soldAt(j)).slice(0, 7) === ym), inQuarter = wonThisYear.filter((j) => inQ(dayKey(soldAt(j))));
-    const dayOfYear = Math.floor((now - new Date(y, 0, 1)) / 864e5) + 1; const pace = dayOfYear / (y % 4 ? 365 : 366);
-    const bar = (have, goal) => el('div', { class: 'goal-bar' }, el('span', { style: `width:${Math.min(100, Math.round(have / goal * 100))}%` }), el('i', { style: `left:${Math.min(100, Math.round(pace * 100))}%`, title: 'Where you should be today' }));
-    const goalRow = (label, have, goal, fmt) => el('div', { class: 'goal-row' },
+    // How far through the month / quarter / year we are today, for the "on pace" marker.
+    const daysIn = (a, b) => Math.round((b - a) / 864e5);
+    const mStart = new Date(y, now.getMonth(), 1), qStart = new Date(y, q * 3, 1), yStart = new Date(y, 0, 1);
+    const paceOf = (start, end) => Math.min(1, (daysIn(start, now) + 1) / daysIn(start, end));
+    const paces = { month: paceOf(mStart, new Date(y, now.getMonth() + 1, 1)), quarter: paceOf(qStart, new Date(y, q * 3 + 3, 1)), year: paceOf(yStart, new Date(y + 1, 0, 1)) };
+    const bar = (have, goal, pace) => el('div', { class: 'goal-bar' }, el('span', { style: `width:${Math.min(100, Math.round(have / goal * 100))}%` }), el('i', { style: `left:${Math.min(100, Math.round(pace * 100))}%`, title: 'Where you should be today' }));
+    const goalRow = (label, have, goal, fmt, pace) => el('div', { class: 'goal-row' },
       el('div', { class: 'row' }, el('b', {}, label), el('span', { class: 'spacer' }), el('span', {}, `${fmt(have)} of ${fmt(goal)}`)),
-      bar(have, goal),
+      bar(have, goal, pace),
       el('span', { class: 'muted small' }, have >= goal * pace ? `✓ On pace (${fmt(Math.round(goal * pace))} by today)` : `Behind pace: ${fmt(Math.round(goal * pace))} by today`));
     const tile = (v, k) => el('div', { class: 'kpi' }, el('b', {}, v), el('span', {}, k));
     return el('section', { class: 'card stack company-card' },
@@ -431,12 +435,10 @@
         tile(closeRate == null ? '—' : closeRate + '%', 'Close rate'),
         tile(avg ? `${avg} ★` : '—', `Average rating${rated.length ? ` (${rated.length})` : ''}`),
         tile('—', 'Cash in bank (connect bank)')),
-      el('h3', {}, `🎯 Goal: ${gCount} ${gWhat} · ${money(gRev)}`),
-      goalRow(`${gWhat[0].toUpperCase() + gWhat.slice(1)} sold this year`, countOf(wonThisYear), gCount, String),
-      goalRow('Sold this year', soldRev(wonThisYear), gRev, money),
-      el('div', { class: 'two' },
-        el('div', { class: 'kpi' }, el('b', {}, `${countOf(inMonth)} · ${money(soldRev(inMonth))}`), el('span', {}, `This month (goal ${Math.round(gCount / 12)} · ${money(Math.round(gRev / 12))})`)),
-        el('div', { class: 'kpi' }, el('b', {}, `${countOf(inQuarter)} · ${money(soldRev(inQuarter))}`), el('span', {}, `This quarter (goal ${Math.round(gCount / 4)} · ${money(Math.round(gRev / 4))})`))),
+      el('h3', {}, `🎯 Goal: ${money(gMonth)} a month in sales`),
+      goalRow(`Sold in ${now.toLocaleDateString(undefined, { month: 'long' })}`, soldRev(inMonth), gMonth, money, paces.month),
+      goalRow('Sold this quarter', soldRev(inQuarter), gMonth * 3, money, paces.quarter),
+      goalRow(`Sold in ${y}`, soldRev(wonThisYear), gMonth * 12, money, paces.year),
       el('p', { class: 'muted small', style: 'margin:0' }, 'Change the goal on the Payments tab. Profit = customer price − crew pay − approved extras − job expenses, on finished jobs.'));
   }
 
@@ -615,14 +617,13 @@
     const pipeAll = jobs.filter((j) => OPEN.includes(j.status));
 
     // 2. Sales by month vs goal.
-    const gCount = Number(settings.goalCount) || 100, gWhat = settings.goalWhat || 'kitchens', gRev = Number(settings.goalRevenue) || 500000;
-    const countGoal = (l) => (/kitchen/i.test(gWhat) ? l.filter(isKitchen) : l).length;
+    const gMonth = monthlyGoal();
     const pays = paymentsOf();
     const monthRows = MONTHS.map((m, i) => {
       const sold = jobs.filter((j) => won(j) && inYear(soldAt(j)) && new Date(soldAt(j)).getMonth() === i);
       const coll = pays.filter((p) => p.date.slice(0, 4) === String(y) && Number(p.date.slice(5, 7)) === i + 1).reduce((t, p) => t + p.amount, 0);
       const rev = sold.reduce((t, j) => t + valueOf(j), 0);
-      return [m, `${countGoal(sold)} / ${Math.round(gCount / 12)}`, money(rev), pct(rev, gRev / 12), money(coll)];
+      return [m, String(sold.length), money(rev), pct(rev, gMonth), money(coll)];
     });
     const soldY = jobs.filter((j) => won(j) && inYear(soldAt(j)));
     const revY = soldY.reduce((t, j) => t + valueOf(j), 0);
@@ -698,9 +699,9 @@
         el('select', { class: 'inline-select', 'aria-label': 'Year', onchange: (e) => { reportYear = Number(e.target.value); render(); } }, ...years.map((yy) => el('option', { value: yy, selected: yy === y }, String(yy))))),
       section('Pipeline by stage', 'Every open job right now and what it’s worth (approved estimate, or the price you quoted).', ['Stage', 'Jobs', 'Value'], pipeRows,
         ['Total', pipeAll.length, money(pipeAll.reduce((t, j) => t + valueOf(j), 0))]),
-      section(`Sales by month vs goal (${gCount} ${gWhat} · ${money(gRev)})`, 'Sold = scheduled, in progress or done, by start date. Collected = payments received that month.',
-        ['Month', `${gWhat[0].toUpperCase() + gWhat.slice(1)} sold / goal`, 'Sold', 'Of monthly goal', 'Collected'], monthRows,
-        ['Year', `${countGoal(soldY)} / ${gCount}`, money(revY), pct(revY, gRev), money(pays.filter((p) => p.date.slice(0, 4) === String(y)).reduce((t, p) => t + p.amount, 0))]),
+      section(`Sales by month vs goal (${money(gMonth)} a month)`, 'Sold = scheduled, in progress or done, by start date. Collected = payments received that month.',
+        ['Month', 'Jobs sold', 'Sold', 'Of the goal', 'Collected'], monthRows,
+        ['Year', String(soldY.length), money(revY), pct(revY, gMonth * 12), money(pays.filter((p) => p.date.slice(0, 4) === String(y)).reduce((t, p) => t + p.amount, 0))]),
       section('Lead sources', 'Which sources bring leads that buy. Enter what you spend on each (Angi, ads…) to see the cost per lead and per sale.',
         ['Source', 'Leads', 'Sold', 'Close rate', 'Sold $', 'Spent', 'Per lead', 'Per sale', 'Return'], srcRows, null, spendForm),
       section('Sales reps', 'Leads that came in this year, by who owns them.', ['Rep', 'Leads', 'Sold', 'Close rate', 'Sold $', 'Speed to lead'], repRows),
@@ -2251,9 +2252,7 @@
       patch.crewPaySchedule = crewPlan.value();
       if (patch.cardPayLink && !/^https:\/\//i.test(patch.cardPayLink)) { errorBox.textContent = 'The card payment link must start with https://'; errorBox.hidden = false; return; }
       patch.taxRate = Number(patch.taxRate) || 0;
-      patch.goalCount = Math.max(0, Math.round(Number(patch.goalCount) || 0)) || 100;
-      patch.goalRevenue = Math.max(0, Number(patch.goalRevenue) || 0) || 500000;
-      patch.goalWhat = patch.goalWhat || 'kitchens';
+      patch.goalMonthly = Math.max(0, Number(patch.goalMonthly) || 0) || 300000;
       patch.dueDays = Math.max(0, Math.round(Number(patch.dueDays) || 0));
       patch.showCrewPay = fd.get('showCrewPay') === 'on';
       try { settings = await api.settings.save(patch); saved.hidden = false; setTimeout(() => { saved.hidden = true; }, 1600); }
@@ -2266,9 +2265,9 @@
       el('div', { class: 'two' }, f('phone', 'Phone', { type: 'tel' }), f('email', 'Email', { type: 'email' })),
       f('address', 'Address', { rows: 2 }),
       f('license', 'License # (optional)'),
-      el('h3', {}, '🎯 Yearly goal'),
-      el('div', { class: 'two' }, f('goalCount', 'How many', { type: 'number', min: '0', inputmode: 'numeric', placeholder: '100' }), f('goalWhat', 'Of what', { placeholder: 'kitchens' })),
-      f('goalRevenue', 'Sales goal ($)', { type: 'number', min: '0', inputmode: 'numeric', placeholder: '500000' }),
+      el('h3', {}, '🎯 Company goal'),
+      el('label', { class: 'field' }, 'Sales goal per month ($)', el('span', { class: 'hint' }, 'Shown on Today with this month, this quarter (×3) and this year (×12).'),
+        el('input', { name: 'goalMonthly', type: 'number', min: '0', inputmode: 'numeric', placeholder: '300000', value: monthlyGoal() })),
       el('h3', { style: 'margin-top:8px' }, 'Defaults'),
       el('div', { class: 'two' }, f('taxRate', 'Tax rate (%)', { type: 'number', inputmode: 'decimal', min: '0', step: '0.01' }), f('dueDays', 'Invoices due in (days)', { type: 'number', inputmode: 'numeric', min: '0', step: '1' })),
       el('label', { class: 'row', style: 'font-weight:600;align-items:flex-start' },
