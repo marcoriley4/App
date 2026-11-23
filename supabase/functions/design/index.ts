@@ -92,11 +92,13 @@ const extOf = (mime: string) => (mime === 'image/png' ? 'png' : mime === 'image/
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return fail('Use POST.', 405);
+  // Signed-in users send their login token. Visitors on the sign-up screen may send none (the new publishable keys
+  // aren't sent as a token), so only the sign-up preview works without one.
   const auth = req.headers.get('Authorization') || '';
-  if (!auth.startsWith('Bearer ')) return fail('Please log in.', 401);
+  const hasToken = auth.startsWith('Bearer ') && auth.split('.').length === 3;
 
   const url = Deno.env.get('SUPABASE_URL')!;
-  const asUser = createClient(url, Deno.env.get('SUPABASE_ANON_KEY')!, { global: { headers: { Authorization: auth } }, auth: { persistSession: false } });
+  const asUser = createClient(url, Deno.env.get('SUPABASE_ANON_KEY')!, { global: { headers: hasToken ? { Authorization: auth } : {} }, auth: { persistSession: false } });
   const admin = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 
   let body: Record<string, string>;
@@ -118,7 +120,7 @@ Deno.serve(async (req) => {
     const visitor = encodeBase64(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(ip + (Deno.env.get('SUPABASE_URL') || ''))))).slice(0, 24);
     const since = new Date(Date.now() - 86400e3).toISOString();
     // The 3-picture limit is only for sign-up: logged-in customers aren't limited per visitor.
-    const { data: who } = await asUser.auth.getUser().catch(() => ({ data: { user: null } }));
+    const { data: who } = hasToken ? await asUser.auth.getUser().catch(() => ({ data: { user: null } })) : { data: { user: null } };
     const signedIn = !!who?.user;
     const { count: mine } = signedIn ? { count: 0 } : await admin.from('design_dreams').select('id', { count: 'exact', head: true }).eq('visitor', visitor).gte('created_at', since);
     if ((mine || 0) >= DREAMS_PER_VISITOR) return fail('You’ve made 3 designs, the most for sign-up. You can make more in the Design studio once you’re signed up.', 429);
@@ -133,6 +135,7 @@ Deno.serve(async (req) => {
     } catch (e) { return fail((e as Error).message, (e as { status?: number }).status || 500); }
   }
 
+  if (!hasToken) return fail('Please log in.', 401);
   const job = String(body.job || '');
   if (!uuid.test(job)) return fail('Job not found.', 404);
 
