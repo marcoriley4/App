@@ -130,6 +130,10 @@
         el('h2', {}, 'What are we building together?'),
         el('div', { class: 'project-grid' }, ...PROJECTS.map(([label, img, q]) => el('a', { class: 'project-tile', href: '#/request?' + q, onclick: () => { draft.step = 1; saveDraft(); } },
           el('img', { src: img, alt: '', loading: 'lazy' }), el('span', {}, label))),
+          // More than one room or area: a collage of real job photos.
+          el('a', { class: 'project-tile multi', href: '#/request?trade=remodel&room=none&what=multi', onclick: () => { draft.step = 1; saveDraft(); } },
+            el('span', { class: 'collage', 'aria-hidden': 'true' }, ...['kitchen', 'bathroom', 'deck', 'patio'].map((n) => el('img', { src: `img/site/${n}.jpg`, alt: '', loading: 'lazy' }))),
+            el('span', {}, 'Multiple areas')),
           el('a', { class: 'project-tile other', href: '#/request?trade=remodel&room=none', onclick: () => { draft.step = 1; saveDraft(); } }, el('span', { class: 'ic', 'aria-hidden': 'true' }, '📋'), el('span', {}, 'Something else'))),
       ),
       el('section', { class: 'four-steps' },
@@ -224,7 +228,7 @@
       if (isRoom && (!draft.room || draft.room === 'none')) { const g = TH.roomFromText(draft.description); if (g) { draft.room = g; saveDraft(); } }
       let room = isRoom ? TH.STYLE_ROOMS.find((r) => r.id === draft.room) || null : null;
       let allLooks = !room;
-      const thing = () => (room ? room.label.toLowerCase() : draft.what ? draft.what : isRoom && draft.room === 'none' ? 'project' : TH.dreamNoun(draft.trade));
+      const thing = () => (room ? room.label.toLowerCase() : draft.what === 'multi' ? 'project' : draft.what ? draft.what : isRoom && draft.room === 'none' ? 'project' : TH.dreamNoun(draft.trade));
       const grid = el('div', { class: 'photos' });
       const btnWrap = el('div', { class: 'wiz-next stay' }); // stays at the end of the page, doesn't float
       const rooms = el('div', { class: 'stage-chips room-chips', role: 'radiogroup', 'aria-label': 'Which room' });
@@ -272,12 +276,14 @@
       const describeWrap = el('div', { class: 'stack', style: 'gap:8px' },
         el('label', { class: 'box-label' }, 'Describe your project (optional)', projectText));
       const designWrap = el('label', { class: 'box-label' }, 'Describe your design (optional)', dreamText);
-      // Measurements (optional). The "Anything else" notes box was removed at the owner's request.
-      const measure = el('input', { value: draft.measurements || '', placeholder: 'e.g. Kitchen is about 12 x 14 ft', 'aria-label': 'Measurements', oninput: () => { draft.measurements = measure.value; saveDraft(); } });
-      const measureWrap = el('div', { hidden: !draft.measurements }, measure);
-      const extrasWrap = el('div', { class: 'stack', style: 'gap:8px' },
-        draft.measurements ? null : el('button', { type: 'button', class: 'link', onclick: (e) => { measureWrap.hidden = false; e.currentTarget.remove(); measure.focus(); } }, '+ Add measurements (optional)'),
-        measureWrap);
+      // Measurements (optional): always-open box, with common sizes to tap (owner's request). "Other" = type your own.
+      const measure = el('textarea', { rows: 2, value: draft.measurements || '', placeholder: 'e.g. Kitchen is about 12 x 14 ft', 'aria-label': 'Measurements', oninput: () => { draft.measurements = measure.value; saveDraft(); } });
+      const addSize = (sz) => { const cur = measure.value.trim(); measure.value = cur ? `${cur}, ${sz}` : sz; draft.measurements = measure.value; saveDraft(); };
+      const sizeChips = el('div', { class: 'stage-chips size-chips' },
+        ...['10 x 10 ft', '10 x 12 ft', '12 x 12 ft', '12 x 14 ft', '15 x 20 ft', '20 x 20 ft'].map((sz) => el('button', { type: 'button', class: 'chip', onclick: () => addSize(sz) }, sz.replace(' ft', ''))),
+        el('button', { type: 'button', class: 'chip', onclick: () => { measure.focus(); measure.setSelectionRange(measure.value.length, measure.value.length); } }, 'Other'));
+      const extrasWrap = el('label', { class: 'box-label stack', style: 'gap:8px' }, 'Measurements (optional)',
+        el('span', { class: 'muted small' }, 'Tap a size, or tap Other and type your own. Tap more than one for several areas.'), sizeChips, measure);
       // ✨ The AFTER: their own photo, finished, right here before they send anything.
       const dreamBox = el('div', { class: 'dream-box' });
       const studioHead = el('h2', { class: 'wiz-part' }, el('span', { class: 'n' }, isRoom ? '2' : '1'), '✨ Build my dream');
@@ -453,7 +459,7 @@
       // Logged-in customers can give a different phone or email on Details: the office sees it on the job.
       const acct = await api.auth.me().catch(() => null);
       const reach = acct && ((draft.phone && draft.phone !== acct.phone) || (draft.email && draft.email !== acct.email)) ? `Reach me at: ${[draft.phone, draft.email].filter(Boolean).join(' · ')}` : '';
-      const description = [what.length >= 10 ? what : `${tr ? tr.label : 'Home'} project${what ? ': ' + what : ''}`, m ? `Measurements: ${m}` : '', reach].filter(Boolean).join('\n\n');
+      const description = [draft.what === 'multi' ? 'Multiple areas project' : '', what.length >= 10 ? what : `${tr ? tr.label : 'Home'} project${what ? ': ' + what : ''}`, m ? `Measurements: ${m}` : '', reach].filter(Boolean).join('\n\n');
       const job = await api.jobs.create({ ...draft, description });
       // Their room in the look they picked: made on the next screen.
       try { sessionStorage.removeItem('tophat.makeDesign'); sessionStorage.removeItem('tophat.dreamSaved'); } catch (e) {}

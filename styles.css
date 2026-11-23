@@ -1083,3 +1083,6 @@ label.dream-pick { display: flex; align-items: center; justify-content: center; 
 .tt-row.done .tt-n { background: var(--surface-2); color: var(--muted); }
 .tt-row.done .tt-body b { text-decoration: line-through; color: var(--muted); }
 .tt-empty { margin: 4px 0; font-weight: 700; }
+.project-tile.multi .collage { display: grid; grid-template-columns: 1fr 1fr; aspect-ratio: 3 / 2; gap: 2px; padding: 0; background: var(--surface-2); }
+.project-tile.multi .collage img { aspect-ratio: auto; width: 100%; height: 100%; object-fit: cover; }
+.size-chips .chip { min-width: 64px; }
