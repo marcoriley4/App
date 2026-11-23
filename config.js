@@ -6,6 +6,6 @@
 // security rules (supabase/schema.sql). Never put the "secret" or
 // "service_role" key here.
 window.TH_CONFIG = {
-  supabaseUrl: '',
-  supabaseKey: '',
+  supabaseUrl: 'https://oznlbxqfxlcoysejscme.supabase.co',
+  supabaseKey: 'sb_publishable_nGUfI01wNfmoDEz3PWJLcQ_SkHNgtRj',
 };

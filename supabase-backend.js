@@ -9,7 +9,9 @@
  */
 (function () {
   const cfg = window.TH_CONFIG || {};
-  if (!cfg.supabaseUrl || !cfg.supabaseKey) return;
+  // Tests and local checks (localhost) stay in preview mode so they never touch real data; add ?live=1 to use the database there.
+  const localTest = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && !/[?&]live=1\b/.test(location.search);
+  if (!cfg.supabaseUrl || !cfg.supabaseKey || localTest) return;
   if (!window.supabase || !window.TH) { console.error('Supabase library failed to load.'); return; }
 
   const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey, {

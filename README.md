@@ -169,6 +169,7 @@ The app switches from preview mode to the live database as soon as `config.js` h
    update public.profiles set role = 'staff' where email = 'office@yourcompany.com';
    ```
 5. Put the project URL and publishable key in `config.js`. Never use the secret / service_role key.
+   On `localhost` the app stays in preview mode (so the tests never touch real data); add `?live=1` to the address to use the database there.
 
 Who-sees-what is enforced by the database (row-level security and storage policies in `schema.sql`):
 - Customers only reach their own jobs, through `my_jobs()`.
