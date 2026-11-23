@@ -169,6 +169,7 @@ The app switches from preview mode to the live database as soon as `config.js` h
    update public.profiles set role = 'staff' where email = 'office@yourcompany.com';
    ```
 5. Put the project URL and publishable key in `config.js`. Never use the secret / service_role key.
+   **Demo:** open the site with `?demo=1` (e.g. `https://marcoriley4.github.io/App/?demo=1`) to get the preview with every sample login (office, sales rep, customer, contractor) on the login screen. It only saves in that browser, never in the real database, and stays on in that tab until **Leave demo** (or `?demo=0`).
    On `localhost` the app stays in preview mode (so the tests never touch real data); add `?live=1` to the address to use the database there.
 
 Who-sees-what is enforced by the database (row-level security and storage policies in `schema.sql`):

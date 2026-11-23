@@ -11,7 +11,20 @@
   const cfg = window.TH_CONFIG || {};
   // Tests and local checks (localhost) stay in preview mode so they never touch real data; add ?live=1 to use the database there.
   const localTest = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && !/[?&]live=1\b/.test(location.search);
-  if (!cfg.supabaseUrl || !cfg.supabaseKey || localTest) return;
+  // Demo: open the site with ?demo=1 to get the old preview with every sample login (saved in this browser only, never the
+  // real database). It stays on in this tab until ?demo=0 or "Leave demo".
+  let demo = false;
+  try {
+    const q = new URLSearchParams(location.search).get('demo');
+    if (q === '1') sessionStorage.setItem('tophat.demo', '1');
+    if (q === '0') sessionStorage.removeItem('tophat.demo');
+    demo = sessionStorage.getItem('tophat.demo') === '1';
+  } catch (e) { /* no storage: stay live */ }
+  if (demo) {
+    const banner = document.getElementById('previewBanner');
+    if (banner) { banner.textContent = 'Demo: sample data saved on this phone only, not your real app. '; banner.append(Object.assign(document.createElement('a'), { href: location.pathname + '?demo=0', textContent: 'Leave demo →', style: 'color:inherit;font-weight:800' })); }
+  }
+  if (!cfg.supabaseUrl || !cfg.supabaseKey || localTest || demo) return;
   if (!window.supabase || !window.TH) { console.error('Supabase library failed to load.'); return; }
 
   const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey, {
