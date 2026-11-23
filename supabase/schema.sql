@@ -28,7 +28,7 @@ end $$;
 
 -- ---------- clean slate for re-runs ----------
 drop trigger if exists on_auth_user_created on auth.users;
-drop table if exists public.office_records, public.job_messages, public.design_dreams, public.job_materials, public.crew_bills, public.payment_reports, public.design_versions, public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
+drop table if exists public.office_settings, public.office_records, public.job_messages, public.design_dreams, public.job_materials, public.crew_bills, public.payment_reports, public.design_versions, public.job_costs, public.salespeople, public.crew_notes, public.documents, public.settings, public.job_files, public.job_events, public.job_private, public.jobs, public.contractors, public.profiles cascade;
 drop function if exists public.handle_new_user, public.is_staff, public.new_crew_token, public.owns_job,
   public.customer_can_read, public.crew_token_active, public.create_job, public.add_customer_file, public.my_jobs,
   public.crew_job, public.crew_add_file, public.jobs_after_insert, public.jobs_before_update, public.jobs_after_update,
@@ -908,6 +908,20 @@ create policy "logged in can read" on public.settings for select to authenticate
 create policy "staff edit" on public.settings for update to authenticated using (public.is_staff()) with check (public.is_staff());
 create policy "office only" on public.documents for all to authenticated using (public.can_access_job(job_id)) with check (public.can_access_job(job_id));
 revoke all on public.settings, public.documents from anon;
+
+-- Office-only settings: the goal, lead spend, message templates, building-department links, default markup.
+-- Kept apart from public.settings, which every logged-in customer and contractor can read.
+create table public.office_settings (
+  id int primary key default 1 check (id = 1),
+  data jsonb not null default '{}' check (jsonb_typeof(data) = 'object'),
+  updated_at timestamptz not null default now()
+);
+alter table public.office_settings enable row level security;
+create policy "office only" on public.office_settings for all to authenticated using (public.is_staff()) with check (public.is_staff());
+revoke all on public.office_settings from anon;
+grant select, insert, update on public.office_settings to authenticated;
+revoke delete on public.office_settings from authenticated;
+insert into public.office_settings (id) values (1);
 revoke insert, delete on public.settings from authenticated;
 
 -- Customer: everything sent to them on their own jobs (never drafts), keyed by job.

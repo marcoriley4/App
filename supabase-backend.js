@@ -37,6 +37,8 @@
   const mapMaterial = (m) => ({ id: m.id, name: m.name, qty: m.qty || '', note: m.note || '', status: m.status, eta: m.eta || null, by: m.added_by || '', updatedBy: m.updated_by || '' });
   const mapBill = (b) => ({ id: b.id, step: b.step ?? null, label: b.label, amount: Number(b.amount), note: b.note || '', status: b.status, reason: b.reason || '',
     paidDate: b.paid_date || null, paidMethod: b.paid_method || '', lien: b.lien_sig ? { name: b.lien_sig.name, at: Date.parse(b.lien_sig.at) || null } : b.lien ? true : null, by: b.by_name || '', at: Date.parse(b.created_at) || null, photos: Number(b.photos) || 0, invoice: !!b.invoice });
+  // Settings only the office may read (moved out of the shared settings row).
+  const OFFICE_SETTING_KEYS = ['goalMonthly', 'goalCount', 'goalRevenue', 'goalWhat', 'leadSpend', 'templates', 'permitPortals', 'defaultMarkup'];
   const mapRecord = (r) => ({ ...(r.data || {}), id: r.id, kind: r.kind, jobId: r.job_id || null, by: r.by_name || '', at: ms(r.created_at), updatedAt: ms(r.updated_at) });
   const mapMsg = (m) => ({ id: m.id, at: ms(m.at), by: m.by_name || '', channel: m.channel, dir: m.dir, body: m.body });
   const mapDesign = (v) => v && ({ id: v.id, parentId: v.parent_id || null, source: v.source, prompt: v.prompt || '', by: v.by_name || '', at: Date.parse(v.created_at) || Date.now(), chosen: !!v.chosen, saved: !!v.saved, url: v.url || null });
@@ -418,16 +420,33 @@
     },
 
     settings: {
+      // Company settings everyone logged in can read (name, payment terms, ballpark prices…), plus, for the office only,
+      // the office's own settings (goal, lead spend, message templates…) kept in the staff-only office_settings table.
       async get() {
         const { data } = await sb.from('settings').select('data').eq('id', 1).maybeSingle();
-        return { ...DEFAULT_SETTINGS, ...((data && data.data) || {}) };
+        const out = { ...DEFAULT_SETTINGS, ...((data && data.data) || {}) };
+        const u = await me().catch(() => null);
+        if (u && u.role === 'staff') {
+          const r = await sb.from('office_settings').select('data').eq('id', 1).maybeSingle();
+          if (!r.error && r.data) Object.assign(out, r.data.data || {});
+        }
+        return out;
       },
       async save(patch) {
         await requireStaff();
-        const current = await api.settings.get();
-        const next = { ...current, ...patch };
-        must(await sb.from('settings').update({ data: next, updated_at: new Date().toISOString() }).eq('id', 1));
-        return next;
+        const pub = must(await sb.from('settings').select('data').eq('id', 1).maybeSingle())?.data || {};
+        const officePart = Object.fromEntries(Object.entries(patch).filter(([k]) => OFFICE_SETTING_KEYS.includes(k)));
+        const publicPart = Object.fromEntries(Object.entries(patch).filter(([k]) => !OFFICE_SETTING_KEYS.includes(k)));
+        let officeOk = true;
+        if (Object.keys(officePart).length) {
+          const cur = await sb.from('office_settings').select('data').eq('id', 1).maybeSingle();
+          if (cur.error) officeOk = false; // update not run yet: keep using the shared settings until it is
+          else must(await sb.from('office_settings').upsert({ id: 1, data: { ...((cur.data && cur.data.data) || {}), ...officePart }, updated_at: new Date().toISOString() }));
+        }
+        const nextPub = { ...pub, ...publicPart, ...(officeOk ? {} : officePart) };
+        if (officeOk) OFFICE_SETTING_KEYS.forEach((k) => { delete nextPub[k]; }); // never left where customers can read them
+        must(await sb.from('settings').update({ data: nextPub, updated_at: new Date().toISOString() }).eq('id', 1));
+        return api.settings.get();
       },
     },
 

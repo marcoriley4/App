@@ -27,6 +27,7 @@ select t.ok((select count(*) from public.jobs) = 0, 'customer cannot read jobs t
 select t.ok((select count(*) from public.job_private) = 0, 'customer cannot read prices/notes');
 select t.ok((select count(*) from public.job_events) = 0, 'customer cannot read activity');
 select t.ok((select count(*) from public.office_records) = 0, 'customer cannot read office records');
+select t.ok((select count(*) from public.office_settings) = 0, 'customer cannot read office settings (goal, lead spend, templates)');
 do $$ begin
   begin insert into public.office_records (kind, data) values ('vendor', '{"name":"x"}'); perform t.ok(false, 'x');
   exception when insufficient_privilege or check_violation then perform t.ok(true, 'customer cannot add office records'); end;
@@ -698,6 +699,7 @@ select public.log_call((select id from public.jobs where contact_name = 'Kim Cal
 select t.ok(exists (select 1 from public.job_events where text = '📞 Call (Maria L): Left voicemail. Try Monday'), 'calls are logged with her name');
 select t.ok((select count(*) from public.job_messages) = 0, 'salesperson cannot read the message log (office only)');
 select t.ok((select count(*) from public.office_records) = 0, 'salesperson cannot read office records');
+select t.ok((select count(*) from public.office_settings) = 0, 'salesperson cannot read office settings');
 do $$ begin
   begin insert into public.office_records (kind, data) values ('price_item', '{"name":"x","cost":1}'); perform t.ok(false, 'x');
   exception when insufficient_privilege or check_violation then perform t.ok(true, 'salesperson cannot add office records'); end;
@@ -766,6 +768,8 @@ update public.jobs set do_not_contact = false where contact_name = 'Kim Caller';
 insert into public.office_records (kind, job_id, data, by_name) select 'expense', id, '{"amount":120,"category":"Materials"}', 'Office' from public.jobs where contact_name = 'Kim Caller';
 insert into public.office_records (kind, data) values ('price_item', '{"name":"Cabinet install","cost":80,"price":140}');
 select t.ok((select count(*) from public.office_records where kind in ('expense', 'price_item')) = 2, 'office keeps its own records');
+update public.office_settings set data = '{"goalMonthly":300000,"leadSpend":{"2026":{"angi":1200}}}' where id = 1;
+select t.ok((select data->>'goalMonthly' from public.office_settings) = '300000', 'office saves its own settings');
 -- Change orders add to the agreed price
 update public.documents set status = 'approved' where number like 'E-%' and job_id = (select id from public.jobs where contact_name = 'Kim Caller');
 select t.ok((select price from public.job_private p join public.jobs j on j.id = p.job_id where j.contact_name = 'Kim Caller') = 900, 'approved estimate sets the price');
