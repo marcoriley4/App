@@ -278,6 +278,7 @@
     name: 'Top Hat Contracting', phone: '', email: '', address: '', license: '',
     taxRate: 0, dueDays: 14, showCrewPay: true,
     templates: DEFAULT_TEMPLATES,
+    ballparkOn: true, // show customers a ballpark price at the end of sign-up
     estimatePaymentInstructions: 'We accept Zelle, check, cash and card.',
     // How a contractor's pay is split; they bill Top Hat at each step.
     crewPaySchedule: [
@@ -2246,6 +2247,37 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupTheme); else setupTheme();
 
 
+
+  // Ballpark price at the end of sign-up: three finish levels, from the office's own ranges (Office → Price book).
+  // Each kind of job has a typical size; when the customer gives measurements, the range grows or shrinks with the area.
+  const BALLPARK_DEFAULT = {
+    kitchen: { label: 'Kitchen', size: 150, budget: [15000, 30000], mid: [30000, 60000], premium: [60000, 120000] },
+    bathroom: { label: 'Bathroom', size: 50, budget: [8000, 15000], mid: [15000, 30000], premium: [30000, 60000] },
+    interior: { label: 'Interior remodeling', size: 400, budget: [12000, 30000], mid: [30000, 60000], premium: [60000, 120000] },
+    garage: { label: 'Garage', size: 400, budget: [8000, 20000], mid: [20000, 40000], premium: [40000, 80000] },
+    decks: { label: 'Deck', size: 300, budget: [9000, 15000], mid: [15000, 27000], premium: [27000, 45000] },
+    patio: { label: 'Patio / concrete', size: 300, budget: [3000, 6000], mid: [6000, 10500], premium: [10500, 18000] },
+    masonry: { label: 'Masonry', size: 200, budget: [5000, 10000], mid: [10000, 20000], premium: [20000, 40000] },
+    roofing: { label: 'Roofing', size: 2000, budget: [10000, 16000], mid: [16000, 25000], premium: [25000, 45000] },
+    multi: { label: 'Multiple areas', size: 500, budget: [25000, 50000], mid: [50000, 100000], premium: [100000, 200000] },
+    other: { label: 'Other projects', size: 0, budget: [5000, 15000], mid: [15000, 35000], premium: [35000, 75000] },
+  };
+  const ballparkTable = (settings) => { const t = (settings && settings.ballpark) || {}; return Object.fromEntries(Object.entries(BALLPARK_DEFAULT).map(([k, v]) => [k, { ...v, ...(t[k] || {}) }])); };
+  // Total square feet from "12 x 14 ft, 10 x 10" etc.
+  const areaFrom = (text) => [...String(text || '').matchAll(/(\d+(?:\.\d+)?)\s*(?:'|ft|feet)?\s*[x×by]+\s*(\d+(?:\.\d+)?)/gi)].reduce((t, m) => t + Number(m[1]) * Number(m[2]), 0);
+  function ballpark(settings, { trade = '', room = '', style = '', what = '', measurements = '' } = {}) {
+    const st = styleOf(style); const rm = st ? st.room.id : room;
+    const cat = what === 'multi' ? 'multi' : what === 'interior' ? 'interior' : what === 'patio' || trade === 'concrete' ? 'patio'
+      : rm === 'kitchen' ? 'kitchen' : rm === 'bathroom' ? 'bathroom' : rm === 'garage' ? 'garage'
+      : ['decks', 'masonry', 'roofing'].includes(trade) ? trade : trade === 'remodel' ? 'interior' : 'other';
+    const row = ballparkTable(settings)[cat];
+    const area = areaFrom(measurements);
+    const scale = area && row.size ? Math.min(3, Math.max(0.5, area / row.size)) : 1;
+    const round = (n) => Math.round(n * scale / 500) * 500;
+    const tiers = Object.fromEntries(['budget', 'mid', 'premium'].map((k) => [k, [round(row[k][0]), round(row[k][1])]]));
+    return { cat, label: row.label, area, scaled: scale !== 1, tiers };
+  }
+
   // Today's to-do list: numbered, in order, first thing on the main page (office, sales and contractors).
   // items: [{ key, icon, text, sub, open() or href, action: { label, href } }]. Ticking one off is remembered for today on this phone.
   function todoCard({ who = 'me', items = [], empty = 'Nothing left to do today. Nice work!', title = 'Today’s to-do list' }) {
@@ -2276,5 +2308,5 @@
     draw();
     return box;
   }
-  window.TH = { todoCard, dreamNoun, beforeAfter, dreamRequest, dreamRequestText, materialsCard, SKILLS, doesTrade, STYLE_ROOMS, STYLE_TRADES, roomFromText, styleOf, MATERIAL_STATUS, US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, connect: connectAi, disconnect: () => { try { localStorage.removeItem(AI_KEY); } catch (e) {} }, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, LEAD_SOURCES, LOST_REASONS, DEFAULT_TEMPLATES, sourceLabel, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+  window.TH = { ballpark, ballparkTable, BALLPARK_DEFAULT, todoCard, dreamNoun, beforeAfter, dreamRequest, dreamRequestText, materialsCard, SKILLS, doesTrade, STYLE_ROOMS, STYLE_TRADES, roomFromText, styleOf, MATERIAL_STATUS, US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, connect: connectAi, disconnect: () => { try { localStorage.removeItem(AI_KEY); } catch (e) {} }, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, LEAD_SOURCES, LOST_REASONS, DEFAULT_TEMPLATES, sourceLabel, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();

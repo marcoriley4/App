@@ -817,6 +817,32 @@
     ];
   }
 
+  // The ballpark price customers see at the end of sign-up: your ranges for each kind of job and finish level.
+  function ballparkEditor() {
+    const table = TH.ballparkTable(settings);
+    const saved = el('span', { class: 'saved-note', hidden: true }, 'Saved ✓');
+    const on = el('input', { type: 'checkbox', checked: settings.ballparkOn !== false, 'aria-label': 'Show ballpark prices at sign-up' });
+    const num = (k, f, i, v) => el('input', { type: 'number', min: '0', step: f === 'size' ? '10' : '500', inputmode: 'numeric', value: v, 'data-k': k, 'data-f': f, 'data-i': i ?? '', 'aria-label': `${table[k].label} ${f}${i != null ? (i ? ' high' : ' low') : ''}` });
+    const rows = Object.entries(table).map(([k, r]) => el('details', { class: 'bp-edit' },
+      el('summary', {}, el('b', {}, r.label), el('span', { class: 'muted small' }, ` · ${money(r.mid[0])}–${money(r.mid[1])} mid-grade${r.size ? ` · ${r.size} sq ft typical` : ''}`)),
+      el('div', { class: 'bp-grid' },
+        el('span', { class: 'small' }, 'Typical size (sq ft)'), num(k, 'size', null, r.size), el('span'),
+        ...[['budget', 'Budget'], ['mid', 'Mid-grade'], ['premium', 'Premium']].flatMap(([f, l]) => [el('span', { class: 'small' }, `${l} $`), num(k, f, 0, r[f][0]), num(k, f, 1, r[f][1])]))));
+    const box = el('section', { class: 'card stack' },
+      el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, '💵 Ballpark prices at sign-up'), saved),
+      el('p', { class: 'muted small', style: 'margin:0' }, 'At the end of sign-up the customer sees a price range for Budget, Mid-grade and Premium, with the level they picked highlighted. The range grows or shrinks with the size they enter, compared with the typical size. Set your own numbers; the office sees what each customer was shown on their job.'),
+      el('label', { class: 'dnc-row small' }, on, el('span', {}, 'Show customers a ballpark price at the end of sign-up')),
+      ...rows,
+      el('button', { type: 'button', onclick: async () => {
+        const out = {};
+        box.querySelectorAll('input[data-k]').forEach((i) => { const k = i.dataset.k, f = i.dataset.f; out[k] ||= {}; const v = Math.max(0, Number(i.value) || 0);
+          if (f === 'size') out[k].size = v; else { out[k][f] ||= [0, 0]; out[k][f][Number(i.dataset.i)] = v; } });
+        for (const r of Object.values(out)) for (const f of ['budget', 'mid', 'premium']) if (r[f] && r[f][1] < r[f][0]) r[f] = [r[f][1], r[f][0]];
+        settings = await api.settings.save({ ballpark: out, ballparkOn: on.checked }); saved.hidden = false; setTimeout(() => { saved.hidden = true; }, 1600);
+      } }, 'Save ballpark prices'));
+    return box;
+  }
+
   function officeView() {
     const switcher = el('div', { class: 'office-switch', role: 'group', 'aria-label': 'Office sections' }, ...OFFICE_PARTS.map(([id, label]) =>
       el('button', { type: 'button', class: 'chip', 'aria-pressed': String(officePart === id), onclick: () => { officePart = id; render(); } }, label)));
@@ -845,7 +871,7 @@
             line: (x) => [`${money(Number(x.amount) || 0)} · ${x.category}`, [docs.fmtDate(x.date), x.vendor, x.recurring ? 'monthly' : '', x.note].filter(Boolean).join(' · '), x.dueDate && !x.paidDate ? (isPast(x.dueDate) ? 'overdue' : 'to pay') : ''] }),
         ];
       },
-      pricebook: () => [
+      pricebook: () => [ballparkEditor(),
         recordSection('price_item', { title: '📗 Price book', noun: 'price book item', addLabel: 'Add item', csv: true,
           intro: 'Your standard items with your cost and your price. Add them to any estimate in one tap (📗 Price book in the estimate). Costs are office only.',
           fields: [{ k: 'name', label: 'Item', required: true, full: true, placeholder: 'e.g. Base cabinet install' }, { k: 'trade', label: 'Type of work', type: 'select', options: () => TRADES.map((t) => [t.id, t.label]) },

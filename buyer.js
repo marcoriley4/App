@@ -459,7 +459,12 @@
       // Logged-in customers can give a different phone or email on Details: the office sees it on the job.
       const acct = await api.auth.me().catch(() => null);
       const reach = acct && ((draft.phone && draft.phone !== acct.phone) || (draft.email && draft.email !== acct.email)) ? `Reach me at: ${[draft.phone, draft.email].filter(Boolean).join(' · ')}` : '';
-      const description = [draft.what === 'multi' ? 'Multiple areas project' : '', what.length >= 10 ? what : `${tr ? tr.label : 'Home'} project${what ? ': ' + what : ''}`, m ? `Measurements: ${m}` : '', reach].filter(Boolean).join('\n\n');
+      // Ballpark price for each finish level, from the office's ranges (shown on the next screen; the office sees what they were shown).
+      const company = await api.settings.get().catch(() => ({}));
+      const bp = company.ballparkOn !== false ? TH.ballpark(company, draft) : null;
+      const usd0 = (n) => '$' + Number(n).toLocaleString();
+      const bpLine = bp ? `Ballpark shown: ${[['budget', 'Budget'], ['mid', 'Mid-grade'], ['premium', 'Premium']].map(([k, l]) => `${l} ${usd0(bp.tiers[k][0])}–${usd0(bp.tiers[k][1])}`).join(' · ')}${bp.area ? ` (about ${Math.round(bp.area)} sq ft)` : ''}` : '';
+      const description = [draft.what === 'multi' ? 'Multiple areas project' : '', what.length >= 10 ? what : `${tr ? tr.label : 'Home'} project${what ? ': ' + what : ''}`, m ? `Measurements: ${m}` : '', reach, bpLine].filter(Boolean).join('\n\n');
       const job = await api.jobs.create({ ...draft, description });
       // Their room in the look they picked: made on the next screen.
       try { sessionStorage.removeItem('tophat.makeDesign'); sessionStorage.removeItem('tophat.dreamSaved'); } catch (e) {}
@@ -473,6 +478,7 @@
       } else {
         try { if (job && job.id && draft.photos.length && (TH.styleOf(draft.style) || (draft.dreamText || '').trim().length >= 3)) sessionStorage.setItem('tophat.makeDesign', JSON.stringify({ jobId: job.id, style: draft.style, text: (draft.dreamText || '').trim(), trade: draft.trade, photo: draft.photos[0] })); } catch (e) {}
       }
+      try { if (bp) sessionStorage.setItem('tophat.ballpark', JSON.stringify({ ...bp, pick: draft.budget || '' })); else sessionStorage.removeItem('tophat.ballpark'); } catch (e) {}
       clearDraft();
       go('done');
     } catch (err) { showError(err.message); }
@@ -485,10 +491,27 @@
       el('div', { class: 'done-mark' }, '✓'),
       el('h1', {}, "You're all set!"),
       el('p', { class: 'muted' }, `Thanks${me ? ', ' + me.name.split(' ')[0] : ''}. The Top Hat team will look over your measurements and photos and call you ${me?.phone ? 'at ' + me.phone : 'soon'} with an estimate over the phone. If the price works for you, we'll book a time for your Top Hat project manager to come out. You'll see every step under My jobs.`),
+      ballparkCard(),
       makeDesignCard(),
       el('a', { class: 'btn block', href: '#/jobs' }, 'See my jobs'),
       el('a', { class: 'btn ghost block', href: '#/request' }, 'Start another project'),
     ));
+  }
+
+  // Their ballpark price: all three finish levels, the one they picked highlighted.
+  function ballparkCard() {
+    let bp = null;
+    try { bp = JSON.parse(sessionStorage.getItem('tophat.ballpark') || 'null'); } catch (e) {}
+    if (!bp || !bp.tiers) return null;
+    const usd0 = (n) => '$' + Number(n).toLocaleString();
+    const TIERS = [['budget', 'Budget', 'Good quality, simple finishes'], ['mid', 'Mid-grade', 'Better materials, the most popular'], ['premium', 'Premium', 'Top materials and custom details']];
+    return el('section', { class: 'ballpark-card stack', 'aria-label': 'Your ballpark price' },
+      el('h2', {}, `💵 Your ballpark price`),
+      el('p', { class: 'muted small', style: 'margin:0' }, `${bp.label}${bp.area ? ` · about ${Math.round(bp.area).toLocaleString()} sq ft` : ''}. Based on what you told us and the level of finish.`),
+      el('div', { class: 'bp-tiers' }, ...TIERS.map(([k, label, sub]) => el('div', { class: 'bp-tier' + (bp.pick === k ? ' picked' : '') },
+        bp.pick === k ? el('span', { class: 'bp-pick' }, 'Your pick') : null,
+        el('b', {}, label), el('span', { class: 'bp-price' }, `${usd0(bp.tiers[k][0])} – ${usd0(bp.tiers[k][1])}`), el('span', { class: 'muted small' }, sub)))),
+      el('p', { class: 'small', style: 'margin:0' }, 'This is a ballpark, not a quote. Your project manager will look at your photos and give you your exact price.'));
   }
 
   // Right after they send it: their photo, redesigned in the look they picked.
@@ -690,7 +713,7 @@
             const lookLine = look ? `${look.room.label} remodel, ${look.style.name} look (${look.style.desc.toLowerCase()})` : null;
             // Only "Describe your project" and the measurements: drop the look line, the design-box words and "Reach me at".
             const txt = String(j.description || '').split(/\n\n+/).map((x) => x.trim())
-              .filter((x) => x && x !== lookLine && !/^Their design: /.test(x) && !/^Reach me at: /.test(x)
+              .filter((x) => x && x !== lookLine && !/^Their design: /.test(x) && !/^Reach me at: /.test(x) && !/^Ballpark shown: /.test(x)
                 && !(lookLine && x.startsWith(lookLine)) && !/^[A-Z][\w &]+ project$/.test(x))
               .join('\n\n');
             return txt ? el('div', { class: 'job-details' }, el('b', {}, 'Details'), el('p', { class: 'small', style: 'white-space:pre-wrap;margin:0' }, txt)) : null; })(),
