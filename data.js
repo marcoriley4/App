@@ -52,6 +52,9 @@
   const doesTrade = (c, trade) => (c.trades || []).includes('allround') || (c.trades || []).includes(trade);
 
   // Sample design styles customers pick from: three looks for each room.
+  // Picture for each look: real photos where we have them (bathrooms), drawings for the rest.
+  const PHOTO_LOOKS = ['bathroom/spa', 'bathroom/farmhouse', 'bathroom/classic'];
+  const styleImg = (room, style) => `img/styles/${room}-${style}.${PHOTO_LOOKS.includes(`${room}/${style}`) ? 'jpg' : 'svg'}`;
   const STYLE_ROOMS = [
     { id: 'kitchen', label: 'Kitchen', icon: '🍳', words: ['kitchen', 'cabinet', 'countertop', 'island', 'backsplash'], styles: [
       { id: 'modern', name: 'Modern', desc: 'Flat white cabinets, black hardware, quartz counters' },
@@ -82,7 +85,7 @@
   // Which room the customer is talking about, from what they typed (or '' if we can't tell).
   const roomFromText = (t) => { const x = String(t || '').toLowerCase(); const r = STYLE_ROOMS.find((rm) => rm.words.some((w) => x.includes(w))); return r ? r.id : ''; };
   const styleOf = (key) => { const [room, id] = String(key || '').split('/'); const r = STYLE_ROOMS.find((x) => x.id === room); const st = r && r.styles.find((x) => x.id === id);
-    return st ? { key: `${r.id}/${st.id}`, room: r, style: st, label: `${r.label}: ${st.name}`, img: `img/styles/${r.id}-${st.id}.svg` } : null; };
+    return st ? { key: `${r.id}/${st.id}`, room: r, style: st, label: `${r.label}: ${st.name}`, img: styleImg(r.id, st.id) } : null; };
   const MATERIAL_STATUS = [
     { id: 'needed', label: 'Needs ordering', icon: '🛒' },
     { id: 'ordered', label: 'Ordered', icon: '📦' },
@@ -2265,8 +2268,10 @@
   const ballparkTable = (settings) => { const t = (settings && settings.ballpark) || {}; return Object.fromEntries(Object.entries(BALLPARK_DEFAULT).map(([k, v]) => [k, { ...v, ...(t[k] || {}) }])); };
   // Total square feet from "12 x 14 ft, 10 x 10" etc.
   const areaFrom = (text) => [...String(text || '').matchAll(/(\d+(?:\.\d+)?)\s*(?:'|ft|feet)?\s*[x×by]+\s*(\d+(?:\.\d+)?)/gi)].reduce((t, m) => t + Number(m[1]) * Number(m[2]), 0);
-  function ballpark(settings, { trade = '', room = '', style = '', what = '', measurements = '' } = {}) {
-    const st = styleOf(style); const rm = st ? st.room.id : room;
+  function ballpark(settings, { trade = '', room = '', style = '', what = '', measurements = '', description = '', dreamText = '' } = {}) {
+    const st = styleOf(style);
+    // The room: the look they picked, the tile they tapped, or else what they wrote ("Bathroom is 8x6", "I want a bathtub…").
+    const rm = st ? st.room.id : room && room !== 'none' ? room : roomFromText(`${description} ${dreamText} ${measurements}`) || room;
     const cat = what === 'multi' ? 'multi' : what === 'interior' ? 'interior' : what === 'patio' || trade === 'concrete' ? 'patio'
       : rm === 'kitchen' ? 'kitchen' : rm === 'bathroom' ? 'bathroom' : rm === 'garage' ? 'garage'
       : ['decks', 'masonry', 'roofing'].includes(trade) ? trade : trade === 'remodel' ? 'interior' : 'other';
@@ -2308,5 +2313,5 @@
     draw();
     return box;
   }
-  window.TH = { ballpark, ballparkTable, BALLPARK_DEFAULT, todoCard, dreamNoun, beforeAfter, dreamRequest, dreamRequestText, materialsCard, SKILLS, doesTrade, STYLE_ROOMS, STYLE_TRADES, roomFromText, styleOf, MATERIAL_STATUS, US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, connect: connectAi, disconnect: () => { try { localStorage.removeItem(AI_KEY); } catch (e) {} }, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, LEAD_SOURCES, LOST_REASONS, DEFAULT_TEMPLATES, sourceLabel, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
+  window.TH = { styleImg, ballpark, ballparkTable, BALLPARK_DEFAULT, todoCard, dreamNoun, beforeAfter, dreamRequest, dreamRequestText, materialsCard, SKILLS, doesTrade, STYLE_ROOMS, STYLE_TRADES, roomFromText, styleOf, MATERIAL_STATUS, US_STATES, stateName, stateFromZip, addrLine, csv, download, loadZip, PAY_METHODS, PERMIT_STATUSES, placeOf, ai: { config: aiConfig, set: setAiConfig, connect: connectAi, disconnect: () => { try { localStorage.removeItem(AI_KEY); } catch (e) {} }, DEFAULT_IMAGE_MODEL }, STAGES, icon, loginForm, goHome, _util: { guessKind, normEmail, digits, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS }, api, TRADES, TIMEFRAMES, BUDGETS, LEAD_SOURCES, LOST_REASONS, DEFAULT_TEMPLATES, sourceLabel, STATUSES, FILE_KINDS, PHOTO_STAGES, el, ago, fmtWhen, find, shrinkImage };
 })();

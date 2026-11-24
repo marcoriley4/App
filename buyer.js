@@ -253,7 +253,7 @@
         const lookBtn = (rm, st, label) => { const key = `${rm.id}/${st.id}`; const on = draft.style === key;
           return el('button', { type: 'button', role: 'radio', 'aria-checked': String(on), class: 'look' + (on ? ' on' : ''), onclick: () => {
             draft.style = on ? '' : key; if (!on) { draft.room = rm.id; room = rm; } saveDraft(); drawLooks(); drawBtn(); drawDream(); } },
-            el('img', { src: `img/styles/${rm.id}-${st.id}.svg`, alt: '' }),
+            el('img', { src: TH.styleImg(rm.id, st.id), alt: '' }),
             el('span', { class: 'look-txt' }, el('b', {}, label), el('span', {}, st.desc)),
             el('span', { class: 'look-check', 'aria-hidden': 'true' }, on ? '✓' : '')); };
         const list = allLooks || !room
@@ -848,7 +848,7 @@
       el('div', { class: 'stage-chips room-chips' }, ...TH.STYLE_ROOMS.map((r) => el('button', { type: 'button', class: 'chip' + (r.id === room.id ? ' on' : ''), 'aria-pressed': String(r.id === room.id),
         onclick: () => { room = r; draw(); } }, `${r.icon} ${r.label}`))),
       el('div', { class: 'style-pick' }, ...room.styles.map((st) => el('article', { class: 'style-card static' },
-        el('img', { src: `img/styles/${room.id}-${st.id}.svg`, alt: `${st.name} ${room.label.toLowerCase()}` }),
+        el('img', { src: TH.styleImg(room.id, st.id), alt: `${st.name} ${room.label.toLowerCase()}` }),
         el('span', { class: 'style-txt' }, el('b', {}, st.name), el('span', {}, st.desc)),
         el('button', { type: 'button', class: 'gold block', onclick: () => {
           Object.assign(draft, emptyDraft(), { trade: 'remodel', room: room.id, style: `${room.id}/${st.id}`, description: `${room.label} remodel, ${st.name.toLowerCase()} style.`, step: 2 });

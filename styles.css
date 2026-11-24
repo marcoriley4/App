@@ -86,7 +86,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 button, .btn {
   cursor: pointer; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   background: var(--brand); color: var(--on-brand); border-color: transparent; min-height: 46px; text-decoration: none;
-  touch-action: manipulation; white-space: nowrap;
+  touch-action: manipulation; white-space: normal; text-align: center; overflow-wrap: anywhere; line-height: 1.25;
 }
 button:disabled { opacity: .5; cursor: not-allowed; }
 button.gold, .btn.gold { background: var(--gold); color: #1b1404; }
