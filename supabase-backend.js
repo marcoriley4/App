@@ -288,7 +288,7 @@
           return {
             id: j.id, number: j.number, buyerId: j.buyer_id, trade: j.trade, status: j.status, created: ms(j.created_at),
             description: j.description, address: j.address, zip: j.zip, state: j.state || '', timeframe: j.timeframe, budget: j.budget, photos: [],
-            contractorId: j.contractor_id, scheduledFor: local16(j.scheduled_for), endDate: j.end_date || null, visitAt: local16(j.visit_at),
+            contractorId: j.contractor_id, scheduledFor: local16(j.scheduled_for), endDate: j.end_date || null, visitAt: local16(j.visit_at), visitContractorId: j.visit_contractor_id || null,
             permit: { status: j.permit_status || 'none', number: j.permit_number || '', authorizedBy: j.permit_authorized_by || '', authorizedAt: ms(j.permit_authorized_at) || null,
               portalUrl: p.permit_portal || '', fee: p.permit_fee == null ? null : Number(p.permit_fee) },
             designs: designsBy[j.id] || [], crewBills: billsBy[j.id] || [], materials: matsBy[j.id] || [], style: j.style || '',
@@ -401,6 +401,7 @@
         if ('scheduledFor' in patch) jobPatch.scheduled_for = patch.scheduledFor;
         if ('endDate' in patch) jobPatch.end_date = patch.endDate || null;
         if ('visitAt' in patch) jobPatch.visit_at = patch.visitAt || null;
+        if ('visitContractorId' in patch) jobPatch.visit_contractor_id = patch.visitContractorId || null;
         if ('source' in patch) jobPatch.source = patch.source || '';
         if ('homeowner' in patch) jobPatch.homeowner = patch.homeowner === true || patch.homeowner === false ? patch.homeowner : null;
         if ('decisionMakers' in patch) jobPatch.decision_makers = String(patch.decisionMakers || '').trim().slice(0, 200);
@@ -823,6 +824,14 @@
       },
       async signLien(billId, sig) { must(await sb.rpc('crew_sign_lien', { p_bill: billId, p_name: String(sig?.name || ''), p_image: sig?.image || '' })); },
       async punch(jobId) { return must(await sb.rpc('crew_punch', { p_job: jobId })) || []; },
+      async visits() {
+        const { data, error } = await sb.rpc('crew_my_visits');
+        if (error) return []; // database update not run yet
+        const list = data || [];
+        const urls = await signedUrls(list.flatMap((v) => v.customer_photos || []));
+        return list.map((v) => ({ id: v.id, number: v.number, trade: v.trade, visitAt: local16(v.visit_at), address: v.address, zip: v.zip || '', state: v.state || '',
+          description: v.description, customerName: v.customer_name || '', customerPhone: v.customer_phone || '', customerPhotos: (v.customer_photos || []).map((pth) => urls[pth]).filter(Boolean) }));
+      },
       async punchDone(id, done) { must(await sb.rpc('crew_punch_done', { p_id: id, p_done: !!done })); },
       async addNote(jobId, text) {
         must(await sb.rpc('crew_add_note', { p_token: null, p_job: jobId, p_text: text }));

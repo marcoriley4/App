@@ -1016,6 +1016,29 @@ end $$;
 reset role;
 select t.ok((select signature->>'name' from public.documents where id = current_setting('t.inv')::uuid) = 'Ann Buyer', 'customer signs their invoice in the app, and it stays');
 
+-- ========== Contractor walkthrough visit (before the job is sold) ==========
+select set_config('request.jwt.claim.sub', :'S', false);
+set role authenticated;
+insert into public.jobs (contact_name, contact_phone, entered_by, trade, description, address, status)
+  values ('Vic Visit', '(555) 222-3333', 'Office', 'decks', 'New deck 20x30, gate code 1234', '9 Visit Ln', 'hot');
+update public.jobs set visit_at = '2026-12-01T10:00', visit_contractor_id = (select contractor_id from public.profiles where id = :'C') where contact_name = 'Vic Visit';
+update public.job_private set price = 18750 where job_id = (select id from public.jobs where contact_name = 'Vic Visit');
+select t.ok(exists (select 1 from public.job_events where text like '🤝 Walkthrough by %(contractor)'), 'office sees who does the walkthrough');
+reset role;
+select set_config('request.jwt.claim.sub', :'C', false);
+set role authenticated;
+select t.ok(jsonb_array_length(public.crew_my_visits()) = 1 and (public.crew_my_visits()->0->>'customer_name') = 'Vic Visit', 'contractor sees the walkthrough they were booked for');
+select t.ok(public.crew_my_visits()::text !~ '18750|"price"', 'walkthrough never shows the price');
+select t.ok(not exists (select 1 from jsonb_array_elements(public.crew_my_jobs()) x where x->>'id' = (select (public.crew_my_visits()->0->>'id'))), 'a walkthrough does not make them the job''s crew');
+reset role;
+select set_config('request.jwt.claim.sub', :'D', false);
+set role authenticated;
+do $$ begin
+  begin perform t.ok(jsonb_array_length(public.crew_my_visits()) = 0, 'other contractors see none of it');
+  exception when raise_exception then perform t.ok(true, 'other contractors see none of it'); end;
+end $$;
+reset role;
+
 -- ========== Closed job: crew link off ==========
 select set_config('request.jwt.claim.sub', :'S', false);
 set role authenticated;

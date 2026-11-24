@@ -43,7 +43,7 @@ drop function if exists public.handle_new_user, public.is_staff, public.new_crew
   public.authorize_permit, public.can_design, public.permit_label, public.report_payment, public.resolve_payment_report, public.crew_bill, public.staff_crew_bill, public.crew_halfway,
   public.crew_material_add, public.crew_material_delivered, public.job_materials_log, public.sign_document, public.office_ask_review, public.customer_review,
   public.crew_my_insurance, public.crew_set_insurance, public.crew_owns_insurance_path, public.log_message,
-  public.crew_my_profile, public.crew_set_profile, public.crew_set_w9, public.crew_sign_lien, public.crew_punch, public.crew_punch_done cascade;
+  public.crew_my_profile, public.crew_set_profile, public.crew_set_w9, public.crew_sign_lien, public.crew_punch, public.crew_punch_done, public.crew_my_visits cascade;
 
 -- Let the app reach the tables (each one is locked down by row-level security below). Same as Supabase's
 -- "Grant API access to new tables automatically" option, so the setup works whether or not that box was ticked.
@@ -173,6 +173,7 @@ create table public.jobs (
   scheduled_for timestamp,
   end_date date,        -- expected finish (set by the office/sales; the customer sees it with the start date)
   visit_at timestamp,   -- the sales rep's walkthrough with a hot lead
+  visit_contractor_id uuid references public.contractors(id) on delete set null,   -- or a contractor does the walkthrough instead
   -- Building permit: the customer's OK (typed-name signature) and the status/number they can see.
   permit_status text not null default 'none' check (permit_status in ('none', 'authorized', 'preparing', 'applied', 'approved', 'inspections', 'closed', 'not_needed')),
   permit_number text not null default '' check (length(permit_number) <= 60),
@@ -486,6 +487,9 @@ begin
   end if;
   if new.do_not_contact is distinct from old.do_not_contact then
     perform public.log_event(new.id, case when new.do_not_contact then '🚫 Customer asked not to be contacted' else 'OK to contact again' end);
+  end if;
+  if new.visit_contractor_id is distinct from old.visit_contractor_id then
+    perform public.log_event(new.id, '🤝 Walkthrough by ' || coalesce((select name from public.contractors where id = new.visit_contractor_id) || ' (contractor)', 'the sales rep'));
   end if;
   if new.visit_at is distinct from old.visit_at then
     perform public.log_event(new.id, case when new.visit_at is null then '🤝 Rep visit cleared'
@@ -1283,6 +1287,25 @@ begin
   update public.contractors set user_id = auth.uid(), invite_code = null where id = c.id;
 end $$;
 
+
+-- Crew: walkthrough visits the office booked them for (before the job is sold). Only what they need to go look:
+-- time, address, customer contact, what was asked for and the customer's photos. Never prices.
+create function public.crew_my_visits() returns jsonb
+language plpgsql stable security definer set search_path = '' as $$
+declare cid uuid := public.my_crew();
+begin
+  if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
+  return (select coalesce(jsonb_agg(jsonb_build_object(
+      'id', j.id, 'number', j.number, 'trade', j.trade, 'visit_at', j.visit_at,
+      'address', j.address, 'zip', j.zip, 'state', j.state, 'description', j.description, 'style', j.style,
+      'customer_name', coalesce(b.name, j.contact_name), 'customer_phone', coalesce(b.phone, j.contact_phone),
+      'customer_photos', (select coalesce(jsonb_agg(f.path order by f.uploaded_at), '[]'::jsonb) from public.job_files f
+                           where f.job_id = j.id and f.source = 'customer' and f.mime like 'image/%')
+    ) order by j.visit_at), '[]'::jsonb)
+    from public.jobs j left join public.profiles b on b.id = j.buyer_id
+    where j.visit_contractor_id = cid and j.visit_at is not null and j.status in ('new', 'qualifying', 'hot'));
+end $$;
+
 -- Crew: their own assigned jobs only. Their pay (if the office allows), never the customer price.
 create function public.crew_my_jobs() returns jsonb
 language plpgsql stable security definer set search_path = '' as $$
@@ -1372,8 +1395,9 @@ end $$;
 create function public.crew_can_read_customer(p text) returns boolean
 language sql stable security definer set search_path = '' as $$
   select exists (select 1 from public.job_files f join public.jobs j on j.id = f.job_id
-                 where f.path = p and f.source in ('customer', 'design') and j.contractor_id = public.my_crew()
-                   and j.status in ('scheduled', 'in_progress', 'completed'));
+                 where f.path = p and f.source in ('customer', 'design') and public.my_crew() is not null
+                   and ((j.contractor_id = public.my_crew() and j.status in ('scheduled', 'in_progress', 'completed'))
+                     or (j.visit_contractor_id = public.my_crew() and f.source = 'customer' and j.status in ('new', 'qualifying', 'hot'))));
 $$;
 
 -- Crew: add a note to their job, from the job's photo link (p_token) or their crew login (p_job).
@@ -1603,7 +1627,7 @@ grant execute on function public.is_staff(), public.owns_job(text), public.custo
   public.claim_sales_invite(text), public.office_crew_list(), public.authorize_permit(uuid, text), public.can_design(uuid),
   public.report_payment(uuid, numeric, text, text, text, text), public.resolve_payment_report(uuid, boolean),
   public.crew_bill(uuid, int, numeric, text, text[], text), public.crew_my_insurance(), public.crew_set_insurance(text, text, date), public.crew_owns_insurance_path(text), public.staff_crew_bill(uuid, text, text, date, text), public.crew_halfway(uuid),
-  public.crew_my_profile(), public.crew_set_profile(jsonb), public.crew_set_w9(text, text), public.crew_sign_lien(uuid, text, text), public.crew_punch(uuid), public.crew_punch_done(uuid, boolean) to authenticated;
+  public.crew_my_profile(), public.crew_set_profile(jsonb), public.crew_set_w9(text, text), public.crew_sign_lien(uuid, text, text), public.crew_punch(uuid), public.crew_punch_done(uuid, boolean), public.crew_my_visits() to authenticated;
 grant execute on function public.sales_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_invite_info(text) to anon, authenticated;
 grant execute on function public.crew_add_note(text, uuid, text) to anon, authenticated;

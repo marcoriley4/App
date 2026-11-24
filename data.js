@@ -1122,6 +1122,12 @@
           j.crewToken = patch.contractorId ? newToken() : null;
           j.crewResponse = null; j.crewResponseNote = ''; j.crewResponseAt = null; // new crew needs to confirm
         }
+        if ('visitContractorId' in patch && (patch.visitContractorId || null) !== (j.visitContractorId || null)) {
+          const vc = patch.visitContractorId && d.contractors.find((c) => c.id === patch.visitContractorId);
+          if (patch.visitContractorId && !vc) throw new Error('Pick a contractor.');
+          j.visitContractorId = vc ? vc.id : null;
+          j.log.push({ at: Date.now(), text: `🤝 Walkthrough by ${vc ? vc.name + ' (contractor)' : 'the sales rep'}` });
+        }
         if ('visitAt' in patch && (patch.visitAt || null) !== (j.visitAt || null)) j.log.push({ at: Date.now(), text: patch.visitAt
           ? `🤝 Rep visit booked for ${new Date(patch.visitAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}` : '🤝 Rep visit cleared' });
         if ('scheduledFor' in patch && patch.scheduledFor !== j.scheduledFor && patch.scheduledFor) j.log.push({ at: Date.now(), text: `Scheduled for ${new Date(patch.scheduledFor).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}` });
@@ -1863,6 +1869,17 @@
         b.lienSig = { name: s.name, image: s.image, at: Date.now() };
         j.log.push({ at: Date.now(), text: `📝 Lien waiver signed by ${s.name} for ${usd(b.amount)} (“${b.label}”)` });
         writeDb(d);
+      },
+      // Walkthrough visits the office booked them for, before the job is sold. Never prices.
+      async visits() {
+        const { d, c } = await requireCrew();
+        return Promise.all(d.jobs.filter((j) => j.visitContractorId === c.id && j.visitAt && ['new', 'qualifying', 'hot'].includes(j.status))
+          .sort((a, b) => String(a.visitAt).localeCompare(String(b.visitAt))).map(async (j) => {
+            const b = customerOf(d, j);
+            const pics = await Promise.all(j.files.filter((f) => f.source === 'customer' && /^image\//.test(f.mime)).map(withUrl));
+            return { id: j.id, number: j.number, trade: j.trade, visitAt: j.visitAt, address: j.address, zip: j.zip, state: j.state || '', description: j.description,
+              customerName: b.name || '', customerPhone: b.phone || '', customerPhotos: [...(j.photos || []), ...pics.map((f) => f.url).filter(Boolean)] };
+          }));
       },
       // The punch list the office made for their job; they check items off.
       async punch(jobId) {

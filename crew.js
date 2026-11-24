@@ -234,6 +234,7 @@
     const paidSum = (list) => list.reduce((t, j) => t + paidOf(j), 0);
     const showPay = jobs.some((j) => j.crewPay != null);
     const toConfirm = notDone.filter((j) => j.status === 'scheduled' && !j.crewResponse).length;
+    const visits = which === 'active' ? await api.crewPortal.visits().catch(() => []) : [];
 
     const card = (j) => {
       const t = tradeOf(j.trade);
@@ -389,7 +390,7 @@
     }
 
     view.replaceChildren(el('div', { class: 'stack', style: 'margin:20px 0' },
-      head, crewTodo(me, jobs, company), tabs,
+      head, crewTodo(me, jobs, company, visits), tabs,
       showPay ? el('div', { class: 'kpis', style: 'grid-template-columns:1fr 1fr' },
         el('div', { class: 'kpi' }, el('b', {}, usd(pay(notDone))), el('span', {}, `Upcoming pay · ${notDone.length} job${notDone.length === 1 ? '' : 's'}`)),
         el('div', { class: 'kpi' }, el('b', {}, usd(pay(finished))), el('span', {}, `Earned · ${finished.length} completed`))) : null,
@@ -397,6 +398,7 @@
       toConfirm ? el('div', { class: 'callout stage' }, `👋 ${toConfirm} new job${toConfirm === 1 ? '' : 's'} to confirm. Tap to open.`) : null,
       insuranceCard(),
       paperworkNotice(),
+      visits.length ? visitsSection(visits) : null,
       ...section('Today', today, 'Nothing scheduled for today.'),
       ...section('Upcoming', upcoming, 'No upcoming jobs. The office will text you when you’re assigned one.'),
       finished.length ? el('a', { class: 'btn ghost block', href: '#/done' }, `✓ See all ${finished.length} completed job${finished.length === 1 ? '' : 's'} →`) : null,
@@ -506,13 +508,32 @@
   }
 
   // Today's to-do list for the contractor: confirm jobs, today's jobs in time order with the next step, punch list, bills, lien waivers, paperwork.
-  function crewTodo(me, jobs, company) {
+  // Walkthrough visits the office booked them for (before the job is sold): go look, meet the customer. No prices.
+  function visitsSection(visits) {
+    return el('section', { class: 'stack', style: 'gap:8px' }, el('h2', { style: 'margin-top:6px' }, '🤝 Walkthrough visits'),
+      el('p', { class: 'muted small', style: 'margin:0' }, 'The office booked you to go look at these jobs and meet the customer. Tell the office what you find.'),
+      ...visits.map((v) => { const t = tradeOf(v.trade); const d = new Date(v.visitAt);
+        return el('article', { class: 'card stack visit-card' },
+          el('div', { class: 'row' }, el('b', { style: 'flex:1' }, `${t.icon} ${t.label} · TH-${v.number}`), el('span', { class: 'flag hot' }, d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) + ' ' + timeOf(v.visitAt))),
+          el('p', { style: 'margin:0' }, el('b', {}, v.customerName), ` · ${TH.addrLine(v)}`),
+          el('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' },
+            el('a', { class: 'btn gold small', href: maps(TH.addrLine(v)), target: '_blank', rel: 'noopener' }, '🧭 Directions'),
+            v.customerPhone ? el('a', { class: 'btn ghost small', href: tel(v.customerPhone) }, '📞 Call') : null,
+            v.customerPhone ? el('a', { class: 'btn ghost small', href: 'sms:' + String(v.customerPhone).replace(/[^\d+]/g, '') }, '💬 Text') : null),
+          el('details', {}, el('summary', { class: 'small', style: 'cursor:pointer;font-weight:700' }, 'What they asked for'),
+            el('p', { style: 'white-space:pre-wrap' }, String(v.description || '').replace(/^Ballpark shown:.*$/m, '').trim()),
+            v.customerPhotos.length ? el('div', { class: 'photos' }, ...v.customerPhotos.map((u) => el('a', { href: u, target: '_blank', rel: 'noopener' }, el('img', { src: u, alt: 'Customer photo', style: 'width:96px;height:72px;object-fit:cover;border-radius:8px' })))) : null)); }));
+  }
+
+  function crewTodo(me, jobs, company, visits = []) {
     const box = el('div', {}, TH.todoCard({ who: me.id, items: [], title: 'Today’s to-do list', empty: 'Loading…' }));
     (async () => {
       const tk = todayKey(); const tmr = (() => { const d = new Date(Date.now() + 864e5); return new Date(d - d.getTimezoneOffset() * 60e3).toISOString().slice(0, 10); })();
       const items = []; const href = (j) => `#/job/${j.id}`;
       const where = (j) => `TH-${j.number} · ${j.customerName ? j.customerName + ' · ' : ''}${j.address}`;
       const open = jobs.filter((j) => j.status !== 'completed');
+      visits.filter((v) => String(v.visitAt).slice(0, 10) <= tk).forEach((v) => items.push({ key: `visit:${v.id}`, icon: '🤝', text: `Walkthrough ${timeOf(v.visitAt)}: ${v.customerName || 'customer'}`, sub: `TH-${v.number} · ${TH.addrLine(v)}`, href: '#/', action: { label: '🧭 Go', href: 'https://maps.google.com/?q=' + encodeURIComponent(TH.addrLine(v)) } }));
+      visits.filter((v) => String(v.visitAt).slice(0, 10) === tmr).forEach((v) => items.push({ key: `visit-tmr:${v.id}`, icon: '📅', text: `Walkthrough tomorrow ${timeOf(v.visitAt)}: ${v.customerName || 'customer'}`, sub: `TH-${v.number} · ${TH.addrLine(v)}`, href: '#/' }));
       open.filter((j) => j.status === 'scheduled' && !j.crewResponse).forEach((j) => items.push({ key: `confirm:${j.id}`, icon: '👋', text: `Confirm the ${tradeOf(j.trade).label.toLowerCase()} job${j.scheduledFor ? ' on ' + new Date(j.scheduledFor).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : ''}`, sub: where(j), href: href(j) }));
       const todays = open.filter((j) => j.status === 'in_progress' || (j.scheduledFor || '').slice(0, 10) <= tk && j.scheduledFor)
         .sort((a, b) => String(a.scheduledFor || '').localeCompare(String(b.scheduledFor || '')));

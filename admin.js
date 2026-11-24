@@ -134,6 +134,8 @@
   const dayKey = (ms) => { const x = new Date(ms); return new Date(x - x.getTimezoneOffset() * 60e3).toISOString().slice(0, 10); };
   const timeOf = (iso) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const crewName = (j) => find(crew, j.contractorId)?.name;
+  // Who does the walkthrough: the contractor booked for it, or the job's sales rep.
+  const visitWhoName = (j) => (j.visitContractorId ? (find(crew, j.visitContractorId)?.name || 'Contractor') + ' (contractor)' : salesName(j.salesId));
 
   // Approved estimate totals: what a salesperson has sold.
   const soldTotal = (list) => list.reduce((t, j) => t + (j.docs || []).filter((d) => d.type === 'estimate' && d.status === 'approved').reduce((u, d) => u + docs.totals(d).total, 0), 0);
@@ -147,7 +149,7 @@
         line: (j) => isStaff ? `${tradeOf(j.trade).label} · ${srcLabel(j.source)} · ${j.firstContactAt ? 'came in ' + ago(j.created) : '⏱ waiting ' + fmtDur(Date.now() - j.created)}` : `${tradeOf(j.trade).label} · came in ${ago(j.created)}` },
       { id: 'replies', icon: '↩️', title: 'Customers waiting on a reply', why: 'They texted or emailed back. Answer from the job’s Messages box.',
         list: open.filter(needsReply), line: (j) => `“${j.lastMessage.body.slice(0, 70)}” · ${ago(j.lastMessage.at)}` },
-      { id: 'hotbook', icon: '🔥', title: 'Hot leads: book the rep visit', why: 'They agreed to the price. Send a rep out for the walkthrough.',
+      { id: 'hotbook', icon: '🔥', title: 'Hot leads: book the visit', why: 'They agreed to the price. Send a sales rep or a contractor out for the walkthrough.',
         list: open.filter(needsVisit), line: (j) => `${tradeOf(j.trade).label}${j.price != null ? ' · agreed ' + money(j.price) : ''}${salesName(j.salesId) ? ' · ' + salesName(j.salesId) : ''}` },
       { id: 'declined', icon: '🙅', title: 'Crew can’t make it', why: 'Pick another crew or a new date.',
         list: open.filter((j) => j.status === 'scheduled' && j.crewResponse === 'declined'),
@@ -158,9 +160,9 @@
       { id: 'notes', icon: '👷', title: 'New updates from your crew', why: 'Progress updates and notes from the job.',
         list: jobs.filter(hasCrewNews).sort((a, b) => Math.max(crewUpdatedAt(b), 0) - Math.max(crewUpdatedAt(a), 0)),
         line: (j) => [crewUpdatedAt(j) ? `${j.progressBy}: ${progressText(j)}` : null, hasNewNote(j) ? 'new note' : null].filter(Boolean).join(' · ') },
-      { id: 'visits', icon: '🤝', title: 'Rep visits today & tomorrow', why: 'Walkthroughs with customers who agreed to the price.', info: true,
+      { id: 'visits', icon: '🤝', title: 'Visits today & tomorrow', why: 'Walkthroughs with customers who agreed to the price (sales rep or contractor).', info: true,
         list: open.filter((j) => j.status === 'hot' && j.visitAt && !visitPassed(j) && [today, tomorrow].includes(j.visitAt.slice(0, 10))).sort((a, b) => a.visitAt.localeCompare(b.visitAt)),
-        line: (j) => `${j.visitAt.slice(0, 10) === today ? 'Today' : 'Tomorrow'} ${timeOf(j.visitAt)} · ${salesName(j.salesId) || 'No rep picked'}` },
+        line: (j) => `${j.visitAt.slice(0, 10) === today ? 'Today' : 'Tomorrow'} ${timeOf(j.visitAt)} · ${visitWhoName(j) || 'Nobody picked'}` },
       { id: 'followup', icon: '🤔', title: 'Thinking it over', why: 'Got a phone estimate but haven’t agreed yet. Follow up.', info: true,
         list: open.filter((j) => j.status === 'qualifying' && !estWith(j, 'sent') && !estWith(j, 'approved')),
         line: (j) => `${tradeOf(j.trade).label}${j.price != null ? ' · quoted ' + money(j.price) : ''}` },
@@ -286,7 +288,7 @@
       const go = (dm) => { const d = new Date(y, m - 1 + dm, 1); calMonth = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; render(); };
       card.replaceChildren(...[
         el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, '📅 Calendar'),
-          el('span', { class: 'tcal-key' }, el('i', { class: 'work' }), 'Crew', el('i', { class: 'visit' }), 'Rep visit')),
+          el('span', { class: 'tcal-key' }, el('i', { class: 'work' }), 'Crew', el('i', { class: 'visit' }), 'Visit')),
         el('div', { class: 'tcal-head' },
           el('button', { type: 'button', class: 'ghost small', 'aria-label': 'Previous month', onclick: () => go(-1) }, '‹'),
           el('b', {}, first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })),
@@ -296,7 +298,7 @@
         el('div', { class: 'tcal-day' },
           el('b', {}, calDay === todayK ? `Today · ${dayName}` : dayName),
           list.length ? el('div', { class: 'tcal-list' }, ...list.map((e) => {
-            const who = e.kind === 'work' ? (crewName(e.j) ? '👷 ' + crewName(e.j) : '👷 No crew yet') : '🤝 Rep visit' + (salesName(e.j.salesId) ? ' · ' + salesName(e.j.salesId) : '');
+            const who = e.kind === 'work' ? (crewName(e.j) ? '👷 ' + crewName(e.j) : '👷 No crew yet') : '🤝 Visit' + (visitWhoName(e.j) ? ' · ' + visitWhoName(e.j) : '');
             return el('button', { type: 'button', class: 'tcal-item ' + e.kind, onclick: () => openLead(e.j.id, 'overview') },
               el('span', { class: 'tcal-time' }, new Date(e.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })),
               el('span', { class: 'body' }, el('b', {}, `${e.j.buyer.name}`), el('span', { class: 'muted small' }, `${tradeOf(e.j.trade).icon} ${tradeOf(e.j.trade).label} · ${jobNo(e.j)}`), el('span', { class: 'small' }, who)),
@@ -937,7 +939,7 @@
   // Today's to-do list (office and sales): everything waiting, in the order to do it.
   const TODO_ORDER = [
     ['declined', 'Find another contractor or date for'], ['replies', 'Reply to'], ['new', 'Call new lead'], ['reported', 'Confirm the payment from'],
-    ['visits', 'Rep visit with'], ['soon', 'On the schedule:'], ['hotbook', 'Book the rep visit for'], ['schedule', 'Schedule the contractor for'],
+    ['visits', 'Visit with'], ['soon', 'On the schedule:'], ['hotbook', 'Book the visit for'], ['schedule', 'Schedule the contractor for'],
     ['crewbills', 'Approve the contractor bill on'], ['paycrew', 'Pay the contractor for'], ['invoice', 'Send the next invoice to'], ['crewpay', 'Set contractor pay for'],
     ['notes', 'Read the crew update on'], ['permits', 'Apply for the permit for'], ['materials', 'Order materials for'], ['followup', 'Follow up with'],
     ['waiting', 'Check on the estimate with'], ['unpaid', 'Collect payment from'], ['reviews', 'Ask for a review from'],
@@ -1168,12 +1170,14 @@
           el('h2', {}, el('button', { type: 'button', class: 'name-link', onclick: () => openCustomer(customerKey(j)) }, b.name)),
           el('p', { class: 'muted small' }, `${t.icon} ${t.label} · ${jobNo(j)} · `,
             el('button', { type: 'button', class: 'link small', onclick: () => openCustomer(customerKey(j)) }, (() => { const n = jobsOfCustomer(customerKey(j)).length; return `📁 ${n} job${n === 1 ? '' : 's'} with us`; })())))),
+      // Phone and email spelled out in blue: tap to call or email (owner's request, instead of Call / Email buttons).
+      (b.phone || b.email) && !j.doNotContact ? el('div', { class: 'contact-links' },
+        b.phone ? el('a', { href: telHref(b.phone), 'aria-label': `Call ${b.name} at ${b.phone}` }, `📞 ${b.phone}`) : null,
+        b.email ? el('a', { href: `mailto:${b.email}?subject=${encodeURIComponent('Your ' + t.label.toLowerCase() + ' request with Top Hat Contracting')}`, 'aria-label': `Email ${b.name}` }, `✉️ ${b.email}`) : null) : null,
       el('div', { class: 'contact' },
         j.doNotContact ? el('span', { class: 'flag hot' }, '🚫 Do not contact') : null,
-        b.phone && !j.doNotContact ? el('a', { class: 'btn ghost small', href: telHref(b.phone) }, '📞 Call') : null,
         el('button', { type: 'button', class: 'ghost small', onclick: () => { callBox.hidden = !callBox.hidden; } }, '📝 Log call'),
         b.phone && !j.doNotContact ? el('a', { class: 'btn ghost small', href: smsHref(b.phone) }, '💬 Text') : null,
-        b.email && !j.doNotContact ? el('a', { class: 'btn ghost small', href: `mailto:${b.email}?subject=${encodeURIComponent('Your ' + t.label.toLowerCase() + ' request with Top Hat Contracting')}` }, '✉️ Email') : null,
         isStaff && (b.phone || b.email) && !j.doNotContact ? el('button', { type: 'button', class: 'ghost small', onclick: () => { leadTab = 'overview'; renderTab(); document.getElementById('convo')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }, '📋 Templates') : null),
       callBox,
       el('ul', { class: 'facts' },
@@ -1577,17 +1581,36 @@
       const repSel = isStaff ? el('select', { 'aria-label': 'Rep' }, el('option', { value: '' }, team.length ? '— Pick a rep —' : 'No sales reps yet'),
         ...team.filter((x) => x.active !== false || x.id === j.salesId).map((x) => el('option', { value: x.id, selected: x.id === j.salesId }, x.name))) : null;
       const visitIn = el('input', { type: 'datetime-local', value: j.visitAt || '', 'aria-label': 'Visit date and time' });
+      // Who goes out for the walkthrough: a sales rep, or a contractor (owner's request).
+      let who = j.visitContractorId ? 'crew' : 'rep';
+      const visitCrewSel = el('select', { 'aria-label': 'Contractor for the visit' }, el('option', { value: '' }, '— Pick a contractor —'),
+        ...crew.filter((c) => c.active || c.id === j.visitContractorId).sort((a, c) => (TH.doesTrade(c, j.trade) - TH.doesTrade(a, j.trade)) || a.name.localeCompare(c.name))
+          .map((c) => el('option', { value: c.id, selected: c.id === j.visitContractorId, disabled: insuranceExpired(c.id) && c.id !== j.visitContractorId },
+            `${TH.doesTrade(c, j.trade) ? '★ ' : ''}${c.name}${insuranceExpired(c.id) ? ' (insurance ran out)' : ''}${offTag(c.id, j.visitAt)}`)));
+      const repField = repSel ? el('label', { class: 'field' }, 'Sales rep', repSel) : null;
+      const crewField = el('label', { class: 'field' }, 'Contractor', el('span', { class: 'hint' }, 'They see the visit in their contractor login (time, address, customer, photos). Never prices.'), visitCrewSel);
+      const whoChips = el('div', { class: 'stage-chips', role: 'radiogroup', 'aria-label': 'Who goes out' });
+      const drawWho = () => {
+        whoChips.replaceChildren(...[['rep', '💼 Sales rep'], ['crew', '👷 Contractor']].map(([id, label]) => el('button', { type: 'button', class: 'chip', role: 'radio', 'aria-checked': String(who === id), 'aria-pressed': String(who === id), onclick: () => { who = id; drawWho(); } }, label)));
+        if (repField) repField.hidden = who !== 'rep'; crewField.hidden = who !== 'crew';
+      };
+      drawWho();
+      visitIn.addEventListener('change', () => [...visitCrewSel.options].forEach((o) => { const c = crew.find((x) => x.id === o.value); if (c) o.textContent = `${TH.doesTrade(c, j.trade) ? '★ ' : ''}${c.name}${insuranceExpired(c.id) ? ' (insurance ran out)' : ''}${offTag(c.id, visitIn.value)}`; }));
       const visitForm = el('div', { class: 'quote-box stack', hidden: !!j.visitAt },
-        repSel ? el('label', { class: 'field' }, 'Rep', repSel) : null,
-        el('label', { class: 'field' }, 'Visit date & time', visitIn),
+        el('b', { class: 'small' }, 'Who’s going out?'), whoChips,
+        repField, crewField,
+        el('label', { class: 'field' }, 'Visit date & time', el('span', { class: 'hint' }, 'Tap the box to pick the day and time.'), visitIn),
         el('button', { type: 'button', class: 'gold block', onclick: () => {
           if (!visitIn.value) { errorBox.textContent = 'Pick the date and time for the visit.'; errorBox.hidden = false; return; }
-          update({ visitAt: visitIn.value, ...(repSel ? { salesId: repSel.value || null } : {}) });
+          if (who === 'crew' && !visitCrewSel.value) { errorBox.textContent = 'Pick the contractor who is going out.'; errorBox.hidden = false; return; }
+          update({ visitAt: visitIn.value, visitContractorId: who === 'crew' ? visitCrewSel.value : null, ...(who === 'rep' && repSel ? { salesId: repSel.value || null } : {}) });
         } }, j.visitAt ? 'Save visit' : 'Book the visit'));
-      const repFirst = (salesName(j.salesId) || 'Your rep').split(' ')[0];
+      const visitCrew = j.visitContractorId ? find(crew, j.visitContractorId) : null;
+      const visitWho = visitCrew ? visitCrew.name : salesName(j.salesId);
+      const repFirst = (visitWho || 'Your project manager').split(' ')[0];
       const visitText = j.visitAt && `Hi ${first}, this is ${settings.name || 'Top Hat Contracting'}. ${repFirst} will come out ${fmtWhen(j.visitAt)} to walk through your ${t.label.toLowerCase()} project at ${j.address}. Reply if that time doesn’t work.`;
-      if (!j.visitAt) step = { icon: '🔥', title: 'Hot lead: book the rep visit', why: `${first} agreed to ${j.price != null ? money(j.price) : 'the price'}. Pick a rep and a time for the walkthrough.`, extra: visitForm };
-      else if (!visitPassed(j)) step = { icon: '🤝', title: `Rep visit ${fmtWhen(j.visitAt)}`, why: `${salesName(j.salesId) || 'No rep picked yet'} walks through the project with ${first}. Let them know the time.`,
+      if (!j.visitAt) step = { icon: '🔥', title: 'Hot lead: book the visit', why: `${first} agreed to ${j.price != null ? money(j.price) : 'the price'}. Pick a sales rep or a contractor, and a time for the walkthrough.`, extra: visitForm };
+      else if (!visitPassed(j)) step = { icon: '🤝', title: `Visit ${fmtWhen(j.visitAt)}`, why: `${visitWho ? visitWho + (visitCrew ? ' (contractor)' : '') : 'Nobody picked yet'} walks through the project with ${first}. Let them know the time.`,
         href: b.phone ? smsHref(b.phone, visitText) : null, label: `💬 Text ${first} the visit time`,
         extra: visitForm, second: ['Change the visit', () => { visitForm.hidden = !visitForm.hidden; }],
         third: ['Visit done: sold, pick crew & date', focusSetup] };
