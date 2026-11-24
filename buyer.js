@@ -501,6 +501,23 @@
     } catch (err) { showError(err.message); }
   }
 
+  // Card title: the customer's own project, e.g. "Robert’s Dream Deck" (owner's request).
+  function projectTitle(j, me) {
+    const desc = String(j.description || '');
+    const look = TH.styleOf(j.style);
+    const room = look ? look.room : TH.STYLE_ROOMS.find((r) => r.id === TH.roomFromText(desc));
+    const NOUNS = { decks: 'Deck', roofing: 'Roof', masonry: 'Stonework', fencing: 'Fence', siding: 'Siding', windows: 'Windows', flooring: 'Floors',
+      painting: 'Room', landscaping: 'Yard', drywall: 'Room', plumbing: 'Bathroom', electrical: 'Lighting', hvac: 'Comfort Upgrade' };
+    const noun = /^Multiple areas project/.test(desc) ? 'Project'
+      : room ? room.label.replace(/\b\w/g, (c) => c.toUpperCase())
+      : j.trade === 'concrete' ? (/driveway/i.test(desc) ? 'Driveway' : /patio/i.test(desc) ? 'Patio' : 'Concrete Project')
+      : j.trade === 'remodel' ? (/basement/i.test(desc) ? 'Basement' : /garage/i.test(desc) ? 'Garage' : 'Remodel')
+      : NOUNS[j.trade] || 'Project';
+    const first = String((me && me.name) || '').trim().split(/\s+/)[0];
+    if (!first) return `Your Dream ${noun}`;
+    return `${first}${/s$/i.test(first) ? '’' : '’s'} Dream ${noun}`;
+  }
+
   /* ---------- confirmation ---------- */
   async function done() {
     const me = await api.auth.me();
@@ -716,7 +733,7 @@
         return el('article', { class: 'card job-card' },
           el('div', { class: 'head' },
             el('span', { style: 'font-size:1.6rem' }, trade.icon),
-            el('div', { class: 't' }, el('h3', {}, trade.label), el('p', { class: 'muted small' }, `Job TH-${j.number} · ${j.address}${j.state ? ", " + j.state : ""} · requested ${ago(j.created)}`)),
+            el('div', { class: 't' }, el('h3', {}, projectTitle(j, me)), el('p', { class: 'muted small' }, `${trade.label} · Job TH-${j.number} · ${j.address}${j.state ? ", " + j.state : ""} · requested ${ago(j.created)}`)),
             el('span', { class: `pill s-${j.status}` }, st.buyer)),
           j.status === 'scheduled' && j.stage === 'on_the_way' ? el('div', { class: 'callout onway-alert', role: 'status' },
             el('b', {}, `🚚 ${(j.contractorName || 'Your contractor').split(' ')[0]} is on the way!`),
