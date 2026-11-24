@@ -955,7 +955,7 @@
       if (id === 'visits') list = list.filter((j) => (j.visitAt || '').slice(0, 10) === today).sort((a, c) => a.visitAt.localeCompare(c.visitAt));
       if (id === 'soon') list = list.filter((j) => (j.scheduledFor || '').slice(0, 10) === today);
       if (id === 'unpaid') list = list.filter((j) => liveInvoices(j).some((d) => docs.owed(d) > 0 && d.dueDate && d.dueDate < today)); // only overdue
-      for (const j of list) items.push({ key: `${id}:${j.id}`, icon: b.icon, text: `${verb} ${j.buyer.name}`, sub: `${jobNo(j)} · ${b.line(j)}`, open: () => openLead(j.id, 'overview'),
+      for (const j of list) items.push({ key: `${id}:${j.id}`, icon: id === 'new' ? '' : b.icon, text: `${verb} ${j.buyer.name}`, sub: `${jobNo(j)} · ${b.line(j)}`, open: () => openLead(j.id, 'overview'),
         action: ['new', 'replies', 'followup'].includes(id) && j.buyer.phone && !j.doNotContact ? { label: '📞 Call', href: telHref(j.buyer.phone) } : null });
     }
     if (isStaff) {
