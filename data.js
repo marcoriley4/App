@@ -898,6 +898,13 @@
         return clean(u);
       },
       async signOut() { setSession(null); },
+      // Preview: no emails, so a reset link can't be sent.
+      async requestReset(email) { if (!/^\S+@\S+\.\S+$/.test(normEmail(email))) throw new Error('Enter the email you log in with.'); return { preview: true }; },
+      async setNewPassword(password) {
+        const u = await me(); if (!u) throw new Error('Please log in.');
+        if (!password || password.length < 8) throw new Error('Password must be at least 8 characters.');
+        const d = await db(); const rec = d.users.find((x) => x.id === u.id); rec.password = await hash(password); writeDb(d); return clean(rec);
+      },
     },
 
     jobs: {
@@ -2105,6 +2112,18 @@
         if (btn) btn.disabled = false;
       }
     };
+    // Forgot password: email them a link to set a new one.
+    const resetEmail = el('input', { type: 'email', inputmode: 'email', autocomplete: 'username', 'aria-label': 'Email for the reset link', placeholder: 'Your email' });
+    const resetMsg = el('div', { role: 'status', class: 'small', hidden: true });
+    const resetBox = el('div', { class: 'stack reset-box', hidden: true, style: 'gap:8px' },
+      el('b', { class: 'small' }, 'We’ll email you a link to set a new password.'), resetEmail, resetMsg,
+      el('button', { type: 'button', class: 'ghost block', onclick: async (e) => {
+        const btn = e.currentTarget; btn.disabled = true; resetMsg.hidden = false; resetMsg.className = 'small';
+        try { const r = await window.TH.api.auth.requestReset(resetEmail.value);
+          resetMsg.textContent = r && r.preview ? 'In the preview no emails are sent. Use the sample logins below.' : `If ${resetEmail.value.trim()} has an account, a reset link is on its way. Check your email (and spam) in a minute.`; }
+        catch (err) { resetMsg.className = 'small error'; resetMsg.textContent = err.message; }
+        btn.disabled = false;
+      } }, 'Email me a reset link'));
     const form = el('form', { class: 'card stack login-box', onsubmit: (e) => {
       e.preventDefault();
       const f = new FormData(form);
@@ -2116,6 +2135,8 @@
       el('label', { class: 'field' }, 'Email', el('input', { name: 'email', type: 'email', autocomplete: 'username', inputmode: 'email', required: true })),
       el('label', { class: 'field' }, 'Password', el('input', { name: 'password', type: 'password', autocomplete: 'current-password', required: true })),
       el('button', { class: 'gold block', type: 'submit' }, 'Log in'),
+      el('p', { class: 'small', style: 'text-align:center;margin:0' }, el('a', { href: '#', class: 'forgot-link', onclick: (e) => { e.preventDefault(); resetBox.hidden = !resetBox.hidden; if (!resetBox.hidden) { resetEmail.value = resetEmail.value || form.querySelector('input[name=email]').value; resetEmail.focus(); } } }, 'Forgot your password?')),
+      resetBox,
       el('p', { class: 'muted small', style: 'text-align:center' }, 'New customer? ', el('a', { href: 'index.html#/request' }, 'Request a job'), ' and create your account at the end. New crew? Ask the office for an invite.'),
     );
     if (window.TH.api.mode !== 'preview') return form;

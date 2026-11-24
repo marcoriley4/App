@@ -1097,3 +1097,7 @@ label.dream-pick { display: flex; align-items: center; justify-content: center; 
 .bp-edit summary { cursor: pointer; padding: 6px 0; }
 .bp-grid { display: grid; grid-template-columns: auto 1fr 1fr; gap: 6px 8px; align-items: center; margin: 6px 0 10px; }
 .bp-grid input { min-width: 0; }
+.forgot-link { font-weight: 700; }
+.reset-box { border-top: 1px solid var(--border); padding-top: 10px; }
+.reset-overlay { position: fixed; inset: 0; z-index: 1000; background: var(--bg); overflow-y: auto; padding: 24px 16px; display: flex; align-items: flex-start; justify-content: center; }
+.reset-overlay .login-box { width: 100%; max-width: 440px; }

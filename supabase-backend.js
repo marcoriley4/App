@@ -31,6 +31,46 @@
     auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
   });
   const BUCKET = 'job-files';
+
+  // Coming back from a "reset your password" email: ask for the new password right away, on any page.
+  let recovering = /[?&]reset=1\b/.test(location.search) || /type=recovery/.test(location.hash);
+  function showResetBox() {
+    if (document.getElementById('resetOverlay')) return;
+    const { el } = TH;
+    const p1 = el('input', { type: 'password', autocomplete: 'new-password', placeholder: 'New password (8+ characters)', 'aria-label': 'New password' });
+    const p2 = el('input', { type: 'password', autocomplete: 'new-password', placeholder: 'Type it again', 'aria-label': 'New password again' });
+    const err = el('div', { class: 'error', hidden: true, role: 'alert' });
+    const box = el('div', { id: 'resetOverlay', class: 'reset-overlay', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Set a new password' },
+      el('form', { class: 'card stack login-box', onsubmit: async (e) => {
+        e.preventDefault(); err.hidden = true;
+        if (p1.value !== p2.value) { err.textContent = 'The two passwords don’t match.'; err.hidden = false; return; }
+        const btn = e.currentTarget.querySelector('button[type=submit]'); btn.disabled = true;
+        try {
+          const u = await api.auth.setNewPassword(p1.value);
+          const home = u && u.role === 'staff' || u && u.role === 'sales' ? 'admin.html' : u && u.role === 'crew' ? 'crew.html' : 'index.html#/jobs';
+          location.replace(new URL(home, location.href).href);
+        } catch (ex) { err.textContent = ex.message; err.hidden = false; btn.disabled = false; }
+      } }, el('h1', {}, 'Set a new password'), el('p', { class: 'muted small' }, 'Choose a new password for your Top Hat login.'), err, p1, p2,
+        el('button', { type: 'submit', class: 'gold block' }, 'Save my new password')));
+    document.body.append(box); p1.focus();
+  }
+  function showResetExpired() {
+    if (document.getElementById('resetOverlay')) return;
+    const { el } = TH;
+    document.body.append(el('div', { id: 'resetOverlay', class: 'reset-overlay', role: 'dialog', 'aria-modal': 'true' },
+      el('div', { class: 'card stack login-box' }, el('h1', {}, 'That link has expired'),
+        el('p', {}, 'Reset links only work once and for a short time. Ask for a new one from the login page.'),
+        el('a', { class: 'btn gold block', href: new URL('index.html#/login', location.href).href }, 'Go to log in'))));
+  }
+  sb.auth.onAuthStateChange((ev) => { if (ev === 'PASSWORD_RECOVERY') { recovering = true; setTimeout(showResetBox, 0); } });
+  if (recovering) {
+    const whenReady = (fn) => (document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', fn) : fn());
+    whenReady(() => setTimeout(async () => {
+      const { data } = await sb.auth.getSession();
+      if (data && data.session) showResetBox(); else if (!/access_token|code=/.test(location.href)) showResetExpired();
+      else setTimeout(async () => { const r = await sb.auth.getSession(); if (r.data && r.data.session) showResetBox(); else showResetExpired(); }, 1500);
+    }, 300));
+  }
   const { guessKind, normEmail, validateSignUp, MAX_FILE_MB, DEFAULT_SETTINGS } = TH._util;
 
   /* ---------- helpers ---------- */
@@ -159,6 +199,19 @@
         return me();
       },
       async signOut() { await sb.auth.signOut(); profile = null; mine = new Map(); },
+      // Forgot password: Supabase emails a link back to the app (index.html?reset=1), where they set a new one.
+      async requestReset(email) {
+        email = normEmail(email);
+        if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error('Enter the email you log in with.');
+        must(await sb.auth.resetPasswordForEmail(email, { redirectTo: new URL('index.html?reset=1', location.href).href }));
+        return { sent: true };
+      },
+      async setNewPassword(password) {
+        if (!password || password.length < 8) throw new Error('Password must be at least 8 characters.');
+        must(await sb.auth.updateUser({ password }));
+        profile = null;
+        return me();
+      },
     },
 
     jobs: {
