@@ -1429,8 +1429,37 @@
       try { await api.files.update(j.id, fileId, patch); await load(); flashSaved(); openLead(j.id); }
       catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
     }
+    // The customer's own photos (from their request): shown as photos to look at, not as files (owner's request).
+    const custPhotos = [...files.filter((f) => f.source === 'customer' && /^image\//.test(f.mime || '') && f.url).map((f) => ({ url: f.url, at: f.uploaded, file: f })),
+      ...(j.photos || []).map((src) => ({ url: src, at: j.created, file: null }))];
+    const openPhoto = (i) => {
+      let at = i;
+      const img = el('img', { alt: '' });
+      const cap = el('span', { class: 'small' });
+      const show = () => { img.src = custPhotos[at].url; img.alt = `Customer photo ${at + 1}`; cap.textContent = `Photo ${at + 1} of ${custPhotos.length} · from ${first}`; };
+      const box = el('div', { class: 'lightbox', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Customer photo', onclick: (e) => { if (e.target === box) box.remove(); } },
+        el('button', { type: 'button', class: 'lb-close', 'aria-label': 'Close', onclick: () => box.remove() }, '✕'),
+        img,
+        el('div', { class: 'row lb-bar' },
+          custPhotos.length > 1 ? el('button', { type: 'button', class: 'ghost small', onclick: () => { at = (at - 1 + custPhotos.length) % custPhotos.length; show(); } }, '‹ Back') : null,
+          cap,
+          custPhotos.length > 1 ? el('button', { type: 'button', class: 'ghost small', onclick: () => { at = (at + 1) % custPhotos.length; show(); } }, 'Next ›') : null));
+      show(); document.body.append(box);
+    };
+    const custGallery = (withRemove) => custPhotos.length ? el('div', { class: 'cust-photos stack' },
+      el('div', { class: 'row' }, el('h3', { style: 'flex:1;margin:0' }, `📷 Photos ${first} uploaded (${custPhotos.length})`)),
+      el('p', { class: 'muted small', style: 'margin:0' }, 'Extra photos of the project from the customer. Tap one to see it full size.'),
+      el('div', { class: 'cust-grid' }, ...custPhotos.map((p, i) => el('div', { class: 'cust-tile' },
+        el('button', { type: 'button', class: 'cust-thumb', 'aria-label': `Open customer photo ${i + 1}`, onclick: () => openPhoto(i) }, el('img', { src: p.url, alt: `Customer photo ${i + 1}`, loading: 'lazy' })),
+        el('span', { class: 'muted small' }, `Photo ${i + 1}${p.at ? ' · ' + new Date(p.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''}`),
+        withRemove && p.file ? el('button', { type: 'button', class: 'link small', style: 'color:var(--bad)', 'aria-label': `Delete customer photo ${i + 1}`, onclick: async () => {
+          if (!confirm(`Delete customer photo ${i + 1} from ${jobNo(j)}? This can't be undone.`)) return;
+          await api.files.remove(j.id, p.file.id); await load(); openLead(j.id);
+        } }, 'Delete') : null)))) : null;
+    const otherFiles = files.filter((f) => !(f.source === 'customer' && /^image\//.test(f.mime || '') && f.url));
     const filesCard = el('section', { class: 'card stack' },
       el('div', { class: 'row' }, el('h3', {}, `Files · ${jobNo(j)}`), el('span', { class: 'spacer' }), uploadNote),
+      custGallery(true),
       TH.beforeAfter(files.filter((f) => f.source === 'design').map((f) => ({ url: f.url, name: f.name, stage: f.stage, group: f.designGroup })), { title: '🎨 Saved designs: before & after (everyone on the job sees these)' }),
       el('label', { class: 'btn gold' }, '+ Add files or photos',
         el('input', { type: 'file', multiple: true, hidden: true, onchange: async (e) => {
@@ -1443,7 +1472,7 @@
         } })),
       el('div', { class: 'checks' }, ...['estimate', 'contract', 'invoice'].map((k) =>
         el('span', { class: 'pill' + (has(k) ? ' s-completed' : '') }, `${has(k) ? '✓' : '○'} ${kindOf(k).label}`))),
-      files.length ? el('ul', { class: 'files' }, ...files.map((f) => {
+      otherFiles.length ? el('ul', { class: 'files' }, ...otherFiles.map((f) => {
         const k = kindOf(f.kind);
         return el('li', {},
           el('span', { class: 'ic' }, k.icon),
@@ -1465,8 +1494,6 @@
           } }, '✕'));
       })) : el('p', { class: 'muted small' }, 'No files yet. Add estimates, contracts, invoices, receipts, permits and job photos here.'),
       el('p', { class: 'muted small' }, '🔒 Files are staff-only unless you tick “Customer can see”. Crew never see files.'),
-      j.photos?.length ? el('div', { class: 'stack', style: 'gap:6px' }, el('b', { class: 'small' }, 'Photos from the customer’s request'),
-        el('div', { class: 'photo-row' }, ...j.photos.map((src, i) => el('a', { href: src, target: '_blank' }, el('img', { src, alt: `Customer photo ${i + 1}` }))))) : null,
     );
 
     // Office notes + activity
@@ -1750,7 +1777,7 @@
       el('details', {}, el('summary', { class: 'small', style: 'cursor:pointer;font-weight:700' }, '+ Add an expense'), expForm)) : null;
 
     // The lead and what they asked for: in "The job" tab (owner: out of the summary at the top).
-    const aboutCard = el('section', { class: 'card stack about-job' }, isStaff ? leadBox(j, update) : null, askedFor());
+    const aboutCard = el('section', { class: 'card stack about-job' }, isStaff ? leadBox(j, update) : null, askedFor(), custGallery(false));
 
     // Tabs keep the job short and easy to scan.
     // Each section says what's inside, so it's clear where a tap leads.
