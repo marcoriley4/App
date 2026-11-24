@@ -116,7 +116,7 @@ create table public.contractors (
   insurance_at timestamptz,
   -- The contractor's own details (they keep these up to date in their login): business name, email, license # / state / expiry,
   -- service area, days of the week they don't work and dates they're booked elsewhere.
-  profile jsonb not null default '{}' check (jsonb_typeof(profile) = 'object' and length(profile::text) <= 20000),
+  profile jsonb not null default '{}' constraint contractors_profile_check check (jsonb_typeof(profile) = 'object' and length(profile::text) <= 100000),
   -- W-9 (for the 1099), stored next to their insurance under insurance/<contractor id>/.
   w9_path text check (w9_path is null or w9_path like 'insurance/%'),
   w9_name text not null default '' check (length(w9_name) <= 200),
@@ -643,6 +643,7 @@ language sql stable security definer set search_path = '' as $$
     'pm_name', case when j.status <> 'lost' and sp.active then sp.name end,
     'pm_phone', case when j.status <> 'lost' and sp.active then sp.phone end,
     'contractor_name', case when j.status <> 'lost' then c.name end,   -- the customer sees who's assigned
+    'contractor_photo', case when j.status <> 'lost' then nullif(c.profile->>'photo', '') end,
     -- The contractor's progress, so the customer's meter and alerts follow every tap they make.
     'crew_confirmed', j.crew_response = 'confirmed', 'halfway_at', j.halfway_at, 'progress_at', j.progress_at,
     'shared_files', (select coalesce(jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'kind', f.kind, 'size', f.size,
@@ -1120,6 +1121,8 @@ begin
     'license_expires', case when coalesce(p->>'license_expires', '') ~ '^\d{4}-\d{2}-\d{2}$' then p->>'license_expires' else '' end,
     'service_area', left(trim(coalesce(p->>'service_area', '')), 200),
     'notes', left(trim(coalesce(p->>'notes', '')), 500),
+    -- Their photo (a small JPEG the app makes), shown to customers next to "Project manager".
+    'photo', case when coalesce(p->>'photo', '') ~ '^data:image/jpeg;base64,[A-Za-z0-9+/=]+$' and length(p->>'photo') <= 80000 then p->>'photo' else '' end,
     'days_off', coalesce((select jsonb_agg(distinct v::int) from jsonb_array_elements_text(case when jsonb_typeof(p->'days_off') = 'array' then p->'days_off' else '[]'::jsonb end) v where v ~ '^[0-6]$'), '[]'::jsonb),
     'blocked', coalesce((select jsonb_agg(distinct v) from (select v from jsonb_array_elements_text(case when jsonb_typeof(p->'blocked') = 'array' then p->'blocked' else '[]'::jsonb end) v
       where v ~ '^\d{4}-\d{2}-\d{2}$' and v >= to_char(current_date, 'YYYY-MM-DD') limit 120) x), '[]'::jsonb));

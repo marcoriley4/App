@@ -733,6 +733,7 @@
       license_state: /^[A-Za-z]{2}$/.test(p.license_state || '') ? p.license_state.toUpperCase() : '',
       license_expires: /^\d{4}-\d{2}-\d{2}$/.test(p.license_expires || '') ? p.license_expires : '',
       service_area: str(p.service_area, 200), notes: str(p.notes, 500),
+      photo: /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(p.photo || '') && p.photo.length <= 80000 ? p.photo : '',
       days_off: [...new Set((Array.isArray(p.days_off) ? p.days_off : []).map(String).filter((v) => /^[0-6]$/.test(v)).map(Number))].sort(),
       blocked: [...new Set((Array.isArray(p.blocked) ? p.blocked : []).filter((v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && v >= today))].sort().slice(0, 120),
     };
@@ -1010,6 +1011,7 @@
             repName: j.status === 'hot' && j.visitAt ? ((d.team || []).find((x) => x.id === j.salesId)?.name || '').split(' ')[0] || null : null,
             pm: (() => { const sp = j.status !== 'lost' && (d.team || []).find((x) => x.id === j.salesId && x.active !== false); return sp ? { name: sp.name, phone: sp.phone || '' } : null; })(),
             contractorName: c && j.status !== 'lost' ? c.name : null, // the customer sees who's assigned
+            contractorPhoto: c && j.status !== 'lost' && c.profile && c.profile.photo ? c.profile.photo : null,
             // The contractor's progress, so the customer's meter and alerts follow every tap they make.
             crewConfirmed: j.crewResponse === 'confirmed', halfwayAt: j.halfwayAt || null, progressAt: j.progressAt || null,
             stage: j.stage || null,
@@ -1539,6 +1541,13 @@
     },
 
     contractors: {
+      // Office: put a contractor's photo on file (customers see it next to "Project manager").
+      async setPhoto(id, photo) {
+        await requireStaff();
+        const d = await db(); const c = d.contractors.find((x) => x.id === id);
+        if (!c) throw new Error('Contractor not found.');
+        c.profile = cleanCrewProfile({ ...(c.profile || {}), photo: photo || '' }); writeDb(d);
+      },
       async list() {
         const ctx = await requireOffice();
         // Salespeople pick crews too, but only see names, phones and trades (no logins or invite links).

@@ -240,7 +240,7 @@
         return list.map((j) => ({
           id: j.id, number: j.number, trade: j.trade, status: j.status, created: ms(j.created_at),
           description: j.description, address: j.address, zip: j.zip || '', state: j.state || '', timeframe: j.timeframe, budget: j.budget, photos: [],
-          scheduledFor: local16(j.scheduled_for), endDate: j.end_date || null, contractorName: j.contractor_name || null, stage: j.stage || null,
+          scheduledFor: local16(j.scheduled_for), endDate: j.end_date || null, contractorName: j.contractor_name || null, contractorPhoto: j.contractor_photo || null, stage: j.stage || null,
           crewConfirmed: !!j.crew_confirmed, halfwayAt: ms(j.halfway_at), progressAt: ms(j.progress_at),
           visitAt: local16(j.visit_at), repName: j.rep_name || null,
           pm: j.pm_name ? { name: j.pm_name, phone: j.pm_phone || '' } : null,
@@ -654,6 +654,12 @@
     },
 
     contractors: {
+      async setPhoto(id, photo) {
+        await requireStaff();
+        if (photo && !(/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(photo) && photo.length <= 80000)) throw new Error('That photo didn’t work. Try another one.');
+        const row = must(await sb.from('contractors').select('profile').eq('id', id).single());
+        must(await sb.from('contractors').update({ profile: { ...(row.profile || {}), photo: photo || '' } }).eq('id', id));
+      },
       async list() {
         const u = await requireOffice();
         // Salespeople pick crews from a safe list: names, phones and trades (no logins or invite links).

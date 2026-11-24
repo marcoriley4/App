@@ -456,6 +456,21 @@
       try { await api.crewPortal.setProfile(p); saved.hidden = false; setTimeout(() => { saved.hidden = true; }, 1600); } catch (e) { err.textContent = e.message; err.hidden = false; }
       btn.disabled = false; };
     const field = (k, label, attrs = {}) => el('label', { class: 'field' }, label, el('input', { value: p[k] || '', oninput: (e) => { p[k] = e.target.value; }, ...attrs }));
+    // Their photo: customers see it next to "Project manager" on their job.
+    const photoCard = el('section', { class: 'card stack' });
+    const drawPhoto = () => {
+      const input = el('input', { type: 'file', accept: 'image/*', 'aria-label': 'Your photo', onchange: async (e) => {
+        const f = e.target.files[0]; if (!f) return;
+        try { p.photo = await TH.shrinkImage(f, 320, 0.8); await api.crewPortal.setProfile(p); drawPhoto(); } catch (ex) { err.textContent = ex.message; err.hidden = false; }
+      } });
+      photoCard.replaceChildren(el('h3', {}, '📸 Your photo'),
+        el('div', { class: 'row', style: 'gap:14px;align-items:center' },
+          p.photo ? el('img', { class: 'pm-photo big', src: p.photo, alt: 'You' }) : el('span', { class: 'pm-photo big initials' }, (pr.name || '?').split(' ').map((x) => x[0]).join('').slice(0, 2).toUpperCase()),
+          el('div', { class: 'stack', style: 'gap:6px;flex:1' },
+            el('p', { class: 'muted small', style: 'margin:0' }, 'Customers see your photo next to “Project manager”, so they know who’s coming. A clear, friendly photo of your face works best.'),
+            el('label', { class: 'btn gold small', style: 'align-self:flex-start' }, p.photo ? 'Change photo' : '📸 Add your photo', input))));
+    };
+    drawPhoto();
     // W-9
     const w9Box = el('section', { class: 'card stack' + (pr.w9 ? '' : ' needs') });
     const drawW9 = (w9) => {
@@ -487,6 +502,7 @@
         el('div', { class: 'ready-list' }, ...ready.map(([label, ok]) => el('span', { class: 'flag' + (ok ? ' paid' : ' hot') }, `${ok ? '✓' : '•'} ${label}`))),
         el('p', { class: 'muted small', style: 'margin:0' }, 'Keep these up to date. Top Hat can’t pay a bill without current insurance, and needs your W-9 for your 1099.')),
       paperworkNotice(),
+      photoCard,
       insuranceCard(),
       w9Box,
       el('section', { class: 'card stack' }, el('div', { class: 'row' }, el('h3', { style: 'flex:1' }, '🪪 Business & license'), saved),

@@ -2643,6 +2643,7 @@
 
   function crewForm(c) {
     const editing = !!c;
+    let photoCard = null;
     c = c || { name: '', phone: '', trades: [], active: true, state: '' };
     const errorBox = el('div', { class: 'error', hidden: true, role: 'alert' });
     const close = closeDrawer;
@@ -2666,6 +2667,20 @@
       };
       if (st === 'invited' && c.inviteCode) showInvite(c.inviteCode);
       const refresh = async () => { await load(); crewForm(crew.find((x) => x.id === c.id)); };
+      // Their photo: customers see it next to "Project manager" (they can add it themselves in My info too).
+      const ph = (c.profile && c.profile.photo) || '';
+      const phInput = el('input', { type: 'file', accept: 'image/*', 'aria-label': `Photo of ${c.name}`, onchange: async (e) => {
+        const f = e.target.files[0]; if (!f) return;
+        try { await api.contractors.setPhoto(c.id, await TH.shrinkImage(f, 320, 0.8)); await refresh(); } catch (err) { errorBox.textContent = err.message; errorBox.hidden = false; }
+      } });
+      photoCard = el('section', { class: 'card stack', style: 'margin-top:6px' },
+        el('h3', {}, '📸 Photo'),
+        el('div', { class: 'row', style: 'gap:14px;align-items:center' },
+          ph ? el('img', { class: 'pm-photo big', src: ph, alt: c.name }) : el('span', { class: 'pm-photo big initials' }, initials(c.name)),
+          el('div', { class: 'stack', style: 'gap:6px;flex:1' },
+            el('p', { class: 'muted small', style: 'margin:0' }, `Customers see this next to “Project manager” when ${first} is on their job.`),
+            el('label', { class: 'btn ghost small', style: 'align-self:flex-start' }, ph ? 'Change photo' : 'Add a photo', phInput),
+            ph ? el('button', { type: 'button', class: 'link small', style: 'align-self:flex-start;color:var(--bad)', onclick: async () => { await api.contractors.setPhoto(c.id, ''); await refresh(); } }, 'Remove photo') : null)));
       loginCard = el('section', { class: 'card stack', style: 'margin-top:6px' },
         el('div', { class: 'row' }, el('h3', {}, '🔑 Crew login'), el('span', { class: 'spacer' }),
           el('span', { class: 'pill ' + (st === 'active' ? 's-completed' : st === 'invited' ? 's-qualifying' : '') }, st === 'active' ? 'Active' : st === 'invited' ? 'Invite sent' : 'No login')),
@@ -2730,7 +2745,7 @@
           el('label', { class: 'choice' }, el('input', { type: 'checkbox', name: 'trades', value: t.id, checked: c.trades.includes(t.id) }), el('span', {}, `${t.icon} ${t.label}`))))),
       el('label', { class: 'row', style: 'font-weight:600' }, el('input', { type: 'checkbox', name: 'active', checked: c.active, style: 'width:22px;height:22px' }), 'Active (can be assigned jobs)'),
       el('button', { type: 'submit' }, editing ? 'Save' : 'Add to crew'),
-      loginCard,
+      photoCard, loginCard,
       historyCard,
       editing ? el('button', { type: 'button', class: 'link', style: 'color:var(--bad)', onclick: async () => {
         if (!confirm(`Remove ${c.name} from your crew? Their jobs will become unassigned.`)) return;

@@ -1145,3 +1145,26 @@ input[type="date"]::-webkit-calendar-picker-indicator, input[type="datetime-loca
 .card.oversight > .todo-head, .card.oversight > .todo-head *, .card.todo:not(.urgent):not(.info) > .todo-head, .card.todo:not(.urgent):not(.info) > .todo-head .todo-ic { color: #1b1404 !important; }
 .about-job .lead-box { border-top: 0; padding-top: 0; }
 .about-job .asked-for { border-top: 1px solid var(--border); padding-top: 12px; }
+/* Project manager photo */
+.pm-photo { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; flex: none; border: 2px solid var(--gold); background: var(--surface-2); }
+.pm-photo.big { width: 84px; height: 84px; }
+.pm-photo.initials { display: grid; place-items: center; font-weight: 900; font-size: 1.2rem; color: var(--text); }
+.pm-photo.big.initials { font-size: 1.6rem; }
+/* Milestones under the job completion bar */
+.milestones { list-style: none; margin: 6px 0 2px; padding: 0; display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; }
+.milestones li { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; font-size: .72rem; font-weight: 700; color: var(--muted); line-height: 1.15; }
+.milestones .dot { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: .75rem; border: 2px solid var(--border); background: var(--surface); color: transparent; }
+.milestones li.done .dot { background: #4ade80; border-color: #4ade80; color: #0b0b0c; }
+.milestones li.done { color: var(--text); }
+.milestones li.now .dot { border-color: var(--gold); color: var(--gold); box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 30%, transparent); }
+.milestones li.now { color: var(--text); font-weight: 900; }
+.meter-team .pm-row { display: flex !important; flex-direction: row !important; align-items: center !important; justify-content: flex-start !important; text-align: left !important; gap: 14px; }
+.meter-team .pm-row .stack { align-items: flex-start; }
+.milestones { gap: 6px; }
+.milestones li { font-size: .68rem; overflow-wrap: anywhere; }
+.milestones { grid-template-columns: repeat(6, auto); justify-content: space-between; gap: 4px; }
+.milestones li { overflow-wrap: normal; word-break: keep-all; font-size: .66rem; }
+.milestones li { word-break: normal; max-width: 72px; }
+.milestones li.now .dot { color: #8a6326; border-color: #8a6326; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .milestones li.now .dot { color: var(--gold); border-color: var(--gold); } }
+:root[data-theme="dark"] .milestones li.now .dot { color: var(--gold); border-color: var(--gold); }

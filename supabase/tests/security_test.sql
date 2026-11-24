@@ -1016,6 +1016,19 @@ end $$;
 reset role;
 select t.ok((select signature->>'name' from public.documents where id = current_setting('t.inv')::uuid) = 'Ann Buyer', 'customer signs their invoice in the app, and it stays');
 
+-- ========== Contractor photo: shown to their customer as the project manager ==========
+select set_config('request.jwt.claim.sub', :'C', false);
+set role authenticated;
+select public.crew_set_profile((public.crew_my_profile()->'profile') || '{"photo":"data:image/jpeg;base64,/9j/AAAA"}'::jsonb);
+select public.crew_set_profile((public.crew_my_profile()->'profile') || '{"photo":"javascript:alert(1)"}'::jsonb);
+select t.ok((public.crew_my_profile()->'profile'->>'photo') = '', 'only real photos are kept');
+select public.crew_set_profile((public.crew_my_profile()->'profile') || '{"photo":"data:image/jpeg;base64,/9j/AAAA"}'::jsonb);
+reset role;
+select set_config('request.jwt.claim.sub', :'A', false);
+set role authenticated;
+select t.ok(exists (select 1 from jsonb_array_elements(public.my_jobs()) x where x->>'contractor_photo' = 'data:image/jpeg;base64,/9j/AAAA'), 'customer sees their contractor''s photo');
+reset role;
+
 -- ========== Contractor walkthrough visit (before the job is sold) ==========
 select set_config('request.jwt.claim.sub', :'S', false);
 set role authenticated;

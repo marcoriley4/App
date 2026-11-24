@@ -607,7 +607,7 @@
     const who = (j.contractorName || 'Your contractor').split(' ')[0];
     if (j.status === 'new') return [10, 'Received'];
     if (j.status === 'qualifying') return [25, 'Scheduled'];
-    if (j.status === 'hot') return [40, 'Site visit'];
+    if (j.status === 'hot') return j.visitAt ? [45, 'Site visit booked'] : [40, 'Estimate accepted'];
     if (j.status === 'scheduled') return j.stage === 'on_the_way' ? [62, `${who} is on the way`] : j.crewConfirmed ? [58, `${who} confirmed the job`] : [55, 'Work scheduled'];
     if (j.status === 'in_progress') {
       const pct = j.halfwayAt ? 85 : j.stage === 'return_visit' ? 80 : 70;
@@ -621,6 +621,10 @@
       el('div', { class: 'row' }, el('b', {}, 'Job completion'), el('span', { class: 'spacer' }), el('b', { class: 'pct' }, `${pct}%`)),
       el('div', { class: 'bar' }, el('span', { style: `width:${pct}%` })),
       el('span', { class: 'muted small' }, `Now: ${nowText}`, j.progressAt ? ` · updated ${ago(j.progressAt)}` : ''),
+      // Milestones under the bar (owner: "Estimate accepted" is one of them, instead of a message).
+      (() => { const at = milestoneOf(j);
+        return el('ol', { class: 'milestones', 'aria-label': 'Milestones' }, ...MILESTONES.map((m, i) => el('li', { class: i < at ? 'done' : i === at ? 'now' : '' },
+          el('span', { class: 'dot', 'aria-hidden': 'true' }, i < at ? '✓' : i === at ? '●' : ''), el('span', {}, m)))); })(),
       // Agreed start date (the booked work day) and the expected finish the office set.
       el('div', { class: 'meter-dates' },
         el('div', {}, el('span', { class: 'muted small' }, 'Start date'),
@@ -630,8 +634,16 @@
       // One "Project manager" for the customer: their sales rep, or the contractor if there's no rep yet.
       (() => { const pm = j.pm ? { name: j.pm.name, phone: j.pm.phone } : j.contractorName ? { name: j.contractorName, phone: '' } : null;
         const tel = pm && pm.phone ? pm.phone.replace(/[^\d+]/g, '') : '';
-        return el('div', { class: 'meter-team one' }, el('div', {}, el('span', { class: 'muted small' }, '👤 Project manager'), el('b', {}, pm ? pm.name : 'Being assigned'),
-          tel ? el('span', { class: 'small' }, el('a', { href: `tel:${tel}` }, 'Call'), ' · ', el('a', { href: `sms:${tel}` }, 'Text')) : null)); })()); };
+        // Their photo (the contractor's, when the contractor is the project manager), or their initials.
+        const photo = pm && !j.pm && j.contractorPhoto ? j.contractorPhoto : null;
+        const initials = pm ? pm.name.split(/\s+/).map((x) => x[0]).join('').slice(0, 2).toUpperCase() : '';
+        return el('div', { class: 'meter-team one' }, el('div', { class: 'row pm-row', style: 'gap:12px;align-items:center' },
+          pm ? (photo ? el('img', { class: 'pm-photo', src: photo, alt: pm.name }) : el('span', { class: 'pm-photo initials', 'aria-hidden': 'true' }, initials)) : el('span', { class: 'pm-photo initials', 'aria-hidden': 'true' }, '👤'),
+          el('div', { class: 'stack', style: 'gap:2px' }, el('span', { class: 'muted small' }, 'Project manager'), el('b', {}, pm ? pm.name : 'Being assigned'),
+            tel ? el('span', { class: 'small' }, el('a', { href: `tel:${tel}` }, 'Call'), ' · ', el('a', { href: `sms:${tel}` }, 'Text')) : null))); })()); };
+  const MILESTONES = ['Received', 'Estimate accepted', 'Site visit', 'Scheduled', 'Working', 'Done'];
+  const milestoneOf = (j) => j.status === 'completed' ? 5 : j.status === 'in_progress' ? 4 : j.status === 'scheduled' ? 3
+    : j.status === 'hot' ? (j.visitAt && Date.parse(j.visitAt) < Date.now() ? 2 : 1) : 0;
   const fmtDay = (v) => new Date(v.length === 10 ? v + 'T12:00' : v).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   // My jobs checks for updates every minute, so the meter and "on the way" alert show up without a reload.
   let jobsWatch = null;
@@ -753,9 +765,7 @@
             return txt ? el('div', { class: 'job-details' }, el('b', {}, 'Details'), el('p', { class: 'small', style: 'white-space:pre-wrap;margin:0' }, txt)) : null; })(),
           TH.styleOf(j.style) ? el('div', { class: 'style-chosen' }, el('img', { src: TH.styleOf(j.style).img, alt: '' }),
             el('span', {}, el('span', { class: 'muted small' }, 'The look you picked'), el('b', {}, TH.styleOf(j.style).label))) : null,
-          j.status === 'hot' ? el('div', { class: 'callout' }, '🤝 ', j.visitAt
-            ? [el('b', {}, fmtWhen(j.visitAt)), ` · ${j.repName || 'Your Top Hat project manager'} is coming out to measure and go over the details with you.`]
-            : 'Thanks for agreeing to the estimate! We’ll call you to set up a time for your project manager to come out.') : null,
+          j.status === 'hot' && j.visitAt ? el('div', { class: 'callout' }, '🤝 ', el('b', {}, fmtWhen(j.visitAt)), ` · ${j.repName || 'Your Top Hat project manager'} is coming out to measure and go over the details with you.`) : null,
           j.scheduledFor && ['scheduled', 'in_progress'].includes(j.status)
             ? el('div', { class: 'callout' }, '📅 ', el('b', {}, fmtWhen(j.scheduledFor)), j.contractorName ? ` · ${j.contractorName} from Top Hat is coming out.` : '')
             : null,
