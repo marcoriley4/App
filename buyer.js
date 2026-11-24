@@ -282,7 +282,6 @@
       const ex = (i) => EX[exKind()][i];
       // Step 2: "Describe your project" is for the Top Hat team only (job description). It does NOT go to the design studio.
       const projectText = el('textarea', { rows: 3, maxlength: '1000', value: draft.description || '', 'aria-label': 'Describe your project',
-        placeholder: ex(0),
         oninput: () => { draft.description = projectText.value; saveDraft(); } });
       // Step 3: its own box, linked to the design studio: what the AI after picture should look like.
       const dreamText = el('textarea', { rows: 2, maxlength: '200', value: draft.dreamText || '', 'aria-label': 'Describe your design',
