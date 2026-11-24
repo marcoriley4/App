@@ -1101,3 +1101,34 @@ label.dream-pick { display: flex; align-items: center; justify-content: center; 
 .reset-box { border-top: 1px solid var(--border); padding-top: 10px; }
 .reset-overlay { position: fixed; inset: 0; z-index: 1000; background: var(--bg); overflow-y: auto; padding: 24px 16px; display: flex; align-items: flex-start; justify-content: center; }
 .reset-overlay .login-box { width: 100%; max-width: 440px; }
+
+/* Today blocks: a bold colored header band across the top of each block, so every title grabs attention */
+.card.todo { padding-top: 0; overflow: hidden; border-left-width: 1px; }
+.card.todo > .todo-head { margin: 0 -18px 4px; padding: 14px 18px; align-items: center;
+  background-color: #c99a51; background-image: linear-gradient(135deg, #d9ab62, #b8873f); color: #1b1404; border-bottom: 3px solid #8a6326; }
+.card.todo > .todo-head h3 { font-size: 1.3rem; font-weight: 900; letter-spacing: -.01em; line-height: 1.2; color: #1b1404; margin: 0; text-transform: uppercase; }
+.card.todo > .todo-head p { color: #2b2110 !important; font-weight: 600; margin: 4px 0 0; opacity: .9; }
+.card.todo > .todo-head .todo-ic { font-size: 2rem; padding: 0; filter: drop-shadow(0 2px 2px rgba(0,0,0,.25)); }
+.card.todo > .todo-head .todo-count { background: #1b1404; color: #ffd27a; min-width: 42px; height: 42px; font-size: 1.25rem; font-weight: 900; box-shadow: 0 2px 6px rgba(0,0,0,.3); }
+/* Urgent: new leads, customer replies, crews who can't make it, payments to confirm, bills to approve, visits to book */
+.card.todo.urgent { border-color: #c2412d; }
+.card.todo.urgent > .todo-head { background-color: #c23b28; background-image: linear-gradient(135deg, #e0533a, #b3261e); color: #fff; border-bottom-color: #7e1a14; }
+.card.todo.urgent > .todo-head h3 { color: #fff; }
+.card.todo.urgent > .todo-head p { color: #ffe9e3 !important; }
+.card.todo.urgent > .todo-head .todo-count { background: #fff; color: #b3261e; animation: todo-pulse 1.8s ease-in-out infinite; }
+@keyframes todo-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+@media (prefers-reduced-motion: reduce) { .card.todo.urgent > .todo-head .todo-count { animation: none; } }
+/* Just-so-you-know blocks: dark band, still bold */
+.card.todo.info > .todo-head { background-color: #303037; background-image: linear-gradient(135deg, #3a3a42, #26262c); color: #fff; border-bottom-color: #18181b; }
+.card.todo.info > .todo-head h3 { color: #fff; }
+.card.todo.info > .todo-head p { color: #d6d6dc !important; }
+.card.todo.info > .todo-head .todo-count { background: #fff; color: #18181b; }
+/* The other Today blocks get the same bold band: to-do list, company, needs a look, calendar, reps' projects */
+.todo-today, .company-card, .alerts-card, .cal-card, .card.oversight { padding-top: 0; overflow: hidden; }
+.todo-today > :first-child, .company-card > :first-child, .alerts-card > :first-child, .cal-card > :first-child, .card.oversight > .todo-head {
+  margin: 0 -18px 4px; padding: 14px 18px; align-items: center; background-color: #c99a51; background-image: linear-gradient(135deg, #d9ab62, #b8873f); border-bottom: 3px solid #8a6326; }
+.todo-today > :first-child h2, .company-card > :first-child h3, .alerts-card > h3:first-child, .cal-card > :first-child h3, .card.oversight > .todo-head h3 {
+  color: #1b1404; font-size: 1.3rem; font-weight: 900; text-transform: uppercase; letter-spacing: -.01em; margin: 0; }
+.todo-today > :first-child .tt-count, .company-card > :first-child .muted, .card.oversight > .todo-head p { color: #2b2110 !important; font-weight: 700; }
+.alerts-card > h3:first-child { color: #fff; background-color: #c23b28; background-image: linear-gradient(135deg, #e0533a, #b3261e); border-bottom-color: #7e1a14; }
+.todo-today > :first-child h2 { font-size: 1.4rem; }

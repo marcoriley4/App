@@ -967,13 +967,15 @@
     return TH.todoCard({ who: meUser.id, items });
   }
 
+  // Today blocks that need action fast get the red header (owner: titles have to grab attention).
+  const URGENT_BUCKETS = ['new', 'replies', 'declined', 'reported', 'crewbills', 'hotbook'];
   function todayView() {
     const bs = myBuckets();
     const today = dayKey(Date.now()), weekEnd = dayKey(Date.now() + 7 * 86400e3);
     const thisWeek = jobs.filter((j) => ['scheduled', 'in_progress'].includes(j.status) && j.scheduledFor && j.scheduledFor.slice(0, 10) >= today && j.scheduledFor.slice(0, 10) <= weekEnd).length;
     const kpi = (v, k) => el('div', { class: 'kpi' }, el('b', {}, String(v)), el('span', {}, k));
     const h = new Date().getHours();
-    const sections = bs.filter((b) => b.list.length).map((b) => el('section', { class: 'card todo' + (b.info ? ' info' : '') },
+    const sections = bs.filter((b) => b.list.length).map((b) => el('section', { class: 'card todo' + (b.info ? ' info' : URGENT_BUCKETS.includes(b.id) ? ' urgent' : ''), 'data-bucket': b.id },
       el('div', { class: 'todo-head' },
         el('span', { class: 'todo-ic' }, b.icon),
         el('div', { style: 'flex:1;min-width:0' }, el('h3', {}, b.title), el('p', { class: 'muted small' }, b.why)),
