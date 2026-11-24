@@ -24,31 +24,6 @@ language sql stable security definer set search_path = '' as $$
                    and ((j.contractor_id = public.my_crew() and j.status in ('scheduled', 'in_progress', 'completed'))
                      or (j.visit_contractor_id = public.my_crew() and f.source = 'customer' and j.status in ('new', 'qualifying', 'hot'))));
 $$;
-
--- Crew: add a note to their job, from the job's photo link (p_token) or their crew login (p_job).
-create function public.crew_add_note(p_token text, p_job uuid, p_text text) returns void
-language plpgsql security definer set search_path = '' as $$
-declare jid uuid; cid uuid; cname text;
-begin
-  if length(trim(coalesce(p_text, ''))) = 0 then raise exception 'Write a note first.'; end if;
-  if length(p_text) > 2000 then raise exception 'Notes can be up to 2000 characters.'; end if;
-  if p_token is not null then
-    if not public.crew_token_active(p_token) then
-      raise exception 'This link is no longer active. Ask the Top Hat office for a new one.';
-    end if;
-    select j.id, j.contractor_id into jid, cid
-      from public.job_private p join public.jobs j on j.id = p.job_id where p.crew_token = p_token;
-  else
-    cid := public.my_crew();
-    if cid is null then raise exception 'Your crew login is turned off. Ask the Top Hat office if this is a mistake.'; end if;
-    select id into jid from public.jobs
-     where id = p_job and contractor_id = cid and status in ('scheduled', 'in_progress', 'completed');
-    if jid is null then raise exception 'You can only add notes to your own jobs.'; end if;
-  end if;
-  select name into cname from public.contractors where id = cid;
-  insert into public.crew_notes (job_id, contractor_id, by_name, text) values (jid, cid, coalesce(cname, 'Crew'), trim(p_text));
-  perform public.log_event(jid, coalesce(cname, 'Crew') || ' added a crew note');
-end $$;
 create or replace function public.jobs_after_update() returns trigger
 language plpgsql security definer set search_path = '' as $$
 declare cname text;
