@@ -262,13 +262,31 @@
         looks.replaceChildren(...list,
           room && !allLooks ? el('button', { type: 'button', class: 'link', onclick: () => { allLooks = true; drawLooks(); } }, 'Show looks for other rooms') : null);
       };
+      // Example texts that match the project they tapped (owner: a bathroom shouldn't show a kitchen example).
+      const EX = {
+        kitchen: ['e.g. Old cabinets and counters, want an open, brighter kitchen', 'e.g. White shaker cabinets, quartz counters, subway tile', 'e.g. Kitchen is about 12 x 14 ft', 'e.g. darker cabinets'],
+        bathroom: ['e.g. Old tub and vanity, want a walk-in shower', 'e.g. Walk-in shower with a rain head, freestanding tub, double vanity', 'e.g. Bathroom is about 8 x 10 ft', 'e.g. black fixtures'],
+        living: ['e.g. Dated living room, want new floors and paint', 'e.g. Light wood floors, warm white walls, built-in shelves', 'e.g. Living room is about 14 x 18 ft', 'e.g. darker floors'],
+        interior: ['e.g. Finish the basement into a family room and bedroom', 'e.g. Open family room, light gray walls, carpet, recessed lights', 'e.g. Basement is about 20 x 30 ft', 'e.g. wood-look floors'],
+        garage: ['e.g. Clean up the garage, new floor and storage', 'e.g. Gray epoxy floor, wall cabinets, bright lights', 'e.g. Garage is about 20 x 20 ft', 'e.g. a workbench'],
+        decks: ['e.g. Old wood deck is rotting, want a new one', 'e.g. Gray composite deck with black railings', 'e.g. Deck is about 12 x 16 ft', 'e.g. add stairs to the yard'],
+        patio: ['e.g. Want a patio off the back door for a grill and table', 'e.g. Stamped concrete patio with a stone border', 'e.g. Patio is about 12 x 20 ft', 'e.g. a fire pit area'],
+        concrete: ['e.g. Cracked driveway, want it replaced', 'e.g. New broom-finish driveway with clean edges', 'e.g. Driveway is about 20 x 40 ft', 'e.g. stamped borders'],
+        masonry: ['e.g. Front steps are crumbling, want them rebuilt', 'e.g. Brick steps with a stone cap and black railing', 'e.g. Steps are about 4 x 6 ft', 'e.g. lighter stone'],
+        roofing: ['e.g. Roof is leaking near the chimney', 'e.g. New roof, charcoal architectural shingles, white gutters', 'e.g. House is about 30 x 50 ft', 'e.g. black gutters'],
+        multi: ['e.g. Kitchen and both bathrooms, plus new floors downstairs', 'e.g. Same modern style in every room, light wood floors', 'e.g. Kitchen 12 x 14, bathroom 8 x 10, hall 4 x 20', 'e.g. warmer colors'],
+        other: ['e.g. What needs fixing, and what you want done', 'e.g. What you want it to look like when it’s done', 'e.g. The area is about 12 x 14 ft', 'e.g. darker colors'],
+      };
+      const exKind = () => draft.what === 'multi' ? 'multi' : draft.what === 'interior' ? 'interior' : draft.what === 'patio' ? 'patio'
+        : room && EX[room.id] ? room.id : EX[draft.room] ? draft.room : EX[draft.trade] ? draft.trade : 'other';
+      const ex = (i) => EX[exKind()][i];
       // Step 2: "Describe your project" is for the Top Hat team only (job description). It does NOT go to the design studio.
       const projectText = el('textarea', { rows: 3, maxlength: '1000', value: draft.description || '', 'aria-label': 'Describe your project',
-        placeholder: 'e.g. What needs fixing, and what you want done',
+        placeholder: ex(0),
         oninput: () => { draft.description = projectText.value; saveDraft(); } });
       // Step 3: its own box, linked to the design studio: what the AI after picture should look like.
       const dreamText = el('textarea', { rows: 2, maxlength: '200', value: draft.dreamText || '', 'aria-label': 'Describe your design',
-        placeholder: draft.trade === 'roofing' ? 'e.g. New roof, charcoal architectural shingles, white gutters' : draft.trade === 'decks' ? 'e.g. Gray composite deck with black railings' : 'e.g. Screened-in porch, white cabinets, darker floors',
+        placeholder: ex(1),
         oninput: () => { draft.dreamText = dreamText.value; saveDraft(); drawDream(); drawBtn(); } });
       const ideaList = [...(isRoom ? [] : IDEA_CHIPS[draft.trade] || []), ...((TH.DESIGN_IDEAS || {})[draft.trade] || (TH.DESIGN_IDEAS || {}).other || [])].filter((x, i, a) => a.indexOf(x) === i);
       const dreamIdeas = el('div', { class: 'stage-chips' }, ...ideaList.map((t) => el('button', { type: 'button', class: 'chip',
@@ -277,7 +295,7 @@
         el('label', { class: 'box-label' }, 'Describe your project (optional)', projectText));
       const designWrap = el('label', { class: 'box-label' }, 'Describe your design (optional)', dreamText);
       // Measurements (optional): always-open box, with common sizes to tap (owner's request). "Other" = type your own.
-      const measure = el('textarea', { rows: 2, value: draft.measurements || '', placeholder: 'e.g. Kitchen is about 12 x 14 ft', 'aria-label': 'Measurements', oninput: () => { draft.measurements = measure.value; saveDraft(); } });
+      const measure = el('textarea', { rows: 2, value: draft.measurements || '', placeholder: ex(2), 'aria-label': 'Measurements', oninput: () => { draft.measurements = measure.value; saveDraft(); } });
       const addSize = (sz) => { const cur = measure.value.trim(); measure.value = cur ? `${cur}, ${sz}` : sz; draft.measurements = measure.value; saveDraft(); };
       const sizeChips = el('div', { class: 'stage-chips size-chips' },
         ...['10 x 10 ft', '10 x 12 ft', '12 x 12 ft', '12 x 14 ft', '15 x 20 ft', '20 x 20 ft'].map((sz) => el('button', { type: 'button', class: 'chip', onclick: () => addSize(sz) }, sz.replace(' ft', ''))),
@@ -334,7 +352,7 @@
             el('p', { class: 'muted small' }, what() ? `We’ll use ${what()}.` : (isRoom ? 'Pick a look above, or describe your design, to make it yours. Or just tap.' : 'Describe your design above to make it yours, or just tap.')), err);
           return;
         }
-        const extra = el('input', { placeholder: 'Change something? e.g. darker colors', 'aria-label': 'Change something', maxlength: '200' });
+        const extra = el('input', { placeholder: `Change something? ${ex(3)}`, 'aria-label': 'Change something', maxlength: '200' });
         const changed = d.key !== key;
         const again = el('button', { type: 'button', class: changed ? 'dream-btn block' : 'ghost block', onclick: () => make(again, extra.value) },
           changed && what() ? `✨ Make a new one: ${what().replace(/^the /, '')}` : '🔁 Make it again');
