@@ -1219,8 +1219,6 @@
         el('li', {}, el('span', { class: 'fi' }, '💲'), j.price != null
           ? el('span', {}, `${money(j.price)} ${['new', 'qualifying'].includes(j.status) ? 'phone estimate' : j.status === 'hot' ? 'agreed price' : 'customer price'}`, j.crewPay != null ? el('span', { class: 'muted' }, ` · ${money(j.price - j.crewPay)} profit`) : null)
           : el('span', { class: 'muted' }, 'No price yet'))),
-      isStaff ? leadBox(j, update) : null,
-      askedFor(),
     );
     const convo = isStaff ? convoBox(j, messages, async () => { await load(); openLead(j.id); }) : null;
 
@@ -1751,6 +1749,9 @@
         el('button', { type: 'button', class: 'link small', 'aria-label': 'Remove expense', onclick: () => confirm('Remove this expense?') && recDel(x.id) }, '✕'))),
       el('details', {}, el('summary', { class: 'small', style: 'cursor:pointer;font-weight:700' }, '+ Add an expense'), expForm)) : null;
 
+    // The lead and what they asked for: in "The job" tab (owner: out of the summary at the top).
+    const aboutCard = el('section', { class: 'card stack about-job' }, isStaff ? leadBox(j, update) : null, askedFor());
+
     // Tabs keep the job short and easy to scan.
     // Each section says what's inside, so it's clear where a tap leads.
     const TABS = [
@@ -1765,7 +1766,7 @@
       tabsBar.replaceChildren(...TABS.map(([id, icon, label, sub]) => el('button', { type: 'button', role: 'tab', 'data-tab': id, 'aria-selected': String(leadTab === id), 'aria-current': String(leadTab === id), onclick: () => { leadTab = id; renderTab(); } },
         el('span', { class: 'tab-ic', 'aria-hidden': 'true' }, icon), el('span', { class: 'tab-txt' }, el('b', {}, label), el('span', {}, sub)))));
       const content = {
-        overview: [dreamFirst ? designCard : null, nextCard, walk || !['in_progress', 'completed'].includes(j.status) ? null : walkCard, isStaff && (LEAD_OPEN.includes(j.status) || needsReply(j)) ? convo : null, reviewCard, progress, isStaff && (LEAD_OPEN.includes(j.status) || needsReply(j)) ? null : convo, materialsCard, tasksCard, walk ? walkCard : null, rateCard, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, dreamFirst ? null : designCard, permitCard,
+        overview: [dreamFirst ? designCard : null, nextCard, aboutCard, walk || !['in_progress', 'completed'].includes(j.status) ? null : walkCard, isStaff && (LEAD_OPEN.includes(j.status) || needsReply(j)) ? convo : null, reviewCard, progress, isStaff && (LEAD_OPEN.includes(j.status) || needsReply(j)) ? null : convo, materialsCard, tasksCard, walk ? walkCard : null, rateCard, crewNotes.length ? crewNotesCard() : null, setupWanted ? setup : null, dreamFirst ? null : designCard, permitCard,
           !setupWanted && ['new', 'qualifying', 'hot'].includes(j.status) ? el('button', { type: 'button', class: 'link small', style: 'align-self:flex-start', onclick: focusSetup }, '👷 Assign a contractor & date now (skip the visit)') : null],
         money: [scheduleCard, crewBillsCard, docsCard, moneyCard, expensesCard],
         files: [filesCard],

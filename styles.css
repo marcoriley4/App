@@ -1143,3 +1143,5 @@ input[type="date"]::-webkit-calendar-picker-indicator, input[type="datetime-loca
 /* Everything written on a gold band is dark, in light and dark mode */
 .todo-today > :first-child, .todo-today > :first-child *, .company-card > :first-child, .company-card > :first-child *, .cal-card > :first-child, .cal-card > :first-child *,
 .card.oversight > .todo-head, .card.oversight > .todo-head *, .card.todo:not(.urgent):not(.info) > .todo-head, .card.todo:not(.urgent):not(.info) > .todo-head .todo-ic { color: #1b1404 !important; }
+.about-job .lead-box { border-top: 0; padding-top: 0; }
+.about-job .asked-for { border-top: 1px solid var(--border); padding-top: 12px; }
